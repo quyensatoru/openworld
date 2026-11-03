@@ -1,5 +1,5 @@
 // Nội Gián UI: the lobby panel (join, settings), your tasks / role while playing, the action buttons
-// (lay off, report, sabotage), alerts, the meeting + vote card, role reveal, the end screen and the
+// (kill, report, sabotage), alerts, the meeting + vote card, role reveal, the end screen and the
 // fog of war overlay.
 import { useEffect, useRef, useState } from 'react';
 import { MOLE_MAX, MOLE_MIN, ROOM_META, STATION_BY_ID, TASK_META, molesFor, type MoleRoom, type MoleView } from '../../shared/mole';
@@ -140,8 +140,12 @@ function Settings({ v }: { v: MoleView }) {
         <span>⏰ Deadline</span>
         <Seg value={s.minutes} options={[[0, 'Không'], [7, '7p'], [10, '10p'], [15, '15p']]} onPick={(x) => set({ minutes: x })} />
       </div>
+      <div className="wp-row">
+        <span>📊 Tiến độ</span>
+        <Seg value={s.taskBar} options={[['live', 'Liên tục'], ['meetings', 'Chỉ khi họp']]} onPick={(x) => set({ taskBar: x })} />
+      </div>
       <label className="wp-row check">
-        <input type="checkbox" checked={s.reveal} onChange={(e) => set({ reveal: e.target.checked })} /> Cho biết người bị loại có phải nội gián không
+        <input type="checkbox" checked={s.reveal} onChange={(e) => set({ reveal: e.target.checked })} /> Cho biết người bị trục xuất có phải nội gián không
       </label>
     </div>
   );
@@ -154,16 +158,19 @@ function Rules() {
         <b>👔 Nhân viên</b> chạy giữa các phòng làm nhiệm vụ (vòng vàng trên sàn). Thanh tiến độ đầy, hoặc lôi ra hết nội gián là thắng.
       </p>
       <p>
-        <b>🕵️ Nội gián</b> giả vờ làm việc, lén “cho nghỉ việc” đồng nghiệp khi đứng sát (Q), cúp điện, khoá cửa, gây quá tải server. Thắng khi số nội gián bằng số nhân viên còn lại.
+        <b>🕵️ Nội gián</b> giả vờ làm việc, lén giết đồng nghiệp khi đứng sát (Q), cúp điện, khoá cửa, gây quá tải server. Thắng khi số nội gián bằng số nhân viên còn lại.
       </p>
       <p>
-        <b>📣 Họp</b>: thấy thùng đồ của người bị loại thì báo cáo (R), hoặc bấm chuông giữa Phòng Họp (mỗi người 1 lần). Cả tầng nghe nhau qua mic, rồi bỏ phiếu — phiếu hoà hoặc bỏ qua nhiều thì không ai bị loại.
+        <b>📣 Họp</b>: thấy xác thì báo cáo (R), hoặc bấm chuông giữa Phòng Họp (mỗi người 1 lần). Cả tầng nghe nhau qua mic, rồi bỏ phiếu — phiếu hoà hoặc bỏ qua nhiều thì không ai bị loại.
       </p>
       <p>
         <b>👻 Hồn ma</b> vẫn làm nhiệm vụ giúp đội, nghe được mọi người nhưng chỉ nói chuyện được với hồn ma.
       </p>
       <p>
         <b>🚨 Sự cố server</b>: hai người phải cùng giữ hai bảng điều khiển (Phòng Server và Kho Hồ Sơ) trước khi hết giờ.
+      </p>
+      <p>
+        <b>🩺 Khám sức khoẻ</b> hiện cột sáng xanh cho người xung quanh thấy — nội gián làm giả thì không có. Bằng chứng ngoại phạm tốt nhất!
       </p>
     </div>
   );
@@ -281,7 +288,7 @@ export function MoleActions() {
       )}
       {mole && v.me.alive && (
         <button className={`ma-btn kill${target && killIn <= 0 ? ' ready' : ''}`} disabled={!target || killIn > 0} onClick={() => target && game.mole({ a: 'kill', target })}>
-          🔪<span>{killIn > 0 ? `${secs(killIn)}s` : 'Cho nghỉ'}</span>
+          🔪<span>{killIn > 0 ? `${secs(killIn)}s` : 'Giết'}</span>
           <kbd>Q</kbd>
         </button>
       )}
@@ -316,7 +323,10 @@ export function MoleMeeting() {
   const myAvatar = useStore((s) => s.me?.avatar);
   const myId = useStore((s) => s.me?.id);
   useTick(250);
-  if (!v || !v.me.inGame || (v.phase !== 'meeting' && v.phase !== 'vote' && v.phase !== 'result')) return null;
+  const splash = useStore((s) => s.moleSplash);
+  // (the result is shown by MoleEject)
+  if (!v || !v.me.inGame || (v.phase !== 'meeting' && v.phase !== 'vote' && v.phase !== 'result') || v.phase === ('result' as string)) return null;
+  if (splash && (splash.kind === 'report' || splash.kind === 'bell') && Date.now() - splash.at < 2600) return null;
   const left = secs(v.until - serverNow());
   const voting = v.phase === 'vote' && v.me.alive && !v.me.vote;
   const tally = new Map<string, string[]>();
@@ -326,12 +336,12 @@ export function MoleMeeting() {
     <div className="mole-meet">
       <div className="mm-card">
         <div className="mm-head">
-          <b>{v.phase === 'result' ? '📦 Kết quả' : v.meeting?.reason === 'report' ? '📣 Phát hiện người bị loại!' : '🔔 Họp khẩn!'}</b>
+          <b>{v.phase === 'result' ? '🗳️ Kết quả' : v.meeting?.reason === 'report' ? '💀 Phát hiện xác!' : '🔔 Họp khẩn!'}</b>
           <span className="mm-timer">{left}s</span>
         </div>
         {v.meeting && v.phase !== 'result' && (
           <div className="mm-sub">
-            {v.meeting.reason === 'report' ? `${v.meeting.byName} tìm thấy thùng đồ của ${v.meeting.body}.` : `${v.meeting.byName} bấm chuông.`}{' '}
+            {v.meeting.reason === 'report' ? `${v.meeting.byName} tìm thấy xác của ${v.meeting.body}.` : `${v.meeting.byName} bấm chuông.`}{' '}
             {v.phase === 'meeting' ? 'Bàn bạc bằng mic — sắp bỏ phiếu.' : v.me.alive ? (v.me.vote ? 'Bạn đã bỏ phiếu.' : 'Chọn người bạn nghi là nội gián.') : 'Hồn ma không được bỏ phiếu.'}
           </div>
         )}
@@ -339,10 +349,10 @@ export function MoleMeeting() {
           <div className={`mm-result${v.result.wasMole ? ' mole' : ''}`}>
             {v.result.out
               ? v.result.wasMole == null
-                ? `${v.result.name} bị cho nghỉ việc.`
+                ? `${v.result.name} bị trục xuất.`
                 : v.result.wasMole
-                  ? `${v.result.name} bị cho nghỉ việc — ĐÚNG là nội gián! 🎯`
-                  : `${v.result.name} bị cho nghỉ việc — nhưng KHÔNG phải nội gián 😱`
+                  ? `${v.result.name} bị trục xuất — ĐÚNG là nội gián! 🎯`
+                  : `${v.result.name} bị trục xuất — nhưng KHÔNG phải nội gián 😱`
               : v.result.why === 'tie'
                 ? '⚖️ Phiếu hoà — không ai bị loại.'
                 : '🤷 Không ai bị loại.'}
@@ -359,7 +369,7 @@ export function MoleMeeting() {
                   {p.name}
                   {p.role === 'mole' && ' 🕵️'}
                 </span>
-                {!p.alive && <span className="mm-tag">{p.out === 'voted' ? '📦' : '👻'}</span>}
+                {!p.alive && <span className="mm-tag">{p.out === 'voted' ? '🚪' : '💀'}</span>}
                 {v.phase === 'vote' && v.voted.includes(p.id) && <span className="mm-tag ok">✓</span>}
                 {got.length > 0 && <span className="mm-votes" title={got.map(nameOf).join(', ')}>🗳️ {got.length}</span>}
               </button>
@@ -377,23 +387,114 @@ export function MoleMeeting() {
   );
 }
 
-// ------------------------------------------------------------------ role reveal + end
+// ------------------------------------------------------------------ the big moments
+/** Full-screen moments: a body found, the bell, your own death, your kill. */
+export function MoleSplash() {
+  const sp = useStore((s) => s.moleSplash);
+  useTick(200);
+  useEffect(() => {
+    if (!sp) return;
+    const ms = sp.kind === 'kill' ? 900 : sp.kind === 'killed' ? 4200 : 2600;
+    const t = setTimeout(() => setState({ moleSplash: null }), ms);
+    return () => clearTimeout(t);
+  }, [sp]);
+  if (!sp) return null;
+  if (sp.kind === 'kill') return <div className="ms-flash" />;
+  if (sp.kind === 'killed')
+    return (
+      <div className="ms-splash killed">
+        <div className="ms-slash" />
+        <div className="ms-icon">🔪</div>
+        <div className="ms-title">BẠN ĐÃ BỊ GIẾT</div>
+        <div className="ms-sub">
+          Kẻ ra tay: <b>{sp.by}</b>
+        </div>
+        <div className="ms-note">Giờ bạn là hồn ma 👻 — vẫn làm nhiệm vụ được, nhưng chỉ nói chuyện được với hồn ma. Đừng tiết lộ gì nhé!</div>
+      </div>
+    );
+  return (
+    <div className={`ms-splash ${sp.kind}`}>
+      <div className="ms-rays" />
+      <div className="ms-icon">{sp.kind === 'report' ? '💀' : '🔔'}</div>
+      <div className="ms-title">{sp.kind === 'report' ? 'PHÁT HIỆN XÁC!' : 'HỌP KHẨN!'}</div>
+      <div className="ms-sub">{sp.kind === 'report' ? `${sp.by} tìm thấy xác của ${sp.body}` : `${sp.by} bấm chuông họp khẩn`}</div>
+    </div>
+  );
+}
+
+/** After the vote: a dark screen and the verdict typed out letter by letter. */
+export function MoleEject() {
+  const v = useStore((s) => s.mole);
+  const [shown, setShown] = useState(0);
+  const res = v?.phase === 'result' ? v.result : null;
+  const lines = res
+    ? res.out
+      ? [
+          `${res.name} đã bị trục xuất.`,
+          res.wasMole == null ? '' : res.wasMole ? `${res.name} LÀ nội gián.` : `${res.name} KHÔNG phải nội gián.`,
+          res.molesLeft == null ? '' : res.molesLeft === 0 ? 'Không còn nội gián nào.' : `Còn ${res.molesLeft} nội gián.`,
+        ].filter(Boolean)
+      : [res.why === 'tie' ? 'Phiếu hoà.' : 'Không ai bị trục xuất.', 'Không ai rời khỏi công ty.']
+    : [];
+  const full = lines.join('\n');
+  useEffect(() => {
+    if (!res) return setShown(0);
+    setShown(0);
+    let i = 0;
+    const t = setInterval(() => {
+      i++;
+      setShown(i);
+      if (full[i - 1] && full[i - 1] !== ' ' && full[i - 1] !== '\n') game.typeTick();
+      if (i >= full.length) clearInterval(t);
+    }, 55);
+    return () => clearInterval(t);
+  }, [res?.out, res?.why, v?.until]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!v || !v.me.inGame || !res) return null;
+  const text = full.slice(0, shown);
+  return (
+    <div className={`ms-eject${res.out ? '' : ' none'}`}>
+      <div className="me-stars" />
+      {res.out && <div className="me-drift">🚪🧍</div>}
+      <div className="me-text">
+        {text.split('\n').map((l, i) => (
+          <div key={i}>{l}</div>
+        ))}
+        <span className="me-caret">▌</span>
+      </div>
+    </div>
+  );
+}
+
 export function MoleReveal() {
   const v = useStore((s) => s.mole);
+  const players = useStore((s) => s.players);
+  const me = useStore((s) => s.me);
+  useTick(200);
   if (!v || !v.me.inGame || v.phase !== 'roles') return null;
+  const elapsed = 8000 - (v.until - serverNow());
+  if (elapsed < 1500)
+    return (
+      <div className="mole-reveal shh">
+        <div className="mr-emoji">🤫</div>
+        <div className="mr-title">Suỵt…</div>
+        <div className="mr-sub">Có kẻ phản bội đang ở giữa chúng ta.</div>
+      </div>
+    );
   const mole = v.me.role === 'mole';
-  const mates = v.me.mates.map((id) => v.players.find((p) => p.id === id)?.name).filter(Boolean);
   const nMoles = molesFor(v.players.length, v.settings);
+  // employees see everyone; a mole sees the pack
+  const line = mole ? v.players.filter((p) => p.id === v.me.mates.find((m) => m === p.id) || p.id === me?.id) : v.players;
   return (
     <div className={`mole-reveal ${mole ? 'mole' : 'crew'}`}>
-      <div className="mr-emoji">{mole ? '🕵️' : '👔'}</div>
-      <div className="mr-title">{mole ? 'BẠN LÀ NỘI GIÁN' : 'BẠN LÀ NHÂN VIÊN'}</div>
-      <div className="mr-sub">
-        {mole
-          ? mates.length
-            ? `Đồng bọn: ${mates.join(', ')} — cẩn thận đừng để lộ!`
-            : 'Một mình bạn chống cả công ty. Trà trộn khéo vào!'
-          : `Có ${nMoles} nội gián trong số ${v.players.length} người. Làm việc và để ý xung quanh.`}
+      <div className="mr-title">{mole ? 'NỘI GIÁN' : 'NHÂN VIÊN'}</div>
+      <div className="mr-sub">{mole ? (v.me.mates.length ? 'Giết người, phá hoại, đừng để lộ.' : 'Một mình bạn chống cả công ty.') : `Có ${nMoles} nội gián trong số ${v.players.length} người.`}</div>
+      <div className="mr-line">
+        {line.map((p, i) => (
+          <div key={p.id} className={`mr-person${p.id === me?.id ? ' me' : ''}`} style={{ animationDelay: `${0.15 + i * 0.08}s` }}>
+            <AvatarDot name={p.name} avatar={p.id === me?.id ? me.avatar : players[p.id]?.avatar} size={54} />
+            <span>{p.name}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -401,19 +502,33 @@ export function MoleReveal() {
 
 export function MoleEnd() {
   const v = useStore((s) => s.mole);
+  const players = useStore((s) => s.players);
+  const me = useStore((s) => s.me);
   if (!v || v.phase !== 'end' || !v.winner || !v.me.inGame) return null;
   const won = v.me.role === v.winner;
+  const winners = v.players.filter((p) => p.role === v.winner);
   return (
-    <div className={`mole-end ${v.winner}`}>
-      <div className="me-title">{v.winner === 'crew' ? '🏆 NHÂN VIÊN THẮNG' : '🕵️ NỘI GIÁN THẮNG'}</div>
-      <div className="me-why">{v.why}</div>
-      <div className="me-sub">{won ? '🎉 Bạn thắng!' : '😵 Bạn thua rồi…'}</div>
-      <div className="we-roles">
-        {v.players.map((p) => (
-          <span key={p.id} className={`${p.alive ? '' : 'dead'}${p.role === v.winner ? ' won' : ''}`}>
-            {p.role === 'mole' ? '🕵️' : '👔'} {p.name}
-          </span>
+    <div className={`mole-final ${won ? 'won' : 'lost'} ${v.winner}`}>
+      <div className="mf-title">{won ? 'CHIẾN THẮNG' : 'THẤT BẠI'}</div>
+      <div className="mf-team">{v.winner === 'crew' ? '👔 Nhân viên thắng' : '🔪 Nội gián thắng'}</div>
+      <div className="mf-why">{v.why}</div>
+      <div className="mr-line">
+        {winners.map((p, i) => (
+          <div key={p.id} className={`mr-person${p.alive ? '' : ' dead'}`} style={{ animationDelay: `${0.2 + i * 0.1}s` }}>
+            <AvatarDot name={p.name} avatar={p.id === me?.id ? me.avatar : players[p.id]?.avatar} size={54} />
+            <span>
+              {p.name}
+              {!p.alive && ' 💀'}
+            </span>
+          </div>
         ))}
+      </div>
+      <div className="we-roles">
+        {v.players
+          .filter((p) => p.role === 'mole')
+          .map((p) => (
+            <span key={p.id}>🔪 {p.name} là nội gián</span>
+          ))}
       </div>
     </div>
   );

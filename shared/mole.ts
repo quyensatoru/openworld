@@ -1,6 +1,6 @@
 // "Nội Gián" (the mole) — a social-deduction task game on floor 5. Employees run between rooms
 // doing small office jobs to ship the project before the deadline; one or more hidden moles quietly
-// "lay off" colleagues, cut the power and lock doors. A found colleague or the bell calls a meeting,
+// kill colleagues, cut the power and lock doors. A body that is found or the bell calls a meeting,
 // everybody talks (voice) and votes someone out. Server: worker/mole.ts. Types + layout shared here.
 
 export const F5 = 240; // logical x of floor 5's west wall
@@ -121,14 +121,16 @@ export interface MoleSettings {
   moles: number;
   /** play time before the deadline, minutes (0 = no deadline) */
   minutes: number;
-  /** seconds between two lay-offs */
+  /** seconds between two kills */
   killCd: number;
   /** tasks per employee */
   tasks: number;
   /** say whether the voted-out person was a mole */
   reveal: boolean;
+  /** the shared progress bar: live, or only refreshed at meetings (harder to tell who really works) */
+  taskBar: 'live' | 'meetings';
 }
-export const MOLE_DEFAULTS: MoleSettings = { moles: 0, minutes: 0, killCd: 30, tasks: 5, reveal: true };
+export const MOLE_DEFAULTS: MoleSettings = { moles: 0, minutes: 0, killCd: 30, tasks: 5, reveal: true, taskBar: 'live' };
 export const MOLE_MIN = 4;
 export const MOLE_MAX = 12;
 export const MOLE_KILL_RANGE = 2.2;
@@ -179,7 +181,7 @@ export interface MoleView {
   /** vote phase: who has voted (ids); result: voter → target */
   voted: string[];
   votes: Record<string, string> | null;
-  result: { out: string | null; name: string; wasMole: boolean | null; why: 'votes' | 'tie' | 'skip' } | null;
+  result: { out: string | null; name: string; wasMole: boolean | null; why: 'votes' | 'tie' | 'skip'; molesLeft: number | null } | null;
   winner: MoleRole | null;
   why: string;
   log: { t: number; text: string }[];
@@ -195,6 +197,13 @@ export interface MoleView {
     vote: string | null;
   };
 }
+
+/** One-off moments sent to some people: your own death (with who did it), the killer's flash,
+ *  a medical scan everyone nearby can see (moles can't fake it). */
+export type MoleFx =
+  | { kind: 'killed'; by: string }
+  | { kind: 'kill'; victim: string }
+  | { kind: 'scan'; id: string; x: number; z: number };
 
 export type MoleMsg =
   | { a: 'join' }

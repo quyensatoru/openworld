@@ -1,5 +1,5 @@
 // "Nội Gián" game server, living inside the OfficeRoom Durable Object (floor 5).
-// Employees finish tasks; hidden moles lay people off (with a cooldown), cut the lights, lock doors
+// Employees finish tasks; hidden moles kill people (with a cooldown), cut the lights, lock doors
 // and trigger a server overload that two people must hold off together. Bodies are reported or the
 // bell is rung → meeting (everyone on the floor hears each other) → vote. Ghosts keep doing tasks
 // and only talk among themselves. Positions come from the players' own movement messages.
@@ -51,7 +51,7 @@ interface P {
   bell: number;
 }
 
-const T = { starting: 5000, roles: 7000, meeting: 45_000, vote: 30_000, result: 7000, end: 18_000 };
+const T = { starting: 5000, roles: 8000, meeting: 48_000, vote: 30_000, result: 9000, end: 18_000 };
 const BELLS = 1;
 
 const dist = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -80,6 +80,8 @@ export class MoleGame {
   private winner: MoleRole | null = null;
   private why = '';
   private log: { t: number; text: string }[] = [];
+  /** what the progress bar shows when it only refreshes at meetings */
+  private shownProgress = 0;
 
   constructor(private host: MoleHost) {}
 
@@ -182,7 +184,7 @@ export class MoleGame {
       joined: [...this.joined].map(([jid, name]) => ({ id: jid, name })),
       settings: this.settings,
       players,
-      progress: this.progress(),
+      progress: this.settings.taskBar === 'meetings' && this.phase === 'play' ? this.shownProgress : this.progress(),
       bodies: this.bodies,
       lights: this.lights,
       crit: this.crit,
@@ -234,6 +236,11 @@ export class MoleGame {
 
   sendTo(id: string) {
     this.host.send(id, { t: 'mole', v: this.viewFor(id) });
+  }
+
+  /** A message for everyone on floor 5. */
+  private toFloor(msg: ServerMsg) {
+    for (const p of this.host.people()) if (p.x >= MOLE_FLOOR_X0) this.host.send(p.id, msg);
   }
 
   /** Arrived on floor 5. */
@@ -300,6 +307,7 @@ export class MoleGame {
         if (s.killCd != null) n.killCd = [20, 30, 45].includes(Number(s.killCd)) ? Number(s.killCd) : n.killCd;
         if (s.tasks != null) n.tasks = Math.max(3, Math.min(7, Math.round(Number(s.tasks)) || 5));
         if (typeof s.reveal === 'boolean') n.reveal = s.reveal;
+        if (s.taskBar === 'live' || s.taskBar === 'meetings') n.taskBar = s.taskBar;
         this.settings = n;
         return this.broadcast();
       }
@@ -324,6 +332,8 @@ export class MoleGame {
         const st = STATION_BY_ID.get(String(m.st));
         if (!t || !st || dist(pp, st) > MOLE_TASK_RANGE + 1.2) return;
         t.done = true;
+        // a medical scan is a show for everyone nearby (moles can't fake it)
+        if (st.kind === 'scan') this.toFloor({ t: 'moleFx', fx: { kind: 'scan', id: me.id, x: pp.x, z: pp.z } });
         if (this.checkWin()) return;
         return this.broadcast();
       }
@@ -338,6 +348,8 @@ export class MoleGame {
         v.out = 'killed';
         me.lastKill = now;
         this.bodies.push({ id: v.id, name: v.name, x: vp.x, z: vp.z });
+        this.host.send(v.id, { t: 'moleFx', fx: { kind: 'killed', by: me.name } });
+        this.host.send(me.id, { t: 'moleFx', fx: { kind: 'kill', victim: v.name } });
         if (this.checkWin()) return;
         return this.broadcast();
       }
@@ -434,10 +446,11 @@ export class MoleGame {
 
   private callMeeting(by: P, reason: 'report' | 'bell', body: string | null) {
     this.meeting = { by: by.id, byName: by.name, reason, body: body ? this.get(body)?.name ?? null : null };
-    this.say(reason === 'report' ? `📣 ${by.name} phát hiện ${this.meeting.body} đã bị cho nghỉ việc!` : `🔔 ${by.name} bấm chuông họp khẩn!`);
+    this.say(reason === 'report' ? `📣 ${by.name} phát hiện xác của ${this.meeting.body}!` : `🔔 ${by.name} bấm chuông họp khẩn!`);
     this.bodies = [];
     this.clearSabotage();
     this.votes.clear();
+    this.shownProgress = this.progress();
     this.setPhase('meeting', T.meeting);
     this.broadcast();
   }
@@ -538,15 +551,15 @@ export class MoleGame {
     }
     if (!best || skip >= best || top.length > 1) {
       const why = top.length > 1 ? 'tie' : 'skip';
-      this.result = { out: null, name: '', wasMole: null, why };
-      this.say(why === 'tie' ? '⚖️ Phiếu hoà — không ai bị cho nghỉ.' : '🤷 Không đủ phiếu — không ai bị cho nghỉ.');
+      this.result = { out: null, name: '', wasMole: null, why, molesLeft: this.settings.reveal ? this.aliveMoles().length : null };
+      this.say(why === 'tie' ? '⚖️ Phiếu hoà — không ai bị trục xuất.' : '🤷 Không đủ phiếu — không ai bị trục xuất.');
     } else {
       const p = this.get(top[0])!;
       p.alive = false;
       p.out = 'voted';
-      this.result = { out: p.id, name: p.name, wasMole: this.settings.reveal ? p.role === 'mole' : null, why: 'votes' };
+      this.result = { out: p.id, name: p.name, wasMole: this.settings.reveal ? p.role === 'mole' : null, why: 'votes', molesLeft: this.settings.reveal ? this.aliveMoles().length : null };
       this.say(
-        this.settings.reveal ? `📦 ${p.name} bị cho nghỉ việc — ${p.role === 'mole' ? 'đúng là NỘI GIÁN! 🎯' : 'nhưng họ KHÔNG phải nội gián 😱'}` : `📦 ${p.name} bị cho nghỉ việc.`,
+        this.settings.reveal ? `🚪 ${p.name} bị trục xuất — ${p.role === 'mole' ? 'đúng là NỘI GIÁN! 🎯' : 'nhưng họ KHÔNG phải nội gián 😱'}` : `🚪 ${p.name} bị trục xuất.`,
       );
     }
     this.setPhase('result', T.result);
@@ -559,7 +572,7 @@ export class MoleGame {
     const crew = this.aliveCrew().length;
     if (!moles) return this.finish('crew', '🎯 Tất cả nội gián đã bị lộ mặt!');
     if (this.progress() >= 1) return this.finish('crew', '✅ Dự án hoàn thành — mọi nhiệm vụ đã xong!');
-    if (moles >= crew) return this.finish('mole', '🕵️ Nội gián đã đông bằng nhân viên — công ty thất thủ!');
+    if (moles >= crew) return this.finish('mole', '🔪 Nội gián đã giết đủ người — công ty thất thủ!');
     return false;
   }
 

@@ -69,14 +69,14 @@ const FLOOR_TINT: Record<string, string> = {
   karaoke: '#3a2a52',
   wolfroom: '#7a5a40',
   hall4: '#ddd8cf',
-  'f5-server': '#b9c3d6',
-  'f5-design': '#d9c9ae',
-  'f5-archive': '#cdb894',
-  'f5-print': '#c9ccd2',
-  'f5-meet': '#b7c4e0',
-  'f5-canteen': '#e6dfd2',
-  'f5-med': '#d4e6e2',
-  hall5: '#d9d6cf',
+  'f5-server': '#3d4658',
+  'f5-design': '#4a4540',
+  'f5-archive': '#4d4436',
+  'f5-print': '#41454f',
+  'f5-meet': '#343d55',
+  'f5-canteen': '#4a463f',
+  'f5-med': '#36504c',
+  hall5: '#3b3e46',
 };
 
 /** Openings in each floor's slab (logical coords of that floor): the stairwell below + the lift. */
@@ -576,7 +576,7 @@ export class OfficeScene {
                 : fl === 3 && Math.abs(lx - KARA.x1) < 0.01 && cz < KARA.z1
                   ? '#2c2230'
                   : fl === 4
-                    ? '#c9ced9'
+                    ? '#2c3240'
                     : C.wall;
       this.addFadeWall(new THREE.BoxGeometry(sx, UP_WALL_H, sz), color, cx, UP_WALL_H / 2, cz, root);
       rbox(stat, alongX ? len : WALL_T + 0.04, 0.12, alongX ? WALL_T + 0.04 : len, C.wallTrim, cx, 0.06, cz, 0.01);
@@ -612,7 +612,7 @@ export class OfficeScene {
       const inHole = (x: number, zz: number) => above.some((h) => x > h.x0 - 0.7 && x < h.x1 + 0.7 && zz > h.z0 - 0.3 && zz < h.z1 + 0.3);
       const parent = this.ceilings[zf];
       const h = z.kind === 'cinema' ? CINEMA_WALL_H : WALL_H;
-      const dark = z.kind === 'cinema' || z.kind === 'bar' || z.kind === 'game' || z.kind === 'karaoke' || z.kind === 'wolf';
+      const dark = z.kind === 'cinema' || z.kind === 'bar' || z.kind === 'game' || z.kind === 'karaoke' || z.kind === 'wolf' || z.kind === 'mole';
       for (const r of subtract(z, above)) {
         const ceil = new THREE.Mesh(new THREE.PlaneGeometry(r.x1 - r.x0, r.z1 - r.z0), dark ? darkMat : ceilMat);
         ceil.rotation.x = Math.PI / 2; // faces down: visible from inside, culled from the camera above

@@ -5,7 +5,7 @@ import type { ArcadeMsg } from '../shared/arcade';
 import { BAR, BAR_SCREEN, CINEMA_SCREEN, FLOOR_H, KARA_SCREEN, MIC_SPOTS, SEAT_BY_ID, ZONE_BY_ID, floorOf, groundAt, onStairs, type Seat } from '../shared/map';
 import { FX_PRESETS, KARA_SCORE_MS, type KaraMsg, type KaraState, type MicFx } from '../shared/karaoke';
 import { ROLE_META, type WolfMsg, type WolfView } from '../shared/werewolf';
-import { MOLE_DOORS, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, STATION_BY_ID, VISION, doorRect, meetingSpot, type MoleMsg, type MoleView } from '../shared/mole';
+import { MOLE_DOORS, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, STATION_BY_ID, VISION, doorRect, meetingSpot, type MoleFx, type MoleMsg, type MoleView } from '../shared/mole';
 import { Ambience, MUSIC_BPM } from './audio/ambience';
 import { CinemaPlayer } from './cinema/player';
 import { ClaudeScreens, isLive } from './world/claude-screen';
@@ -293,6 +293,7 @@ class Game {
       this.karaPlayer?.sync();
     }
     if (floorOf(me.x) === 3) this.karaTick();
+    if (floorOf(me.x) === 4 || getState().mole?.me.inGame) this.moleTick();
     if (this.fastFrame % 16 === 0 && getState().wolf) world.office.updateWolfBoard(getState().wolf, serverNow());
     if (this.fastFrame % 6 === 0) {
       const now = serverNow();
@@ -379,8 +380,9 @@ class Game {
     }
     if (this.zoneId === 'hall5' || this.zoneId.startsWith('f5-')) {
       const mv = getState().mole;
-      const dark = !!mv && mv.phase === 'play' && mv.lights > serverNow() && mv.me.inGame && mv.me.alive && mv.me.role === 'crew';
-      this.world?.setDim(0, dark ? 0.75 : 0, 'night');
+      const blackout = !!mv && mv.phase === 'play' && mv.lights > serverNow() && mv.me.inGame && mv.me.alive && mv.me.role === 'crew';
+      // floor 5 is always gloomy; a blackout makes it nearly pitch black for employees
+      this.world?.setDim(0, blackout ? 0.97 : 0.8, blackout ? 'night' : 'facility');
     }
     this.ambience?.setQuietZone(inside || ZONE_BY_ID.get(this.zoneId)?.kind === 'focus' || inKara || this.zoneId === 'wolfroom');
     if (inside !== this.wasInCinema) {
@@ -487,6 +489,7 @@ class Game {
     net.on('karaReact', ({ id, e }) => this.onKaraReact(id, e));
     net.on('wolf', ({ v }) => this.applyWolf(v));
     net.on('mole', ({ v }) => this.applyMole(v));
+    net.on('moleFx', ({ fx }) => this.onMoleFx(fx));
     net.on('snake', ({ f }) => {
       setState({ snake: f });
       if (this.zoneId === 'netcafe') this.world?.office.updateNetScreen(f, serverNow());
@@ -1344,7 +1347,7 @@ class Game {
     const badges = new Map<string, string>();
     if (live || v.phase === 'end')
       for (const p of v.players) {
-        if (!p.alive) badges.set(p.id, p.out === 'voted' ? '📦' : '👻');
+        if (!p.alive) badges.set(p.id, p.out === 'voted' ? '🚪' : '👻');
         else if (p.role === 'mole' && (v.me.role === 'mole' || v.phase === 'end' || !v.me.alive)) badges.set(p.id, '🕵️');
       }
     for (const id of this.moleBadges) if (!badges.has(id)) w.setBadge(id, null);
@@ -1362,17 +1365,19 @@ class Game {
         if (this.world?.viewMode === 'first') this.world.setViewMode('third');
       }
       if (v.phase === 'play' || v.phase === 'end' || v.phase === 'lobby') w.setFrozen(false);
-      if (v.phase === 'roles') this.ambience?.sfx('flip');
-      if (v.phase === 'meeting') this.ambience?.sfx('meeting');
-      if (v.phase === 'result' && v.result?.out) this.ambience?.sfx('death');
+      if (v.phase === 'roles') {
+        this.ambience?.sfx('shh');
+        window.setTimeout(() => this.ambience?.sfx('reveal'), 1500);
+      }
+      if (v.phase === 'meeting' && v.meeting) {
+        setState({ moleSplash: { kind: v.meeting.reason, by: v.meeting.byName, body: v.meeting.body, at: Date.now() } });
+        this.ambience?.sfx(v.meeting.reason === 'report' ? 'report' : 'meeting');
+      }
+      if (v.phase === 'result') this.ambience?.sfx(v.result?.out ? 'eject' : 'gavel');
       if (v.phase === 'end') this.ambience?.sfx(v.me.role === v.winner ? 'win' : 'lose');
       if (v.phase === 'roles') setState({ molePanel: true });
     }
-    if (prev?.me.alive && !v.me.alive && v.me.inGame && v.phase === 'play') {
-      this.ambience?.sfx('death');
-      setState({ moleTask: null });
-      toast('💀 Bạn đã bị cho nghỉ việc! Giờ bạn là hồn ma: vẫn làm nhiệm vụ giúp đội được, nhưng chỉ nói chuyện được với hồn ma.', 'warn', 8000);
-    }
+    if (prev?.me.alive && !v.me.alive && v.me.inGame && v.phase === 'play') setState({ moleTask: null });
     if (live && v.phase === 'play') {
       if (!(prev?.lights ?? 0) && v.lights) {
         this.ambience?.sfx('powerdown');
@@ -1383,6 +1388,58 @@ class Game {
       if (done(v) > done(prev)) this.ambience?.sfx('task');
     }
     if (this.zoneId === 'hall5' || this.zoneId.startsWith('f5-')) this.onCinemaZone();
+  }
+
+  private onMoleFx(fx: MoleFx) {
+    if (fx.kind === 'killed') {
+      setState({ moleSplash: { kind: 'killed', by: fx.by, at: Date.now() }, moleTask: null });
+      this.ambience?.sfx('stab');
+      window.setTimeout(() => this.ambience?.sfx('death'), 900);
+    } else if (fx.kind === 'kill') {
+      setState({ moleSplash: { kind: 'kill', body: fx.victim, at: Date.now() } });
+      this.ambience?.sfx('stab');
+    } else if (fx.kind === 'scan') {
+      this.world?.office.f5.scan(fx.x, fx.z);
+      const me = getState().me;
+      const pos = me ? this.world?.positionOf(me.id) : null;
+      if (pos && Math.hypot(pos.x - fx.x, pos.z - fx.z) < 10) this.ambience?.sfx('task');
+    }
+  }
+
+  /** Typewriter tick (the verdict screen). */
+  typeTick() {
+    this.ambience?.sfx('type');
+  }
+
+  private seenBodies = new Set<string>();
+  private lastTickSec = -1;
+  /** ~16 Hz on floor 5: tension music, the "I just saw a body" sting, the last seconds ticking. */
+  private moleTick() {
+    const v = getState().mole;
+    const w = this.world;
+    if (!w) return;
+    const now = serverNow();
+    const playing = !!v && v.me.inGame && v.phase === 'play' && w.myFloor === 4;
+    const emergency = playing && (v!.crit > now || (v!.lights > now && v!.me.role === 'crew' && v!.me.alive));
+    this.ambience?.setTension(playing ? (emergency ? 2 : 1) : 0);
+    this.ambience?.tickTension();
+    if (!v || v.phase !== 'play') this.seenBodies.clear();
+    else if (playing && v.me.alive) {
+      const me = getState().me;
+      const pos = me ? w.positionOf(me.id) : null;
+      for (const b of v.bodies) {
+        if (this.seenBodies.has(b.id) || !pos || Math.hypot(b.x - pos.x, b.z - pos.z) > 9 || !w.canSee(b.x, b.z)) continue;
+        this.seenBodies.add(b.id);
+        this.ambience?.sfx('body');
+      }
+    }
+    if (v && v.me.inGame && (v.phase === 'meeting' || v.phase === 'vote')) {
+      const left = Math.ceil((v.until - now) / 1000);
+      if (left <= 10 && left > 0 && left !== this.lastTickSec) {
+        this.lastTickSec = left;
+        this.ambience?.sfx('tick');
+      }
+    }
   }
 
   /** Fog of war while playing on floor 5. */

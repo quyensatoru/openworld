@@ -1,7 +1,7 @@
 import type { ArcadeMsg, CaroGame, SnakeFrame } from './arcade';
 import type { KaraMsg, KaraState } from './karaoke';
 import type { WolfMsg, WolfView } from './werewolf';
-import type { MoleMsg, MoleView } from './mole';
+import type { MoleFx, MoleMsg, MoleView } from './mole';
 // Shared wire protocol between the browser client and the OfficeRoom Durable Object.
 // Every message is JSON with a short `t` (type) field.
 
@@ -255,6 +255,7 @@ export type ServerMsg =
   | { t: 'karaReact'; id: string; e: string }
   | { t: 'wolf'; v: WolfView | null }
   | { t: 'mole'; v: MoleView }
+  | { t: 'moleFx'; fx: MoleFx }
   | { t: 'activity'; id: string; ev: ActivityEvent }
   | { t: 'activityToken'; token: string | null }
   | { t: 'kicked'; reason: string }

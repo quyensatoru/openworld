@@ -251,7 +251,7 @@ export class Ambience {
 
   // ------------------------------------------------------------------ game sounds (karaoke, Ma Sói)
   /** Short synthesized effects; all go through the master volume. */
-  sfx(kind: 'howl' | 'dawn' | 'gavel' | 'death' | 'win' | 'lose' | 'applause' | 'drumroll' | 'flip' | 'tick' | 'siren' | 'powerdown' | 'task' | 'meeting') {
+  sfx(kind: 'howl' | 'dawn' | 'gavel' | 'death' | 'win' | 'lose' | 'applause' | 'drumroll' | 'flip' | 'tick' | 'siren' | 'powerdown' | 'task' | 'meeting' | 'stab' | 'body' | 'report' | 'eject' | 'type' | 'shh' | 'reveal') {
     const ctx = this.ctx;
     const out = this.master;
     if (!ctx || !out || ctx.state !== 'running') return;
@@ -392,6 +392,105 @@ export class Ambience {
       case 'meeting':
         [784, 622.25, 784, 622.25].forEach((f, i) => osc('square', f, t + i * 0.22, t + i * 0.22 + 0.2, 0.045));
         return;
+      case 'stab': {
+        // a sharp swipe + a dull hit
+        noise(t, 0.12, 0.45, 'highpass', 3000);
+        const o = osc('sine', 160, t + 0.06, t + 0.5, 0.4);
+        o.frequency.exponentialRampToValueAtTime(45, t + 0.45);
+        noise(t + 0.06, 0.2, 0.3, 'lowpass', 500);
+        return;
+      }
+      case 'body': {
+        // the "something is wrong" sting: a low cluster swelling up
+        for (const f of [73.4, 77.8, 110, 116.5]) {
+          const o = osc('sawtooth', f, t, t + 1.6, 0.035);
+          o.detune.value = Math.random() * 10;
+        }
+        osc('sine', 880, t + 0.05, t + 1.2, 0.03);
+        noise(t, 0.4, 0.15, 'lowpass', 300);
+        return;
+      }
+      case 'report':
+        for (let i = 0; i < 3; i++) {
+          const o = osc('square', 880, t + i * 0.32, t + i * 0.32 + 0.28, 0.05);
+          o.frequency.setValueAtTime(660, t + i * 0.32 + 0.14);
+        }
+        noise(t, 0.25, 0.2, 'bandpass', 1200, 0.8);
+        return;
+      case 'eject': {
+        const o = osc('sawtooth', 300, t, t + 2.2, 0.04);
+        o.frequency.exponentialRampToValueAtTime(60, t + 2.1);
+        noise(t, 1.8, 0.12, 'lowpass', 900);
+        return;
+      }
+      case 'type':
+        noise(t, 0.025, 0.12, 'bandpass', 3000, 2);
+        return;
+      case 'shh':
+        noise(t, 1.0, 0.18, 'highpass', 3500);
+        return;
+      case 'reveal':
+        osc('sine', 110, t, t + 2.2, 0.2);
+        [220, 261.63, 329.63].forEach((f, i) => osc('triangle', f, t + 0.1 + i * 0.12, t + 2.4, 0.04));
+        return;
+    }
+  }
+
+  // ------------------------------------------------------------------ tension (Nội Gián)
+  private tension = 0;
+  private tensionBus: { gain: GainNode; filter: BiquadFilterNode; oscs: OscillatorNode[] } | null = null;
+  private nextBeat = 0;
+
+  /** 0 off · 1 playing (low drone + slow heartbeat) · 2 emergency (faster, brighter). */
+  setTension(level: number) {
+    const ctx = this.ctx;
+    if (!ctx || !this.master || level === this.tension) return;
+    this.tension = level;
+    if (!this.tensionBus && level > 0) {
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 220;
+      filter.connect(gain).connect(this.master);
+      const oscs = [55, 55.7, 82.4].map((f) => {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = f;
+        o.connect(filter);
+        o.start();
+        return o;
+      });
+      this.tensionBus = { gain, filter, oscs };
+    }
+    const b = this.tensionBus;
+    if (!b) return;
+    b.gain.gain.setTargetAtTime(level ? (level > 1 ? 0.07 : 0.045) : 0, ctx.currentTime, 0.8);
+    b.filter.frequency.setTargetAtTime(level > 1 ? 520 : 220, ctx.currentTime, 0.5);
+  }
+
+  /** Keep the heartbeat going (call ~16×/s). */
+  tickTension() {
+    const ctx = this.ctx;
+    if (!ctx || !this.master || !this.tension) return;
+    const period = this.tension > 1 ? 0.62 : 1.15;
+    if (this.nextBeat < ctx.currentTime) this.nextBeat = ctx.currentTime + 0.05;
+    while (this.nextBeat < ctx.currentTime + 0.25) {
+      for (const [dt, v] of [[0, 0.32], [0.17, 0.22]] as const) {
+        const t = this.nextBeat + dt;
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(70, t);
+        o.frequency.exponentialRampToValueAtTime(38, t + 0.16);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(v * (this.tension > 1 ? 1.2 : 0.8), t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+        o.connect(g).connect(this.master);
+        o.start(t);
+        o.stop(t + 0.22);
+      }
+      this.nextBeat += period;
     }
   }
 

@@ -2,7 +2,7 @@
 // shutters on locked doorways, a marker over each of your unfinished tasks, a red alarm wash during
 // the server overload, and the game board in the hall. Lives in the floor-5 group (logical coords).
 import * as THREE from 'three';
-import { MOLE_DOORS, STATION_BY_ID, TASK_META, type MoleView } from '../../shared/mole';
+import { MOLE_DOORS, ROOM_META, STATION_BY_ID, TASK_META, type MoleView } from '../../shared/mole';
 import { canvasTexture } from './materials';
 
 const label = (text: string, bg: string) =>
@@ -18,6 +18,67 @@ const label = (text: string, bg: string) =>
     g.fillText(text.length > 16 ? text.slice(0, 15) + '…' : text, w / 2, h / 2 + 2);
   });
 
+let blood: THREE.CanvasTexture | null = null;
+/** A dark red pool with uneven edges and a few drops. */
+function bloodTex() {
+  blood ??= canvasTexture(256, 256, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    const blob = (cx: number, cy: number, r: number, a: number) => {
+      g.fillStyle = `rgba(110, 4, 14, ${a})`;
+      g.beginPath();
+      for (let i = 0; i <= 24; i++) {
+        const t = (i / 24) * Math.PI * 2;
+        const rr = r * (0.75 + 0.35 * Math.sin(t * 3 + cx) * Math.cos(t * 5 + cy));
+        const x = cx + Math.cos(t) * rr;
+        const y = cy + Math.sin(t) * rr;
+        if (i) g.lineTo(x, y);
+        else g.moveTo(x, y);
+      }
+      g.fill();
+    };
+    blob(w / 2, h / 2, 70, 0.92);
+    blob(w / 2 + 40, h / 2 + 20, 38, 0.85);
+    for (let i = 0; i < 9; i++) blob(w / 2 + Math.cos(i * 2.3) * (90 + i * 4), h / 2 + Math.sin(i * 2.3) * (80 + i * 3), 6 + (i % 3) * 3, 0.9);
+    g.fillStyle = 'rgba(255, 90, 90, 0.18)';
+    g.beginPath();
+    g.ellipse(w / 2 - 18, h / 2 - 20, 22, 10, -0.5, 0, Math.PI * 2);
+    g.fill();
+  });
+  return blood;
+}
+
+let chalk: THREE.CanvasTexture | null = null;
+/** The outline of a person, in chalk. */
+function chalkTex() {
+  chalk ??= canvasTexture(256, 448, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(245, 245, 240, 0.9)';
+    g.lineWidth = 7;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.beginPath();
+    g.arc(w / 2, 62, 40, 0, Math.PI * 2); // head
+    g.moveTo(w / 2 - 40, 118);
+    g.lineTo(w / 2 - 110, 210); // left arm
+    g.lineTo(w / 2 - 92, 228);
+    g.lineTo(w / 2 - 34, 165);
+    g.lineTo(w / 2 - 38, 270);
+    g.lineTo(w / 2 - 70, 420); // left leg
+    g.lineTo(w / 2 - 40, 426);
+    g.lineTo(w / 2, 300);
+    g.lineTo(w / 2 + 44, 426); // right leg
+    g.lineTo(w / 2 + 74, 418);
+    g.lineTo(w / 2 + 38, 270);
+    g.lineTo(w / 2 + 36, 165);
+    g.lineTo(w / 2 + 104, 140); // right arm, bent up
+    g.lineTo(w / 2 + 112, 112);
+    g.lineTo(w / 2 + 40, 118);
+    g.closePath();
+    g.stroke();
+  });
+  return chalk;
+}
+
 export class Floor5Fx {
   private bodies = new Map<string, THREE.Group>();
   private shutters = new Map<string, THREE.Mesh>();
@@ -29,7 +90,54 @@ export class Floor5Fx {
   /** Can the local player see this logical spot? (fog of war; set by the world) */
   canSee: (x: number, z: number) => boolean = () => true;
 
+  /** Pools of light under the (weak) ceiling lamps; some of them flicker. */
+  private pools: { m: THREE.Mesh; base: number; flicker: boolean; seed: number }[] = [];
+  /** Red emergency lamps over the doorways. */
+  private beacons: THREE.Mesh[] = [];
+  private blackout = false;
+
   constructor(private root: THREE.Group) {
+    const glow = (() => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const g = c.getContext('2d')!;
+      const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+      gr.addColorStop(0, 'rgba(255,255,255,0.9)');
+      gr.addColorStop(0.5, 'rgba(255,255,255,0.3)');
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 128, 128);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    let n = 0;
+    for (const [k, r] of Object.entries(ROOM_META)) {
+      const w = r.x1 - r.x0;
+      const d = r.z1 - r.z0;
+      const cols = Math.max(1, Math.round(w / 8));
+      const rows = Math.max(1, Math.round(d / 8));
+      for (let i = 0; i < cols; i++)
+        for (let j = 0; j < rows; j++) {
+          const warm = k === 'canteen' || k === 'med';
+          const m = new THREE.Mesh(
+            new THREE.PlaneGeometry(5.2, 5.2),
+            new THREE.MeshBasicMaterial({ map: glow, color: warm ? '#ffd9a0' : '#9fc4ff', transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+          );
+          m.rotation.x = -Math.PI / 2;
+          m.position.set(r.x0 + ((i + 0.5) * w) / cols, 0.02, r.z0 + ((j + 0.5) * d) / rows);
+          root.add(m);
+          this.pools.push({ m, base: k === 'meet' ? 0.3 : 0.2, flicker: n % 4 === 1, seed: Math.random() * 100 });
+          n++;
+        }
+    }
+    for (const dd of MOLE_DOORS) {
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(dd.axis === 'x' ? 0.5 : 0.25, 0.12, dd.axis === 'x' ? 0.25 : 0.5), new THREE.MeshBasicMaterial({ color: '#ff2a3d', toneMapped: false, transparent: true, opacity: 0.35 }));
+      const mid = (dd.from + dd.to) / 2;
+      lamp.position.set(dd.axis === 'x' ? mid : dd.at, 2.95, dd.axis === 'x' ? dd.at : mid);
+      root.add(lamp);
+      this.beacons.push(lamp);
+    }
     this.alarm = new THREE.Mesh(
       new THREE.PlaneGeometry(40, 28),
       new THREE.MeshBasicMaterial({ color: '#ff1f3d', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
@@ -98,23 +206,21 @@ export class Floor5Fx {
     if (live)
       for (const b of v!.bodies) {
         if (this.bodies.has(b.id)) continue;
+        // a crime scene: a dark pool, a chalk outline, a dropped mug
         const g = new THREE.Group();
-        const box = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.32, 0.4), new THREE.MeshStandardMaterial({ color: '#b98a55', roughness: 0.9 }));
-        box.position.y = 0.16;
-        box.rotation.set(0.15, 0.4, 0.25);
-        box.castShadow = true;
-        g.add(box);
-        for (let i = 0; i < 5; i++) {
-          const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.22), new THREE.MeshStandardMaterial({ color: '#f4f4f0', side: THREE.DoubleSide }));
-          paper.rotation.set(-Math.PI / 2, 0, Math.random() * 3);
-          paper.position.set((Math.random() - 0.5) * 1.2, 0.01 + i * 0.002, (Math.random() - 0.5) * 1.0);
-          g.add(paper);
-        }
-        const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.1, 12), new THREE.MeshStandardMaterial({ color: '#e5364b' }));
+        const pool = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 2.0), new THREE.MeshBasicMaterial({ map: bloodTex(), transparent: true, depthWrite: false, toneMapped: false }));
+        pool.rotation.set(-Math.PI / 2, 0, Math.random() * 6.28);
+        pool.position.y = 0.012;
+        g.add(pool);
+        const chalk = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.9), new THREE.MeshBasicMaterial({ map: chalkTex(), transparent: true, depthWrite: false, toneMapped: false }));
+        chalk.rotation.set(-Math.PI / 2, 0, Math.random() * 6.28);
+        chalk.position.y = 0.016;
+        g.add(chalk);
+        const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.1, 12), new THREE.MeshStandardMaterial({ color: '#d9d9d9' }));
         mug.rotation.z = Math.PI / 2;
-        mug.position.set(0.35, 0.05, 0.2);
+        mug.position.set(0.55, 0.05, 0.3);
         g.add(mug);
-        const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: label(`📦 ${b.name}`, 'rgba(229,54,75,0.92)'), depthTest: false, toneMapped: false }));
+        const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: label(`💀 ${b.name}`, 'rgba(150,10,25,0.92)'), depthTest: false, toneMapped: false }));
         tag.scale.set(1.4, 0.35, 1);
         tag.position.y = 0.9;
         tag.renderOrder = 5;
@@ -167,10 +273,51 @@ export class Floor5Fx {
       this.markers.set(id, g);
     }
     this.alarmOn = !!live && v!.crit > now;
+    this.blackout = !!live && v!.lights > now;
+  }
+
+  private scans: { g: THREE.Group; t: number }[] = [];
+  /** A medical scan in progress: a green beam round the person (proof they're an employee). */
+  scan(x: number, z: number) {
+    const g = new THREE.Group();
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.55, 2.4, 28, 1, true),
+      new THREE.MeshBasicMaterial({ color: '#39ff88', transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+    );
+    beam.position.y = 1.2;
+    g.add(beam);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.03, 8, 40), new THREE.MeshBasicMaterial({ color: '#b6ffd0', toneMapped: false }));
+    ring.rotation.x = Math.PI / 2;
+    g.add(ring);
+    g.position.set(x, 0, z);
+    this.root.add(g);
+    this.scans.push({ g, t: 0 });
   }
 
   tick(dt: number) {
     this.t += dt;
+    for (const p of this.pools) {
+      let o = this.blackout ? 0 : p.base;
+      // a dying tube: mostly on, sometimes stuttering off
+      if (p.flicker && !this.blackout) {
+        const k = Math.sin(this.t * 1.3 + p.seed) * Math.sin(this.t * 3.7 + p.seed * 2);
+        if (k > 0.6) o *= Math.random() < 0.5 ? 0.15 : 1;
+      }
+      (p.m.material as THREE.MeshBasicMaterial).opacity = o;
+    }
+    const beat = this.alarmOn ? 0.35 + 0.65 * Math.max(0, Math.sin(this.t * 8)) : this.blackout ? 0.6 : 0.28 + 0.07 * Math.sin(this.t * 1.5);
+    for (const b of this.beacons) (b.material as THREE.MeshBasicMaterial).opacity = beat;
+    for (let i = this.scans.length - 1; i >= 0; i--) {
+      const s = this.scans[i];
+      s.t += dt;
+      const ring = s.g.children[1];
+      ring.position.y = 0.1 + ((s.t * 1.1) % 1) * 2.2;
+      s.g.visible = this.canSee(s.g.position.x, s.g.position.z);
+      if (s.t > 4) {
+        this.root.remove(s.g);
+        this.scans.splice(i, 1);
+      }
+    }
     for (const [, g] of this.markers) g.children[1].position.y = 2.25 + Math.sin(this.t * 3) * 0.08;
     this.alarm.visible = this.alarmOn;
     if (this.alarmOn) (this.alarm.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.1 * Math.max(0, Math.sin(this.t * 6));

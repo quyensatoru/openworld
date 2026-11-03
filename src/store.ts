@@ -100,6 +100,8 @@ export interface OfficeStore {
   molePanel: boolean;
   /** Open mini-game: a station id, 'fuse', or a critical console id. `fake` for moles pretending. */
   moleTask: { id: string; fake: boolean } | null;
+  /** A big dramatic moment on screen (meeting called, you got laid off…). */
+  moleSplash: { kind: 'report' | 'bell' | 'killed' | 'kill'; by?: string; body?: string | null; at: number } | null;
   wolfSpeech: boolean;
   activity: Record<string, ActivityEvent[]>;
   activityToken: string | null | undefined; // undefined = not requested yet
@@ -172,6 +174,7 @@ export const useStore = create<OfficeStore>(() => ({
   mole: null,
   molePanel: true,
   moleTask: null,
+  moleSplash: null,
   wolfSpeech: loadPref('wolfSpeech', true),
   activity: {},
   activityToken: undefined,

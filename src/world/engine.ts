@@ -106,7 +106,7 @@ interface PlayerView {
 }
 
 /** Room lighting while it is dark: the bar's party lights, karaoke colours, the werewolf village. */
-export type Mood = 'bar' | 'kara' | 'night' | 'camp';
+export type Mood = 'bar' | 'kara' | 'night' | 'camp' | 'facility';
 const KARA_HUES = ['#9b5cff', '#ff3ea5', '#2de2e6', '#5d9bff'].map((c) => new THREE.Color(c));
 
 const INTERP_DELAY = 120;
@@ -957,6 +957,11 @@ export class World {
     return true;
   }
 
+  /** Fog of war check for a logical spot (floor 5). */
+  canSee(x: number, z: number): boolean {
+    return this.canSeeSpot(x, z);
+  }
+
   private canSeeSpot(x: number, z: number): boolean {
     const v = this.vision;
     if (!v || v.seeAll || !this.me || this.myFloor !== 4 || x < 230) return true;
@@ -1260,6 +1265,11 @@ export class World {
       } else if (this.mood === 'night') {
         this.moodCol.set('#3d55b8');
         add = 0.12;
+      } else if (this.mood === 'facility') {
+        // cold, dim and unsteady: the lights dip now and then
+        this.moodCol.set('#6f86c8');
+        const dip = Math.sin(t * 0.7) * Math.sin(t * 2.3) > 0.82 ? 0.45 : 1;
+        add = 0.2 * dip;
       } else {
         // camp fire: warm, flickering
         this.moodCol.set('#ffab66');

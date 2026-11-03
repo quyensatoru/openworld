@@ -10,7 +10,7 @@ import { BarPanel, CinemaPanel } from './Cinema';
 import { ArcadePill, ArcadeWindow, LiftPanel } from './Arcade';
 import { KaraPhonesAsk, KaraScore, KaraZoomBar, KaraokePanel } from './Karaoke';
 import { WolfEnd, WolfNight, WolfPanel } from './Werewolf';
-import { MoleActions, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal } from './Mole';
+import { MoleActions, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal, MoleSplash } from './Mole';
 import { MoleTaskModal } from './MoleTasks';
 import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
 import { MeetingTvButton } from './MeetingTv';
@@ -93,6 +93,8 @@ export function Office() {
       <WolfNight />
       <MoleFog />
       <MoleMeeting />
+      <MoleEject />
+      <MoleSplash />
       <MoleReveal />
       <MoleEnd />
       <MoleTaskModal />
