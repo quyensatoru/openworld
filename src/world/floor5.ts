@@ -369,7 +369,8 @@ export class Floor5Fx {
       }
     for (const id of mine) {
       if (this.markers.has(id)) continue;
-      const st = STATION_BY_ID.get(id)!;
+      const st = STATION_BY_ID.get(id);
+      if (!st) continue;
       const g = new THREE.Group();
       const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.6, 32), new THREE.MeshBasicMaterial({ color: '#ffd23f', transparent: true, opacity: 0.85, toneMapped: false, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2;

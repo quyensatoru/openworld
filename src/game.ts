@@ -493,7 +493,7 @@ class Game {
     net.on('kara', ({ s }) => this.applyKara(s));
     net.on('karaReact', ({ id, e }) => this.onKaraReact(id, e));
     net.on('wolf', ({ v }) => this.applyWolf(v));
-    net.on('mole', ({ v }) => this.applyMole(v));
+    net.on('mole', ({ v }) => this.applyMole(this.cleanMole(v)));
     net.on('moleFx', ({ fx }) => this.onMoleFx(fx));
     net.on('snake', ({ f }) => {
       setState({ snake: f });
@@ -1334,6 +1334,31 @@ class Game {
   }
 
   private moleBadges = new Set<string>();
+
+  private staleWarned = false;
+  /**
+   * Make a game view safe to draw: during a deploy the server can briefly run an older build
+   * (stations / fields this client doesn't know) — drop what we can't place instead of crashing.
+   */
+  private cleanMole(v: MoleView): MoleView {
+    const stale = !Array.isArray(v.doors);
+    if (stale && !this.staleWarned && v.phase !== 'lobby') {
+      this.staleWarned = true;
+      toast('⏳ Máy chủ đang chuyển sang bản mới — đợi vài giây, tải lại trang rồi bắt đầu lại ván nhé.', 'warn', 8000);
+    }
+    return {
+      ...v,
+      doors: (v.doors ?? []).filter((id) => DOOR_BY_ID.has(id)),
+      hidden: v.hidden ?? [],
+      bodies: v.bodies ?? [],
+      locks: (v.locks ?? []).filter((l) => DOOR_BY_ID.has(l.door)),
+      me: {
+        ...v.me,
+        vent: v.me.vent && VENT_BY_ID.has(v.me.vent) ? v.me.vent : null,
+        tasks: (v.me.tasks ?? []).filter((t) => STATION_BY_ID.has(t.st)),
+      },
+    };
+  }
 
   private applyMole(v: MoleView) {
     const prev = getState().mole;

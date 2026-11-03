@@ -4,6 +4,7 @@ import { STATUS_META } from '../../shared/protocol';
 import { game } from '../game';
 import { loadPref, savePref } from '../profile';
 import { getState, setState, useStore } from '../store';
+import { Safe } from './Safe';
 import { FpLookControls } from './FpLook';
 import { CharacterCreator } from './CharacterCreator';
 import { BigScreen } from './BigScreen';
@@ -71,41 +72,41 @@ export function Office() {
     <div className="office" ref={ref}>
       {glError && <GraphicsHelp />}
       <div className={`hud${theater ? ' theater' : ''}${inBar || inKara ? ' bar-mode' : ''}${inKara ? ' kara-mode' : ''}${inWolf ? ' wolf-mode' : ''}${inMole ? ' mole-mode' : ''}${theater && idle ? ' idle' : ''}`}>
-        <TopBar />
-        <VideoStrip />
-        <PlayerCard />
-        <Minimap />
-        {panel && <SidePanel />}
-        <CinemaPanel />
-        <BarPanel />
-        <ArcadePill />
-        <KaraokePanel />
-        <KaraZoomBar />
-        <WolfPanel />
-        <MolePanel />
-        <MoleHud />
-        <MoleActions />
-        <MoleVent />
-        <LiftPanel />
-        <Prompt />
-        <VoiceStatus />
-        <MeetingTvButton />
-        <Toolbar />
-        <Banners />
+        <Safe><TopBar /></Safe>
+        <Safe><VideoStrip /></Safe>
+        <Safe><PlayerCard /></Safe>
+        <Safe><Minimap /></Safe>
+        {panel && <Safe><SidePanel /></Safe>}
+        <Safe><CinemaPanel /></Safe>
+        <Safe><BarPanel /></Safe>
+        <Safe><ArcadePill /></Safe>
+        <Safe><KaraokePanel /></Safe>
+        <Safe><KaraZoomBar /></Safe>
+        <Safe><WolfPanel /></Safe>
+        <Safe><MolePanel /></Safe>
+        <Safe><MoleHud /></Safe>
+        <Safe><MoleActions /></Safe>
+        <Safe><MoleVent /></Safe>
+        <Safe><LiftPanel /></Safe>
+        <Safe><Prompt /></Safe>
+        <Safe><VoiceStatus /></Safe>
+        <Safe><MeetingTvButton /></Safe>
+        <Safe><Toolbar /></Safe>
+        <Safe><Banners /></Safe>
       </div>
-      <WolfNight />
-      <MoleFog />
-      <MoleMeeting />
-      <MoleEject />
-      <MoleSplash />
-      <MoleReveal />
-      <MoleEnd />
-      <MoleTaskModal />
-      <KaraScore />
-      <KaraPhonesAsk />
-      <WolfEnd />
-      <ClaudeScreenModal />
-      <ArcadeWindow />
+      <Safe><WolfNight /></Safe>
+      <Safe><MoleFog /></Safe>
+      <Safe><MoleMeeting /></Safe>
+      <Safe><MoleEject /></Safe>
+      <Safe><MoleSplash /></Safe>
+      <Safe><MoleReveal /></Safe>
+      <Safe><MoleEnd /></Safe>
+      <Safe><MoleTaskModal /></Safe>
+      <Safe><KaraScore /></Safe>
+      <Safe><KaraPhonesAsk /></Safe>
+      <Safe><WolfEnd /></Safe>
+      <Safe><ClaudeScreenModal /></Safe>
+      <Safe><ArcadeWindow /></Safe>
       {kanbanOpen && <Kanban />}
       {creatorOpen && <CharacterCreator mode="edit" onDone={() => setState({ creatorOpen: false })} />}
       {settingsOpen && <Settings />}

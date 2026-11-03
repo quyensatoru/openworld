@@ -199,7 +199,8 @@ function InGame({ v }: { v: MoleView }) {
       <div className="mp-label">{mole ? 'Việc giả (để trà trộn)' : 'Nhiệm vụ của bạn'}</div>
       <ul className="mp-tasks">
         {me.tasks.map((t) => {
-          const st = STATION_BY_ID.get(t.st)!;
+          const st = STATION_BY_ID.get(t.st);
+          if (!st || !TASK_META[t.kind]) return null;
           return (
             <li key={t.st} className={t.done ? 'done' : ''}>
               <span>{TASK_META[t.kind].emoji}</span>

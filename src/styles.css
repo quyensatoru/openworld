@@ -5040,3 +5040,26 @@ input[type='range'] {
   color: var(--muted, #8a90a6);
   font-size: 11.5px;
 }
+
+/* last-resort crash card (instead of a white screen) */
+.crash-card {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #0f1320;
+  color: #e8ecff;
+  z-index: 100;
+  padding: 16px;
+}
+.crash-card > div {
+  max-width: 460px;
+  display: grid;
+  gap: 12px;
+  text-align: center;
+}
+.crash-card code {
+  font-size: 12px;
+  color: #ff9aa8;
+  word-break: break-word;
+}
