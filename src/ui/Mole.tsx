@@ -2,7 +2,7 @@
 // (kill, report, sabotage), alerts, the meeting + vote card, role reveal, the end screen and the
 // fog of war overlay.
 import { useEffect, useRef, useState } from 'react';
-import { MOLE_MAX, MOLE_MIN, ROOM_META, STATION_BY_ID, TASK_META, molesFor, type MoleRoom, type MoleView } from '../../shared/mole';
+import { LOCKABLE_ROOMS, MOLE_MAX, MOLE_MIN, ROOM_META, STATION_BY_ID, TASK_META, VENT_BY_ID, molesFor, ventLinks, type MoleView } from '../../shared/mole';
 import { game } from '../game';
 import { serverNow, setState, useStore } from '../store';
 import { AvatarDot } from './common';
@@ -14,7 +14,7 @@ function useTick(ms: number) {
     return () => clearInterval(t);
   }, [ms]);
 }
-const onF5 = (zone: string | undefined) => !!zone && (zone === 'hall5' || zone.startsWith('f5-'));
+const onF5 = (zone: string | undefined) => !!zone && zone.startsWith('f5-');
 const secs = (ms: number) => Math.max(0, Math.ceil(ms / 1000));
 const mmss = (ms: number) => {
   const s = secs(ms);
@@ -259,6 +259,7 @@ export function MoleActions() {
   useTick(200);
   const target = game.moleTarget();
   const body = game.moleBody();
+  const vent = game.moleVentNear();
   const ref = useRef({ target, body });
   ref.current = { target, body };
   useEffect(() => {
@@ -286,7 +287,13 @@ export function MoleActions() {
           <kbd>R</kbd>
         </button>
       )}
-      {mole && v.me.alive && (
+      {vent && (
+        <button className="ma-btn vent" onClick={() => game.mole({ a: 'vent', vent })}>
+          🕳️<span>Chui ống</span>
+          <kbd>E</kbd>
+        </button>
+      )}
+      {mole && v.me.alive && !v.me.vent && (
         <button className={`ma-btn kill${target && killIn <= 0 ? ' ready' : ''}`} disabled={!target || killIn > 0} onClick={() => target && game.mole({ a: 'kill', target })}>
           🔪<span>{killIn > 0 ? `${secs(killIn)}s` : 'Giết'}</span>
           <kbd>Q</kbd>
@@ -301,12 +308,14 @@ export function MoleActions() {
             <div className="ma-menu">
               <button onClick={() => (setSab(false), game.mole({ a: 'sabotage', kind: 'lights' }))}>💡 Cúp điện</button>
               <button onClick={() => (setSab(false), game.mole({ a: 'sabotage', kind: 'crit' }))}>🚨 Quá tải server</button>
-              <div className="ma-sub">🔒 Khoá cửa phòng:</div>
-              {(['server', 'design', 'archive', 'print', 'meet', 'canteen', 'med'] as MoleRoom[]).map((r) => (
-                <button key={r} onClick={() => (setSab(false), game.mole({ a: 'sabotage', kind: 'door', room: r }))}>
-                  {ROOM_META[r].name}
-                </button>
-              ))}
+              <div className="ma-sub">🔒 Sập cửa, nhốt cả phòng:</div>
+              <div className="ma-rooms">
+                {LOCKABLE_ROOMS.map((r) => (
+                  <button key={r} onClick={() => (setSab(false), game.mole({ a: 'sabotage', kind: 'door', room: r }))}>
+                    {ROOM_META[r].name.replace(/^Phòng /, '')}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -315,6 +324,50 @@ export function MoleActions() {
   );
 }
 const useStoreGet = () => useStore.getState().mole;
+
+/** Inside a duct (moles): where it leads, and the way out. */
+export function MoleVent() {
+  const v = useStore((s) => s.mole);
+  const at = v?.phase === 'play' ? v.me.vent : null;
+  const links = at ? ventLinks(at) : [];
+  const ref = useRef(links);
+  ref.current = links;
+  useEffect(() => {
+    if (!at) return;
+    const key = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
+      if (e.code === 'KeyE' || e.code === 'Space') {
+        e.preventDefault();
+        game.mole({ a: 'vent', vent: null });
+      }
+      const i = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
+      if (i >= 0 && ref.current[i]) game.mole({ a: 'vent', vent: ref.current[i].id });
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [at]);
+  if (!at) return null;
+  const here = VENT_BY_ID.get(at);
+  return (
+    <div className="mole-vent">
+      <div className="mv-head">
+        🕳️ Đang trốn trong ống kỹ thuật
+        <small>{here ? ROOM_META[here.room].name : ''} · không ai nhìn thấy bạn</small>
+      </div>
+      <div className="mv-links">
+        {links.map((l, i) => (
+          <button key={l.id} onClick={() => game.mole({ a: 'vent', vent: l.id })}>
+            <kbd>{i + 1}</kbd> ➜ {ROOM_META[l.room].name}
+          </button>
+        ))}
+      </div>
+      <button className="mv-out" onClick={() => game.mole({ a: 'vent', vent: null })}>
+        ⬆️ Chui ra <kbd>E</kbd>
+      </button>
+    </div>
+  );
+}
 
 // ------------------------------------------------------------------ meeting + vote
 export function MoleMeeting() {

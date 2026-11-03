@@ -5,7 +5,7 @@ import type { ArcadeMsg } from '../shared/arcade';
 import { BAR, BAR_SCREEN, CINEMA_SCREEN, FLOOR_H, KARA_SCREEN, MIC_SPOTS, SEAT_BY_ID, ZONE_BY_ID, floorOf, groundAt, onStairs, type Seat } from '../shared/map';
 import { FX_PRESETS, KARA_SCORE_MS, type KaraMsg, type KaraState, type MicFx } from '../shared/karaoke';
 import { ROLE_META, type WolfMsg, type WolfView } from '../shared/werewolf';
-import { MOLE_DOORS, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, STATION_BY_ID, VISION, doorRect, meetingSpot, type MoleFx, type MoleMsg, type MoleView } from '../shared/mole';
+import { DOOR_BY_ID, MOLE_BOARD, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, MOLE_VENTS, MOLE_VENT_RANGE, STATION_BY_ID, VENT_BY_ID, VISION, doorMid, doorRect, meetingSpot, type MoleFx, type MoleMsg, type MoleView } from '../shared/mole';
 import { Ambience, MUSIC_BPM } from './audio/ambience';
 import { CinemaPlayer } from './cinema/player';
 import { ClaudeScreens, isLive } from './world/claude-screen';
@@ -28,7 +28,7 @@ import {
 import { Net, wsUrl } from './net/socket';
 import { loadPref, loadProfile, saveProfile, savePref } from './profile';
 import { RelayMedia } from './rtc/relay';
-import { getState, nameOf, playerById, serverNow, setState, toast } from './store';
+import { getState, nameOf, playerById, serverNow, setState, toast, type FpLook } from './store';
 import { askNotificationPermission, chime, flashTitle, notify } from './ui/notify';
 import { World } from './world/engine';
 
@@ -166,6 +166,8 @@ class Game {
 
   private startWith(world: World) {
     this.world = world;
+    world.interactLabel = (id) => this.moleLabel(id);
+    world.setFpLook(getState().fpLook);
     world.serverClock = () => serverNow() / 1000;
     world.beatClock = () => (serverNow() / 1000) * (MUSIC_BPM / 60);
 
@@ -378,13 +380,16 @@ class Game {
       const night = ph === 'night' || ph === 'witch' || ph === 'reveal';
       this.world?.setDim(0, night ? 1 : 0.62, night ? 'night' : 'camp');
     }
-    if (this.zoneId === 'hall5' || this.zoneId.startsWith('f5-')) {
+    if (this.zoneId.startsWith('f5-')) {
       const mv = getState().mole;
       const blackout = !!mv && mv.phase === 'play' && mv.lights > serverNow() && mv.me.inGame && mv.me.alive && mv.me.role === 'crew';
-      // floor 5 is always gloomy; a blackout makes it nearly pitch black for employees
-      this.world?.setDim(0, blackout ? 0.97 : 0.8, blackout ? 'night' : 'facility');
+      // floor 5: lamps on = the room you're in is lit (everything else is under the shroud);
+      // a blackout makes it nearly pitch black for employees
+      this.world?.setDim(0, blackout ? 0.97 : 0.32, blackout ? 'night' : 'facility');
+      this.world?.office.setF5Lamps(!(mv && mv.phase === 'play' && mv.lights > serverNow()));
     }
     this.ambience?.setQuietZone(inside || ZONE_BY_ID.get(this.zoneId)?.kind === 'focus' || inKara || this.zoneId === 'wolfroom');
+    this.ambience?.setHum(this.zoneId.startsWith('f5-'));
     if (inside !== this.wasInCinema) {
       this.wasInCinema = inside;
       // entering: show the controls unless a film is already running (then keep them out of the way)
@@ -911,7 +916,7 @@ class Game {
       netcafe: { x: 151.2, z: 17.6 },
       karaoke: { x: 190.2, z: 17.4 },
       wolfroom: { x: 210.2, z: 16.8 },
-      mole: { x: 255.0, z: 21.6 },
+      mole: { x: MOLE_BOARD.x, z: MOLE_BOARD.z + 1.6 },
     }[to];
     if (!w.route(target.x, target.z, undefined, true)) return;
     if (this.autoFirstPerson) {
@@ -1340,8 +1345,20 @@ class Game {
     w.office.f5.update(v, now);
     w.office.f5.drawBoard(v);
     const live = v.me.inGame && v.phase !== 'lobby' && v.phase !== 'starting' && v.phase !== 'end';
-    // locked doors are walls for the players
-    w.setExtraRects(live ? v.locks.filter((l) => l.until > now).map((l) => doorRect(MOLE_DOORS.find((d) => d.id === l.door)!)) : []);
+    // shut doors are walls (ghosts drift through them)
+    const ghost = live && !v.me.alive;
+    w.setExtraRects(ghost ? [] : v.doors.map((id) => DOOR_BY_ID.get(id)).filter((d) => !!d).map((d) => doorRect(d!)));
+    w.setHidden(v.hidden);
+    // in a duct: sit at the hatch you're under, frozen, till you climb out
+    if (v.me.vent !== (prev?.me.vent ?? null)) {
+      const vent = v.me.vent ? VENT_BY_ID.get(v.me.vent) : null;
+      if (vent) {
+        w.setFrozen(false);
+        w.teleport(vent.x, vent.z, 0);
+        w.setFrozen(true);
+        if (prev?.me.vent) this.ambience?.sfx('ventMove');
+      } else if (v.phase === 'play') w.setFrozen(false);
+    }
     this.applyMoleVision(v);
     // name tags: ghosts (for ghosts) and fellow moles
     const badges = new Map<string, string>();
@@ -1387,17 +1404,37 @@ class Game {
       const done = (x: MoleView | null) => x?.me.tasks.filter((t) => t.done).length ?? 0;
       if (done(v) > done(prev)) this.ambience?.sfx('task');
     }
-    if (this.zoneId === 'hall5' || this.zoneId.startsWith('f5-')) this.onCinemaZone();
+    if (this.zoneId.startsWith('f5-')) this.onCinemaZone();
   }
 
   private onMoleFx(fx: MoleFx) {
+    const near = (x: number, z: number, r: number) => {
+      const me = getState().me;
+      const pos = me ? this.world?.positionOf(me.id) : null;
+      return !!pos && Math.hypot(pos.x - x, pos.z - z) < r;
+    };
+    if (fx.kind === 'door') {
+      const d = DOOR_BY_ID.get(fx.door);
+      if (!d) return;
+      const m = doorMid(d);
+      if (near(m.x, m.z, fx.locked ? 16 : 11)) this.ambience?.sfx(fx.locked ? 'doorLock' : 'door');
+      return;
+    }
+    if (fx.kind === 'vent') {
+      const v = VENT_BY_ID.get(fx.vent);
+      if (!v) return;
+      this.world?.office.f5.ventFx(fx.vent);
+      if (near(v.x, v.z, 12) && (this.world?.canSee(v.x, v.z) ?? false)) this.ambience?.sfx('vent');
+      else if (getState().mole?.me.vent) this.ambience?.sfx('vent');
+      return;
+    }
     if (fx.kind === 'killed') {
       setState({ moleSplash: { kind: 'killed', by: fx.by, at: Date.now() }, moleTask: null });
       this.ambience?.sfx('stab');
       window.setTimeout(() => this.ambience?.sfx('death'), 900);
     } else if (fx.kind === 'kill') {
       setState({ moleSplash: { kind: 'kill', body: fx.victim, at: Date.now() } });
-      this.ambience?.sfx('stab');
+      this.ambience?.sfx('kill');
     } else if (fx.kind === 'scan') {
       this.world?.office.f5.scan(fx.x, fx.z);
       const me = getState().me;
@@ -1459,9 +1496,36 @@ class Game {
     return v.me.role === 'mole' ? VISION.mole : v.lights > serverNow() ? VISION.dark : VISION.crew;
   }
 
+  /** What the E prompt says for floor-5 things (null = no prompt here). */
+  private moleLabel(id: string): string | null {
+    const v = getState().mole;
+    const live = !!v && v.phase !== 'lobby' && v.phase !== 'starting' && v.phase !== 'end';
+    if (v?.me.vent) return null; // in a duct: the duct panel does the talking
+    if (id.startsWith('mole-door:')) {
+      if (live && (!v!.me.inGame || !v!.me.alive || v!.phase !== 'play')) return null;
+      const door = id.slice(10);
+      if (v?.locks.some((l) => l.door === door && l.until > serverNow())) return '🔒 Cửa đang bị khoá';
+      return v?.doors.includes(door) ? '🚪 Mở cửa' : '🚪 Đóng cửa';
+    }
+    if (id.startsWith('mole-vent:')) {
+      if (!v || v.phase !== 'play' || v.me.role !== 'mole' || !v.me.alive) return null;
+      return '🕳️ Chui vào ống kỹ thuật';
+    }
+    return '';
+  }
+
   private moleInteract(id: string) {
     const v = getState().mole;
     if (id === 'mole-board') return setState({ molePanel: true });
+    if (id.startsWith('mole-door:')) {
+      const door = id.slice(10);
+      if (v?.locks.some((l) => l.door === door && l.until > serverNow())) return toast('🔒 Cửa đang bị khoá — đợi một lát.', 'warn', 2500);
+      return this.mole({ a: 'door', door });
+    }
+    if (id.startsWith('mole-vent:')) {
+      if (!v || v.phase !== 'play' || v.me.role !== 'mole' || !v.me.alive) return;
+      return this.mole({ a: 'vent', vent: id.slice(10) });
+    }
     if (!v || !v.me.inGame || v.phase !== 'play') {
       if (id.startsWith('st-')) toast('🕵️ Nhiệm vụ chỉ làm được trong một ván Nội Gián — tham gia ở bảng trong sảnh tầng 5.', 'info', 4000);
       return;
@@ -1499,12 +1563,28 @@ class Game {
     else if (t.fake) this.ambience?.sfx('task');
   }
 
+  /** The duct hatch a (living, playing) mole stands on, or null. */
+  moleVentNear(): string | null {
+    const v = getState().mole;
+    const w = this.world;
+    const me = getState().me;
+    if (!v || !w || !me || v.me.role !== 'mole' || !v.me.alive || v.phase !== 'play' || v.me.vent) return null;
+    const pos = w.positionOf(me.id);
+    if (!pos) return null;
+    let best: { id: string; d: number } | null = null;
+    for (const vt of MOLE_VENTS) {
+      const d = Math.hypot(vt.x - pos.x, vt.z - pos.z);
+      if (d <= MOLE_VENT_RANGE && (!best || d < best.d)) best = { id: vt.id, d };
+    }
+    return best?.id ?? null;
+  }
+
   /** Nearest living employee within reach (for a mole), or null. */
   moleTarget(): string | null {
     const v = getState().mole;
     const w = this.world;
     const me = getState().me;
-    if (!v || !w || !me || v.me.role !== 'mole' || !v.me.alive || v.phase !== 'play') return null;
+    if (!v || !w || !me || v.me.role !== 'mole' || !v.me.alive || v.phase !== 'play' || v.me.vent) return null;
     const pos = w.positionOf(me.id);
     if (!pos) return null;
     let best: { id: string; d: number } | null = null;
@@ -1620,6 +1700,14 @@ class Game {
     startOfDay.setHours(0, 0, 0, 0);
     const done = Object.values(s.tasks).filter((t) => t.doneAt && t.doneAt >= startOfDay.getTime()).length;
     this.world?.office.updateWhiteboard({ online: Object.keys(s.players).length + (s.me ? 1 : 0), doneToday: done, officeName: s.officeName });
+  }
+
+  /** First-person look: sensitivity, smoothing, head bob (saved on this device). */
+  setFpLook(v: Partial<FpLook>) {
+    const next = { ...getState().fpLook, ...v };
+    savePref('fpLook', next);
+    setState({ fpLook: next });
+    this.world?.setFpLook(next);
   }
 
   setQuality(q: 'high' | 'low') {

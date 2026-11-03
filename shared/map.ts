@@ -1,5 +1,5 @@
 // Office layout shared by the client (3D build, collision, path finding) and the server (zones).
-import { BELL, CRIT, FUSE, ROOM_META, STATIONS, TASK_META, type MoleTaskKind } from './mole';
+import { BELL, CRIT, FUSE, FUSE_SPOT, MOLE_BOARD, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, MOLE_WALLS, ROOM_META, STATIONS, TASK_META, doorMid, type MoleTaskKind } from './mole';
 // Units are metres. x grows to the east, z grows to the south, y is up.
 // Character yaw `ry`: 0 = facing +z (south), PI/2 = facing +x (east).
 
@@ -87,7 +87,16 @@ export type FurnitureKind =
   | 'fuseBox'
   | 'moleTable'
   | 'terminal'
-  | 'moleBoard';
+  | 'moleBoard'
+  | 'partition'
+  | 'shelfRack'
+  | 'crates'
+  | 'vending'
+  | 'medCurtain'
+  | 'pillar'
+  | 'cabinet'
+  | 'bed'
+  | 'monitorWall';
 
 export interface Furniture {
   id: string;
@@ -310,10 +319,8 @@ export const ZONES: Zone[] = [
   { id: 'karaoke', name: 'Phòng Karaoke (tầng 4)', kind: 'karaoke', floor: 'carpet', ...KARA },
   { id: 'wolfroom', name: 'Làng Ma Sói (tầng 4)', kind: 'wolf', floor: 'wood', ...WOLF },
   { id: 'hall4', name: 'Sảnh tầng 4', kind: 'lobby', floor: 'stone', ...HALL4 },
-  ...(['server', 'design', 'archive', 'print', 'meet', 'canteen', 'med'] as const).map(
-    (k): Zone => ({ id: `f5-${k}`, name: ROOM_META[k].name, kind: 'mole', floor: k === 'meet' ? 'carpet' : k === 'canteen' ? 'tile' : 'wood', x0: ROOM_META[k].x0, z0: ROOM_META[k].z0, x1: ROOM_META[k].x1, z1: ROOM_META[k].z1 }),
-  ),
-  { id: 'hall5', name: 'Sảnh tầng 5', kind: 'lobby', floor: 'stone', ...HALL5 },
+  // floor 5: every room is one zone id, made of one or more rectangles (L-shaped rooms, corridors)
+  ...MOLE_ROOMS.flatMap((k) => ROOM_META[k].rects.map((r): Zone => ({ id: `f5-${k}`, name: ROOM_META[k].name, kind: 'mole', floor: ROOM_META[k].floor, ...r }))),
 ];
 
 const PI = Math.PI;
@@ -355,24 +362,8 @@ export const WALLS: Wall[] = [
   { x0: STAIRWAYS[3].x1 + 3 * UP_DX, z0: 26.0, x1: STAIRWAYS[3].x1 + 3 * UP_DX, z1: OFFICE_D, kind: 'hidden' },
   { x0: STAIRWAYS[3].x0 + 4 * UP_DX, z0: 26.0, x1: STAIRWAYS[3].x1 + 4 * UP_DX, z1: 26.0, kind: 'rail' },
   { x0: STAIRWAYS[3].x0 + 4 * UP_DX, z0: 26.0, x1: STAIRWAYS[3].x0 + 4 * UP_DX, z1: OFFICE_D, kind: 'rail' },
-  // ---- floor 5 ("Nội Gián"): 3×2 rooms over the hall, doorways cut out (see MOLE_DOORS)
-  { x0: ROOF5.x0, z0: 0, x1: ROOF5.x1, z1: 0, kind: 'up' },
-  { x0: ROOF5.x1, z0: 0, x1: ROOF5.x1, z1: ROOF5.z1, kind: 'up' },
-  { x0: ROOF5.x0, z0: ROOF5.z1, x1: ROOF5.x1, z1: ROOF5.z1, kind: 'up' },
-  { x0: ROOF5.x0, z0: 0, x1: ROOF5.x0, z1: ROOF5.z1, kind: 'up' },
-  { x0: 252, z0: 19, x1: 252, z1: 22, kind: 'up' },
-  { x0: 252, z0: 24, x1: 252, z1: ROOF5.z1, kind: 'up' },
-  ...[252, 268].flatMap((x): Wall[] => [
-    { x0: x, z0: 0, x1: x, z1: 3.5, kind: 'up' },
-    { x0: x, z0: 5.5, x1: x, z1: 13, kind: 'up' },
-    { x0: x, z0: 15, x1: x, z1: 19, kind: 'up' },
-  ]),
-  ...[9, 19].flatMap((z): Wall[] => [
-    { x0: 240, z0: z, x1: 245, z1: z, kind: 'up' },
-    { x0: 247, z0: z, x1: 259, z1: z, kind: 'up' },
-    { x0: 261, z0: z, x1: 273, z1: z, kind: 'up' },
-    { x0: 275, z0: z, x1: 280, z1: z, kind: 'up' },
-  ]),
+  // ---- floor 5 ("Nội Gián"): generated from the floor plan grid (shared/mole.ts), doorways cut out
+  ...MOLE_WALLS.map((w): Wall => ({ ...w, kind: 'up' })),
   // ---- floor 4: karaoke | werewolf village, hall along the south (doors 189..191.4, 209..211.4)
   { x0: ROOF4.x0, z0: 0, x1: KARA.x1, z1: 0, kind: 'up' },
   { x0: WOLF.x0, z0: 0, x1: ROOF4.x1, z1: 0, kind: 'up' },
@@ -774,6 +765,8 @@ for (const l of LIFTS) {
 
 // ------------------------------------------------------------------ floor 5: "Nội Gián"
 {
+  const X = (lx: number) => 240 + lx; // floor-plan (local) x → logical x
+  const Z = (k: string) => `f5-${k}`;
   // task stations (what you see matches the job)
   const furnitureFor: Record<MoleTaskKind, { kind: FurnitureKind; w: number; d: number }> = {
     coffee: { kind: 'coffeeMachine', w: 0.6, d: 0.5 },
@@ -787,58 +780,123 @@ for (const l of LIFTS) {
   };
   for (const st of STATIONS) {
     const f = furnitureFor[st.kind];
-    FURNITURE.push({ id: st.id, kind: f.kind, x: st.x, z: st.z, ry: st.ry, w: f.w, d: f.d, solid: true, zone: st.room === 'hall5' ? 'hall5' : `f5-${st.room}` });
+    FURNITURE.push({ id: st.id, kind: f.kind, x: st.x, z: st.z, ry: st.ry, w: f.w, d: f.d, solid: true, zone: Z(st.room) });
     const m = TASK_META[st.kind];
     INTERACTABLES.push({ id: st.id, kind: 'mole', x: st.x + Math.sin(st.ry) * 0.95, z: st.z + Math.cos(st.ry) * 0.95, radius: 1.5, label: `${m.emoji} ${m.name}` });
   }
-  FURNITURE.push({ id: 'fuseBox-0', kind: 'fuseBox', x: FUSE.x, z: FUSE.z, ry: FUSE.ry, w: 0.9, d: 0.25, solid: true, zone: 'f5-server' });
-  INTERACTABLES.push({ id: 'mole-fuse', kind: 'mole', x: FUSE.x + 0.9, z: FUSE.z, radius: 1.4, label: '🔌 Hộp cầu dao (sửa khi mất điện)' });
-  FURNITURE.push({ id: 'moleTable-0', kind: 'moleTable', x: BELL.x, z: BELL.z, ry: 0, w: 3.4, d: 3.4, solid: true, zone: 'f5-meet' });
+  FURNITURE.push({ id: 'fuseBox-0', kind: 'fuseBox', x: FUSE.x, z: FUSE.z, ry: FUSE.ry, w: 0.9, d: 0.25, solid: true, zone: Z('elec') });
+  INTERACTABLES.push({ id: 'mole-fuse', kind: 'mole', x: FUSE_SPOT.x, z: FUSE_SPOT.z, radius: 1.4, label: '🔌 Hộp cầu dao (sửa khi mất điện)' });
+  FURNITURE.push({ id: 'moleTable-0', kind: 'moleTable', x: BELL.x, z: BELL.z, ry: 0, w: 3.4, d: 3.4, solid: true, zone: Z('meet') });
   INTERACTABLES.push({ id: 'mole-bell', kind: 'mole', x: BELL.x, z: BELL.z + 2.4, radius: 2.6, label: '🔔 Chuông họp khẩn' });
-  // decoration per room
-  const R = ROOM_META;
-  for (let i = 0; i < 4; i++) addF('serverRack', R.server.x0 + 0.45, 0.9 + i * 0.95, 0.6, 0.9, PI / 2, true, 'f5-server');
-  for (let i = 0; i < 3; i++) addF('serverRack', R.server.x0 + 6.0 + i * 0.95, 0.45, 0.9, 0.6, 0, true, 'f5-server');
-  for (const [x, z] of [[R.design.x0 + 5, 5.3], [R.design.x0 + 11, 5.3]] as const) {
-    addF('desk', x, z, 1.4, 0.7, 0, true, 'f5-design');
-    addF('desk', x, z + 0.75, 1.4, 0.7, PI, true, 'f5-design');
-  }
-  addF('bigPlant', R.design.x1 - 0.6, 8.3, 0.7, 0.7, 0, true, 'f5-design');
-  addF('bookshelf', R.archive.x0 + 0.35, 5.0, 6, 0.45, PI / 2, true, 'f5-archive');
-  addF('filing', R.archive.x0 + 4.5, 4.4, 1.0, 0.55, 0, true, 'f5-archive');
-  addF('filing', R.archive.x0 + 7.0, 4.4, 1.0, 0.55, 0, true, 'f5-archive');
-  addF('filing', R.archive.x0 + 4.5, 5.0, 1.0, 0.55, PI, true, 'f5-archive');
-  addF('filing', R.archive.x0 + 7.0, 5.0, 1.0, 0.55, PI, true, 'f5-archive');
-  addF('printer', R.print.x0 + 0.6, 11.8, 0.9, 0.7, PI / 2, true, 'f5-print');
-  addF('printer', R.print.x0 + 0.6, 16.4, 0.9, 0.7, PI / 2, true, 'f5-print');
-  addF('counter', R.print.x0 + 6.5, 14.5, 3.0, 0.8, 0, true, 'f5-print');
-  addF('counter', R.canteen.x1 - 0.45, 15.6, 0.9, 4.0, 0, true, 'f5-canteen');
-  addF('fridge', R.canteen.x1 - 0.5, 10.0, 0.9, 0.8, -PI / 2, true, 'f5-canteen');
-  for (const [x, z] of [[R.canteen.x0 + 3.5, 12.5], [R.canteen.x0 + 3.5, 16.0]] as const) {
-    addF('roundTable', x, z, 1.0, 1.0, 0, true, 'f5-canteen');
-    addSeat('stool', x - 0.85, z, PI / 2, 'f5-canteen', 'Ghế căng tin');
-    addSeat('stool', x + 0.85, z, -PI / 2, 'f5-canteen', 'Ghế căng tin');
-  }
-  for (const [x, z] of [[R.meet.x0 + 0.7, 9.7], [R.meet.x1 - 0.7, 9.7], [R.meet.x0 + 0.7, 18.3], [R.meet.x1 - 0.7, 18.3]] as const) addF('plant', x, z, 0.5, 0.5, 0, true, 'f5-meet');
-  // hall 5: the game board + somewhere to wait
-  FURNITURE.push({ id: 'moleBoard-0', kind: 'moleBoard', x: 255.0, z: 19.25, ry: 0, w: 4.2, d: 0.2, solid: true, zone: 'hall5' });
-  INTERACTABLES.push({ id: 'mole-board', kind: 'mole', x: 255.0, z: 20.6, radius: 1.8, label: '🕵️ Bảng Nội Gián · tham gia' });
-  addF('sofa', 257.5, 27.45, 2.4, 0.9, PI, true, 'hall5');
-  addSeat('sofa', 256.95, 27.35, PI, 'hall5', 'Ghế chờ', 'hall5-1');
-  addSeat('sofa', 258.05, 27.35, PI, 'hall5', 'Ghế chờ', 'hall5-2');
-  // medical bay
-  addF('sofa', R.med.x0 + 0.6, 22.5, 2.4, 0.9, PI / 2, true, 'f5-med');
-  addF('sofa', R.med.x0 + 7.5, 27.4, 2.4, 0.9, PI, true, 'f5-med');
-  addF('waterCooler', R.med.x1 - 0.5, 20.0, 0.4, 0.4, -PI / 2, true, 'f5-med');
-  addF('bigPlant', R.med.x0 + 0.65, 19.8, 0.7, 0.7, 0, true, 'f5-med');
-  // critical-sabotage consoles
   for (const c of CRIT) {
-    FURNITURE.push({ id: c.id.replace('mole-', ''), kind: 'terminal', x: c.x, z: c.z, ry: c.ry, w: 1.0, d: 0.3, solid: true, zone: `f5-${c.room}` });
+    FURNITURE.push({ id: c.id.replace('mole-', ''), kind: 'terminal', x: c.x, z: c.z, ry: c.ry, w: 1.0, d: 0.3, solid: true, zone: Z(c.room) });
     INTERACTABLES.push({ id: c.id, kind: 'mole', x: c.x + Math.sin(c.ry) * 0.95, z: c.z + Math.cos(c.ry) * 0.95, radius: 1.4, label: '🚨 Bảng điều khiển server (sự cố)' });
   }
-  addF('bigPlant', 279.35, 27.35, 0.7, 0.7, 0, true, 'hall5');
-  addF('bigPlant', 279.35, 19.8, 0.7, 0.7, 0, true, 'hall5');
+  // doors (anyone can shut / open them) and ducts (moles only)
+  for (const d of MOLE_DOORS) {
+    const m = doorMid(d);
+    INTERACTABLES.push({ id: `mole-door:${d.id}`, kind: 'mole', x: m.x, z: m.z, radius: 1.5, label: '🚪 Cửa' });
+  }
+  for (const v of MOLE_VENTS) INTERACTABLES.push({ id: `mole-vent:${v.id}`, kind: 'mole', x: v.x, z: v.z, radius: 1.3, label: '🕳️ Ống kỹ thuật' });
+  // the game board (hall side of the meeting room's south wall) + somewhere to wait
+  FURNITURE.push({ id: 'moleBoard-0', kind: 'moleBoard', x: MOLE_BOARD.x, z: MOLE_BOARD.z, ry: 0, w: 3.2, d: 0.2, solid: true, zone: Z('hall') });
+  INTERACTABLES.push({ id: 'mole-board', kind: 'mole', x: MOLE_BOARD.x, z: MOLE_BOARD.z + 1.4, radius: 1.8, label: '🕵️ Bảng Nội Gián · tham gia' });
+
+  // furniture per room — tall pieces (racks, shelves, cabinets, screens) block the view, so every
+  // room has corners to hide behind
+  const f = (kind: FurnitureKind, lx: number, z: number, w: number, d: number, ry: number, room: string) => addF(kind, X(lx), z, w, d, ry, true, Z(room));
+  // Phòng Server: two rows of racks (a hot aisle between them) + racks down the side room
+  for (let i = 0; i < 5; i++) {
+    f('serverRack', 1.0 + i * 0.95, 2.6, 0.9, 0.6, 0, 'server');
+    f('serverRack', 1.0 + i * 0.95, 5.0, 0.9, 0.6, PI, 'server');
+  }
+  for (let i = 0; i < 3; i++) f('serverRack', 4.55, 9.6 + i * 0.95, 0.9, 0.6, -PI / 2, 'server');
+  f('cabinet', 6.8, 0.45, 1.0, 0.5, 0, 'server');
+  // Phòng Thiết Kế: two desk pods split by a tall screen, a corner behind another screen
+  for (const x of [11.0, 15.6]) {
+    f('desk', x, 3.6, 1.4, 0.7, 0, 'design');
+    f('desk', x, 4.35, 1.4, 0.7, PI, 'design');
+  }
+  f('partition', 13.3, 4.0, 3.2, 0.08, PI / 2, 'design');
+  f('partition', 16.45, 5.9, 2.9, 0.08, 0, 'design');
+  f('bookshelf', 8.35, 5.5, 2.0, 0.45, PI / 2, 'design');
+  f('bigPlant', 17.4, 0.6, 0.7, 0.7, 0, 'design');
+  // Phòng An Ninh: a wall of camera screens
+  f('monitorWall', 21.6, 0.45, 2.2, 0.6, 0, 'security');
+  // Kho Hồ Sơ: aisles of tall shelves
+  f('shelfRack', 24.8, 2.8, 3.0, 0.5, 0, 'archive');
+  f('shelfRack', 24.8, 4.6, 3.0, 0.5, 0, 'archive');
+  f('shelfRack', 28.9, 3.7, 3.0, 0.5, PI / 2, 'archive');
+  // Căng Tin: counter + fridge on the east wall, vending machines, tables
+  f('counter', 39.55, 3.5, 0.9, 5.0, 0, 'canteen');
+  f('fridge', 39.5, 7.1, 0.9, 0.8, -PI / 2, 'canteen');
+  f('vending', 33.5, 0.45, 0.95, 0.8, 0, 'canteen');
+  f('vending', 34.5, 0.45, 0.95, 0.8, 0, 'canteen');
+  f('vending', 30.55, 4.6, 0.95, 0.8, PI / 2, 'canteen');
+  for (const [x, z] of [[33.6, 4.0], [36.4, 4.0], [35.0, 6.8]] as const) {
+    f('roundTable', x, z, 1.0, 1.0, 0, 'canteen');
+    addSeat('stool', X(x) - 0.85, z, PI / 2, Z('canteen'), 'Ghế căng tin');
+    addSeat('stool', X(x) + 0.85, z, -PI / 2, Z('canteen'), 'Ghế căng tin');
+  }
+  // Kho Vật Tư: a cramped closet full of boxes
+  f('crates', 5.7, 9.6, 1.0, 0.9, 0, 'storage');
+  f('crates', 9.4, 13.4, 0.9, 0.9, 0.3, 'storage');
+  f('shelfRack', 5.3, 12.0, 2.0, 0.5, PI / 2, 'storage');
+  f('crates', 8.3, 9.55, 0.9, 0.8, -0.2, 'storage');
+  // Phòng In Ấn
+  f('printer', 0.7, 18.5, 0.9, 0.7, PI / 2, 'print');
+  f('counter', 6.0, 16.5, 3.0, 0.8, 0, 'print');
+  f('shelfRack', 7.5, 14.35, 2.4, 0.5, 0, 'print');
+  f('shelfRack', 8.6, 19.65, 2.2, 0.5, PI, 'print');
+  // Phòng Nhân Sự
+  f('desk', 15.2, 12.6, 1.4, 0.7, PI, 'hr');
+  f('partition', 15.9, 13.6, 3.8, 0.08, 0, 'hr');
+  f('filing', 17.4, 14.4, 1.0, 0.55, -PI / 2, 'hr');
+  // Phòng Nghỉ
+  f('sofa', 17.4, 17.6, 2.4, 0.9, -PI / 2, 'lounge');
+  f('bookshelf', 13.55, 16.4, 2.5, 0.45, 0, 'lounge');
+  f('arcade', 17.4, 20.4, 0.75, 0.7, PI, 'lounge');
+  // Phòng Họp Khẩn: open (the bell table) with a plant in each corner
+  for (const [x, z] of [[18.5, 9.5], [25.5, 9.5], [18.5, 19.5], [25.5, 19.5]] as const) f('plant', x, z, 0.5, 0.5, 0, 'meet');
+  // Phòng Điện: a row of tall cabinets makes two aisles
+  f('cabinet', 30.7, 12.5, 0.9, 0.5, PI / 2, 'elec');
+  f('cabinet', 30.7, 13.45, 0.9, 0.5, PI / 2, 'elec');
+  f('cabinet', 32.6, 9.4, 0.9, 0.5, 0, 'elec');
+  // Phòng Kế Toán
+  f('desk', 36.5, 13.4, 1.4, 0.7, PI, 'acct');
+  f('partition', 36.5, 12.6, 2.6, 0.08, 0, 'acct');
+  f('cabinet', 39.45, 15.3, 0.9, 0.5, -PI / 2, 'acct');
+  f('filing', 34.4, 15.55, 1.0, 0.55, PI, 'acct');
+  // Phòng Giám Đốc
+  f('desk', 35.6, 18.2, 1.8, 0.8, 0, 'boss');
+  f('bookshelf', 35.5, 16.3, 3.0, 0.45, 0, 'boss');
+  f('counter', 39.55, 18.6, 0.9, 1.4, 0, 'boss');
+  f('sofa', 33.5, 21.5, 2.4, 0.9, PI, 'boss');
+  f('bigPlant', 39.35, 16.5, 0.7, 0.7, 0, 'boss');
+  // Phòng Y Tế: beds behind curtains
+  for (const z of [22.0, 24.6]) f('bed', 1.1, z, 2.0, 0.9, PI / 2, 'med');
+  f('medCurtain', 1.35, 23.3, 2.5, 0.06, 0, 'med');
+  f('medCurtain', 1.35, 25.9, 2.5, 0.06, 0, 'med');
+  f('cabinet', 6.0, 27.6, 0.9, 0.5, PI, 'med');
+  f('waterCooler', 9.5, 27.5, 0.4, 0.4, -PI / 2, 'med');
+  f('bigPlant', 6.5, 20.5, 0.7, 0.7, 0, 'med');
+  // Sảnh tầng 5 + corridors
+  addF('sofa', X(15.0), 27.45, 2.4, 0.9, PI, true, Z('hall'));
+  addSeat('sofa', X(14.45), 27.35, PI, Z('hall'), 'Ghế chờ', 'hall5-1');
+  addSeat('sofa', X(15.55), 27.35, PI, Z('hall'), 'Ghế chờ', 'hall5-2');
+  f('pillar', 19.0, 24.0, 0.6, 0.6, 0, 'hall');
+  f('pillar', 31.0, 24.4, 0.6, 0.6, 0, 'hall');
+  f('bigPlant', 39.35, 27.35, 0.7, 0.7, 0, 'hall');
+  f('bigPlant', 39.35, 22.6, 0.7, 0.7, 0, 'hall');
+  f('crates', 38.8, 24.8, 1.0, 0.9, 0.2, 'hall');
+  f('crates', 22.5, 6.4, 0.9, 0.8, 0, 'corr');
+  f('crates', 30.4, 16.5, 0.9, 0.8, 0.15, 'corr');
+  f('crates', 26.5, 20.4, 0.9, 0.8, -0.1, 'corr');
+  f('plant', 8.6, 7.4, 0.5, 0.5, 0, 'corr');
 }
+
+/** Furniture tall enough to hide behind on floor 5 (blocks the line of sight). */
+export const TALL_KINDS = new Set<FurnitureKind>(['serverRack', 'shelfRack', 'bookshelf', 'filing', 'cabinet', 'crates', 'vending', 'fridge', 'partition', 'medCurtain', 'pillar', 'monitorWall']);
 
 export const SEAT_BY_ID = new Map(SEATS.map((s) => [s.id, s]));
 

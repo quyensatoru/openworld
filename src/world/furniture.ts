@@ -339,10 +339,19 @@ export function buildFurniture(f: Furniture, dyn: Dynamic): THREE.Group {
       rbox(g, f.w, 0.88, f.d, '#f3ede4', 0, 0.44, 0, 0.02);
       rbox(g, f.w + 0.04, 0.05, f.d + 0.02, C.wood, 0, 0.905, 0, 0.015);
       for (let z = -f.d / 2 + 0.6; z < f.d / 2; z += 0.9) rbox(g, 0.02, 0.5, 0.025, '#c9bfb2', -f.w / 2 - 0.005, 0.6, z, 0.01);
-      sph(g, 0.14, '#efe6d6', 0, 1.0, 1.4, 1, 0.5, 1);
-      sph(g, 0.06, '#f2c14e', 0.03, 1.06, 1.37);
-      sph(g, 0.06, '#e5566b', -0.05, 1.06, 1.45);
-      cyl(g, 0.08, 0.09, 0.22, '#c9ced6', 0, 1.04, -1.2);
+      // a fruit bowl and a jar on the worktop — along its long side, only when there is room
+      const long = Math.max(f.w, f.d);
+      if (long >= 1.6) {
+        const a = Math.min(1.4, long / 2 - 0.35);
+        const b = Math.min(1.2, long / 2 - 0.3);
+        const at = (t: number): [number, number] => (f.d >= f.w ? [0, t] : [t, 0]);
+        const [bx, bz] = at(a);
+        sph(g, 0.14, '#efe6d6', bx, 1.0, bz, 1, 0.5, 1);
+        sph(g, 0.06, '#f2c14e', bx + 0.03, 1.06, bz - 0.03);
+        sph(g, 0.06, '#e5566b', bx - 0.05, 1.06, bz + 0.05);
+        const [jx, jz] = at(-b);
+        cyl(g, 0.08, 0.09, 0.22, '#c9ced6', jx, 1.04, jz);
+      }
       break;
     }
     case 'coffeeMachine': {
@@ -835,6 +844,125 @@ export function buildFurniture(f: Furniture, dyn: Dynamic): THREE.Group {
       screen.position.set(0, 1.7, 0.03);
       g.add(screen);
       dyn.screen = screen;
+      break;
+    }
+    case 'partition': {
+      // a tall office screen: aluminium frame, fabric panel
+      const H = 1.75;
+      rbox(g, f.w, H - 0.06, 0.05, '#55607a', 0, (H - 0.06) / 2 + 0.03, 0, 0.012);
+      rbox(g, f.w + 0.02, 0.05, 0.07, '#b9c0cc', 0, H - 0.01, 0, 0.01);
+      for (const sx of [-1, 1]) rbox(g, 0.05, H, 0.07, '#b9c0cc', sx * (f.w / 2), H / 2, 0, 0.01);
+      for (const sx of [-1, 1]) rbox(g, 0.06, 0.03, 0.4, '#8a93a3', sx * (f.w / 2 - 0.15), 0.015, 0, 0.01);
+      break;
+    }
+    case 'shelfRack': {
+      // grey steel shelving full of boxes and binders
+      const H = 2.1;
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) rbox(g, 0.04, H, 0.04, '#7c8594', sx * (f.w / 2 - 0.02), H / 2, sz * (f.d / 2 - 0.02), 0.005);
+      const levels = 5;
+      const cols = ['#c9a477', '#b88f60', '#d8b98c', '#e5566b', '#6b8cff', '#efe6d6'];
+      for (let i = 0; i < levels; i++) {
+        const y = 0.08 + (i * (H - 0.1)) / (levels - 1);
+        rbox(g, f.w, 0.03, f.d, '#9aa3b1', 0, y, 0, 0.005);
+        if (i === levels - 1) break;
+        let x = -f.w / 2 + 0.08;
+        while (x < f.w / 2 - 0.2) {
+          const bw = 0.22 + r() * 0.2;
+          const bh = 0.2 + r() * 0.16;
+          if (r() > 0.18) g.add(mesh(rboxGeo(bw, bh, f.d - 0.08, 0.01), mat(cols[Math.floor(r() * cols.length)], { rough: 0.9 }), x + bw / 2, y + 0.015 + bh / 2, 0));
+          x += bw + 0.04;
+        }
+      }
+      break;
+    }
+    case 'crates': {
+      // a stack of cardboard boxes, slightly askew
+      const col = ['#c9a477', '#b88f60', '#d2ae80'];
+      let y = 0;
+      const n = 3 + (hash(f.id) % 2);
+      for (let i = 0; i < n; i++) {
+        const s = 1 - i * 0.12;
+        const w = f.w * s;
+        const d = f.d * s;
+        const h = 0.38 + r() * 0.12;
+        const box = mesh(rboxGeo(w, h, d, 0.015), mat(col[i % col.length], { rough: 0.95 }), (r() - 0.5) * 0.08, y + h / 2, (r() - 0.5) * 0.08);
+        box.rotation.y = (r() - 0.5) * 0.35;
+        g.add(box);
+        const tape = mesh(rboxGeo(w * 0.12, 0.005, d + 0.002, 0.001), mat('#e8dcc0'), 0, h / 2 + 0.002, 0);
+        box.add(tape);
+        y += h;
+      }
+      break;
+    }
+    case 'vending': {
+      const H = 1.9;
+      rbox(g, f.w, H, f.d, '#c8323f', 0, H / 2, 0, 0.04);
+      const glass = new THREE.Mesh(new THREE.PlaneGeometry(f.w * 0.62, H * 0.62), new THREE.MeshBasicMaterial({ color: '#cfe9ff', toneMapped: false, transparent: true, opacity: 0.85 }));
+      glass.position.set(-f.w * 0.12, H * 0.58, f.d / 2 + 0.005);
+      g.add(glass);
+      const snack = ['#f2c14e', '#5fa8a0', '#e5566b', '#6b8cff', '#f08a5d'];
+      for (let row = 0; row < 4; row++)
+        for (let c = 0; c < 4; c++) {
+          const s = mesh(rboxGeo(0.09, 0.14, 0.03, 0.005), new THREE.MeshBasicMaterial({ color: snack[(row + c * 2) % snack.length], toneMapped: false }), -f.w * 0.12 - f.w * 0.24 + c * f.w * 0.16, H * 0.36 + row * H * 0.13, f.d / 2 + 0.02);
+          g.add(s);
+        }
+      rbox(g, 0.12, 0.3, 0.02, '#20242f', f.w * 0.33, H * 0.6, f.d / 2 + 0.01, 0.005);
+      rbox(g, f.w * 0.62, 0.12, 0.04, '#20242f', -f.w * 0.12, 0.25, f.d / 2 + 0.01, 0.01);
+      break;
+    }
+    case 'medCurtain': {
+      // a hospital privacy curtain on a ceiling rail
+      const H = 2.05;
+      rbox(g, f.w, 0.03, 0.04, '#c9ced6', 0, 2.3, 0, 0.005);
+      for (const sx of [-1, 1]) cyl(g, 0.012, 0.012, 3.2 - 2.3, '#c9ced6', sx * (f.w / 2 - 0.05), 2.3 + (3.2 - 2.3) / 2, 0, 6);
+      const folds = Math.max(4, Math.round(f.w / 0.22));
+      const cloth = mat('#9fd3c7', { rough: 0.95 });
+      for (let i = 0; i < folds; i++) {
+        const x = -f.w / 2 + (i + 0.5) * (f.w / folds);
+        const p = mesh(rboxGeo(f.w / folds + 0.03, H, 0.035, 0.012), cloth, x, 0.25 + H / 2, (i % 2 ? 1 : -1) * 0.025);
+        g.add(p);
+      }
+      break;
+    }
+    case 'pillar': {
+      rbox(g, f.w, 3.2, f.d, '#5a6170', 0, 1.6, 0, 0.03);
+      rbox(g, f.w + 0.06, 0.12, f.d + 0.06, '#3a404c', 0, 0.06, 0, 0.01);
+      rbox(g, f.w + 0.04, 0.05, f.d + 0.04, '#ffcf3f', 0, 1.1, 0, 0.005);
+      break;
+    }
+    case 'cabinet': {
+      // a tall steel cabinet with a warning sticker and a little status light
+      const H = 2.0;
+      rbox(g, f.w, H, f.d, '#6b7385', 0, H / 2, 0, 0.02);
+      rbox(g, 0.008, H - 0.2, 0.01, '#4a5160', 0, H / 2, f.d / 2 + 0.003, 0.002);
+      for (const sx of [-1, 1]) rbox(g, 0.03, 0.22, 0.03, '#c9ced6', sx * 0.06, H * 0.55, f.d / 2 + 0.015, 0.008);
+      rbox(g, 0.22, 0.2, 0.005, '#ffcf3f', f.w * 0.22, H * 0.75, f.d / 2 + 0.004, 0.002);
+      g.add(mesh(rboxGeo(0.05, 0.05, 0.01, 0.005), new THREE.MeshBasicMaterial({ color: hash(f.id) % 3 ? '#39ff88' : '#ff3e5a', toneMapped: false }), -f.w * 0.3, H * 0.86, f.d / 2 + 0.006));
+      break;
+    }
+    case 'bed': {
+      // hospital bed: frame, mattress, pillow (front = foot end)
+      rbox(g, f.w, 0.08, f.d, '#c9ced6', 0, 0.42, 0, 0.02);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) cyl(g, 0.025, 0.025, 0.4, '#8a93a3', sx * (f.w / 2 - 0.08), 0.2, sz * (f.d / 2 - 0.08), 8);
+      rbox(g, f.w - 0.06, 0.14, f.d - 0.06, '#eef3f6', 0, 0.53, 0, 0.05);
+      rbox(g, 0.35, 0.1, f.d - 0.25, '#ffffff', -f.w / 2 + 0.28, 0.65, 0, 0.04);
+      rbox(g, f.w * 0.55, 0.05, f.d - 0.04, '#9fd3c7', f.w * 0.18, 0.62, 0, 0.02);
+      rbox(g, 0.05, 0.5, f.d, '#c9ced6', -f.w / 2, 0.65, 0, 0.01);
+      break;
+    }
+    case 'monitorWall': {
+      // a security desk with three CCTV screens and a bank of small screens above
+      rbox(g, f.w, 0.75, f.d, '#2a303c', 0, 0.375, 0, 0.02);
+      const scr = (w: number, h: number, x: number, y: number, z: number, tilt = 0) => {
+        const fr = mesh(rboxGeo(w + 0.04, h + 0.04, 0.04, 0.01), mat('#151a24'), x, y, z);
+        fr.rotation.x = tilt;
+        g.add(fr);
+        const s = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: ['#2d6f8f', '#2f8f6a', '#3b5c99'][Math.floor(r() * 3)], toneMapped: false }));
+        s.position.set(0, 0, 0.022);
+        fr.add(s);
+      };
+      for (let i = 0; i < 3; i++) scr(0.55, 0.34, -f.w / 2 + 0.38 + i * 0.72, 1.0, 0, -0.15);
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) scr(0.42, 0.26, -f.w / 2 + 0.3 + i * 0.53, 1.55 + j * 0.32, -f.d / 2 + 0.05);
       break;
     }
     case 'riser': {

@@ -3,6 +3,7 @@ import { EMOTE_EMOJI, PICKER_EMOTES, STATUS_META, type Status } from '../../shar
 import { game } from '../game';
 import { savePref } from '../profile';
 import { serverNow, setState, useStore, type SidePanel } from '../store';
+import { FpLookControls } from './FpLook';
 import { Icon, fmtClock } from './common';
 
 type Pop = 'status' | 'pomo' | 'emote' | 'more' | null;
@@ -124,6 +125,12 @@ export function Toolbar() {
           <button className="menu-item" onClick={() => (setPop(null), game.toggleView())}>
             {viewMode === 'first' ? '🎥 Về góc nhìn thứ ba' : '👁️ Góc nhìn thứ nhất'} <small>V</small>
           </button>
+          {viewMode === 'first' && (
+            <div className="menu-fp">
+              <small>Độ nhạy xoay (giảm nếu chóng mặt)</small>
+              <FpLookControls compact />
+            </div>
+          )}
           <button className="menu-item" onClick={() => game.setAmbience(!ambience.on, ambience.volume)}>
             {ambience.on ? '🔊' : '🔈'} Âm thanh văn phòng <small>{ambience.on ? 'đang bật' : 'đang tắt'}</small>
           </button>

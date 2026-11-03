@@ -10,6 +10,14 @@ import { create } from 'zustand';
 import type { ActivityEvent, ChatMsg, CinemaState, MediaState, PlayerState, Task, TeamMember, WorklogDay } from '../shared/protocol';
 import { loadPref } from './profile';
 
+export interface FpLook {
+  sens: number;
+  smooth: boolean;
+  bob: boolean;
+}
+/** Gentle by default: slower turning, smoothed, no head bob (people got dizzy). */
+export const FP_LOOK_DEFAULT: FpLook = { sens: 0.6, smooth: true, bob: false };
+
 export type Phase = 'loading' | 'login' | 'creator' | 'office';
 export type SidePanel = 'chat' | 'people' | 'today' | null;
 export type Quality = 'high' | 'low';
@@ -55,6 +63,8 @@ export interface OfficeStore {
   unread: number;
   toasts: Toast[];
   quality: Quality;
+  /** first-person view: look sensitivity (×), smoothing, head bob */
+  fpLook: FpLook;
 
   media: MediaState;
   peers: Record<string, PeerView>;
@@ -137,6 +147,7 @@ export const useStore = create<OfficeStore>(() => ({
   unread: 0,
   toasts: [],
   quality: loadPref<Quality>('quality', 'high'),
+  fpLook: { ...FP_LOOK_DEFAULT, ...loadPref<Partial<FpLook>>('fpLook', {}) },
 
   media: { mic: false, cam: false, screen: false },
   peers: {},

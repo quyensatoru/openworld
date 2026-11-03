@@ -357,7 +357,7 @@ export class OfficeRoom extends DurableObject<Env> {
     if (prev === 'karaoke' && zone !== 'karaoke') this.kara.left(c.p.id);
     if (zone === 'wolfroom' && prev !== 'wolfroom') this.wolf.sendTo(c.p.id);
     if (prev === 'wolfroom' && zone !== 'wolfroom') this.wolf.broadcast();
-    const f5 = (z: string) => z === 'hall5' || z.startsWith('f5-');
+    const f5 = (z: string) => z.startsWith('f5-');
     if (f5(zone) && !f5(prev)) this.mole.arrived(c.p.id);
   }
 

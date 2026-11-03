@@ -1,16 +1,19 @@
 // "Nội Gián" game server, living inside the OfficeRoom Durable Object (floor 5).
-// Employees finish tasks; hidden moles kill people (with a cooldown), cut the lights, lock doors
-// and trigger a server overload that two people must hold off together. Bodies are reported or the
+// Employees finish tasks; hidden moles kill people (with a cooldown), cut the lights, slam doors
+// shut, crawl through the ducts and trigger a server overload that two people must hold off together. Bodies are reported or the
 // bell is rung → meeting (everyone on the floor hears each other) → vote. Ghosts keep doing tasks
 // and only talk among themselves. Positions come from the players' own movement messages.
 import {
   BELL,
   CRIT,
-  FUSE,
+  DOOR_BY_ID,
+  FUSE_SPOT,
+  LOCKABLE_ROOMS,
   MOLE_BELL_RANGE,
   MOLE_CRIT_MS,
   MOLE_DEFAULTS,
   MOLE_DOORS,
+  MOLE_DOOR_RANGE,
   MOLE_FLOOR_X0,
   MOLE_KILL_RANGE,
   MOLE_LIGHTS_MS,
@@ -20,10 +23,13 @@ import {
   MOLE_REPORT_RANGE,
   MOLE_SAB_CD,
   MOLE_TASK_RANGE,
-  ROOM_META,
+  MOLE_VENT_RANGE,
   STATIONS,
   STATION_BY_ID,
+  VENT_BY_ID,
+  doorMid,
   molesFor,
+  ventLinks,
   type MoleMsg,
   type MolePhase,
   type MolePlayer,
@@ -73,6 +79,11 @@ export class MoleGame {
   private critTimer: ReturnType<typeof setTimeout> | null = null;
   private critHeld = new Map<string, number>(); // console → last hold time
   private locks = new Map<string, number>();
+  /** doors shut by hand (anyone on the floor can shut / open them) */
+  private shut = new Set<string>();
+  private doorAt = new Map<string, number>();
+  /** moles hiding in a duct: id → vent */
+  private inVent = new Map<string, string>();
   private sabReady = 0;
   private meeting: MoleView['meeting'] = null;
   private votes = new Map<string, string>();
@@ -147,6 +158,9 @@ export class MoleGame {
     this.crit = 0;
     this.critHeld.clear();
     this.locks.clear();
+    // everything opens up again (meeting, new game, game over) and everyone climbs out
+    this.shut.clear();
+    this.inVent.clear();
   }
 
   // ------------------------------------------------------------------ voice
@@ -190,6 +204,8 @@ export class MoleGame {
       crit: this.crit,
       critHeld: [...this.critHeld].filter(([, t]) => Date.now() - t < 1500).map(([c]) => c),
       locks: [...this.locks].map(([door, until]) => ({ door, until })),
+      doors: [...new Set([...this.shut, ...this.locks.keys()])],
+      hidden: [...this.inVent.keys()],
       meeting: this.meeting,
       voted: this.phase === 'vote' ? [...this.votes.keys()] : [],
       votes: this.phase === 'result' || this.phase === 'end' ? Object.fromEntries(this.votes) : null,
@@ -207,6 +223,7 @@ export class MoleGame {
         sabReady: this.sabReady,
         bell: me?.bell ?? 0,
         vote: me ? this.votes.get(me.id) ?? null : null,
+        vent: this.inVent.get(id) ?? null,
       },
     };
   }
@@ -265,6 +282,7 @@ export class MoleGame {
         if ([...this.host.people()].some((x) => x.id === id)) return;
         p.alive = false;
         p.out = 'left';
+        this.inVent.delete(id);
         this.say(`⚡ ${p.name} đã rời công ty (mất kết nối).`);
         if (!this.checkWin()) this.broadcast();
       }, 60_000),
@@ -338,7 +356,7 @@ export class MoleGame {
         return this.broadcast();
       }
       case 'kill': {
-        if (!me?.alive || me.role !== 'mole' || this.phase !== 'play') return;
+        if (!me?.alive || me.role !== 'mole' || this.phase !== 'play' || this.inVent.has(me.id)) return;
         if (now < me.lastKill + this.settings.killCd * 1000) return;
         const v = this.get(String(m.target));
         if (!v?.alive || v.role === 'mole') return;
@@ -354,13 +372,13 @@ export class MoleGame {
         return this.broadcast();
       }
       case 'report': {
-        if (!me?.alive || this.phase !== 'play') return;
+        if (!me?.alive || this.phase !== 'play' || this.inVent.has(me.id)) return;
         const b = this.bodies.find((x) => x.id === m.body);
         if (!b || dist(pp, b) > MOLE_REPORT_RANGE + 0.8) return;
         return this.callMeeting(me, 'report', b.id);
       }
       case 'bell': {
-        if (!me?.alive || this.phase !== 'play') return;
+        if (!me?.alive || this.phase !== 'play' || this.inVent.has(me.id)) return;
         if (me.bell <= 0) return this.host.err(pp.id, 'Bạn đã dùng hết lượt bấm chuông.');
         if (this.crit) return this.host.err(pp.id, 'Đang có sự cố server — không họp được lúc này!');
         if (dist(pp, BELL) > MOLE_BELL_RANGE + 0.8) return;
@@ -381,11 +399,21 @@ export class MoleGame {
             this.broadcast();
           }, MOLE_LIGHTS_MS);
         } else if (m.kind === 'door') {
-          const room = m.room && ROOM_META[m.room] ? m.room : null;
+          const room = m.room && LOCKABLE_ROOMS.includes(m.room) ? m.room : null;
           if (!room) return;
-          for (const d of MOLE_DOORS) if (d.rooms.includes(room)) this.locks.set(d.id, now + MOLE_LOCK_MS);
+          for (const d of MOLE_DOORS)
+            if (d.rooms.includes(room)) {
+              this.locks.set(d.id, now + MOLE_LOCK_MS);
+              this.toFloor({ t: 'moleFx', fx: { kind: 'door', door: d.id, shut: true, locked: true } });
+            }
           setTimeout(() => {
-            for (const [d, t] of this.locks) if (t <= Date.now() + 50) this.locks.delete(d);
+            // the lock runs out: those doors spring open again
+            for (const [d, t] of this.locks)
+              if (t <= Date.now() + 50) {
+                this.locks.delete(d);
+                this.shut.delete(d);
+                this.toFloor({ t: 'moleFx', fx: { kind: 'door', door: d, shut: false } });
+              }
             this.broadcast();
           }, MOLE_LOCK_MS + 30);
         } else if (m.kind === 'crit') {
@@ -402,7 +430,7 @@ export class MoleGame {
       }
       case 'fix': {
         if (!me || this.phase !== 'play' || !this.lights) return;
-        if (dist(pp, { x: FUSE.x + 0.9, z: FUSE.z }) > 2.8) return;
+        if (dist(pp, FUSE_SPOT) > 2.8) return;
         this.lights = 0;
         if (this.lightsTimer) clearTimeout(this.lightsTimer);
         this.say(`🔌 ${pp.name} đã bật lại cầu dao.`);
@@ -424,6 +452,42 @@ export class MoleGame {
         }
         if (!wasHeld) this.broadcast();
         return;
+      }
+      case 'door': {
+        const d = DOOR_BY_ID.get(String(m.door));
+        if (!d || pp.x < MOLE_FLOOR_X0) return;
+        // while a game runs only the living players move the doors (and not from a duct)
+        const live = this.playing && this.phase !== 'end';
+        if (live && (!me || !me.alive || this.phase !== 'play' || this.inVent.has(me.id))) return;
+        if (this.locks.has(d.id)) return this.host.err(pp.id, '🔒 Cửa đang bị khoá — đợi một lát.');
+        if (dist(pp, doorMid(d)) > MOLE_DOOR_RANGE + 0.8) return;
+        if (now - (this.doorAt.get(d.id) ?? 0) < 600) return;
+        this.doorAt.set(d.id, now);
+        const shut = !this.shut.has(d.id);
+        if (shut) this.shut.add(d.id);
+        else this.shut.delete(d.id);
+        this.toFloor({ t: 'moleFx', fx: { kind: 'door', door: d.id, shut } });
+        return this.broadcast();
+      }
+      case 'vent': {
+        if (!me?.alive || me.role !== 'mole' || this.phase !== 'play') return;
+        const cur = this.inVent.get(me.id) ?? null;
+        const to = m.vent == null ? null : VENT_BY_ID.get(String(m.vent)) ?? null;
+        if (!cur) {
+          // jump in: you must stand on the hatch
+          if (!to || dist(pp, to) > MOLE_VENT_RANGE + 0.8) return;
+          this.inVent.set(me.id, to.id);
+          this.toFloor({ t: 'moleFx', fx: { kind: 'vent', vent: to.id } });
+        } else if (!to) {
+          // climb out where you are
+          this.inVent.delete(me.id);
+          this.toFloor({ t: 'moleFx', fx: { kind: 'vent', vent: cur } });
+        } else {
+          // crawl to a linked hatch
+          if (!ventLinks(cur).some((v) => v.id === to.id)) return;
+          this.inVent.set(me.id, to.id);
+        }
+        return this.broadcast();
       }
       case 'vote': {
         if (!me?.alive || this.phase !== 'vote') return;

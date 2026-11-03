@@ -45,6 +45,7 @@ import {
   type Wall,
 } from '../../shared/map';
 import { COLUMNS, PRIORITY_META, type Task } from '../../shared/protocol';
+import { ROOM_META, type MoleRoom } from '../../shared/mole';
 import { BarFx } from './bar';
 import { KaraokeFx, WolfFx } from './floor4';
 import { Floor5Fx } from './floor5';
@@ -69,14 +70,6 @@ const FLOOR_TINT: Record<string, string> = {
   karaoke: '#3a2a52',
   wolfroom: '#7a5a40',
   hall4: '#ddd8cf',
-  'f5-server': '#3d4658',
-  'f5-design': '#4a4540',
-  'f5-archive': '#4d4436',
-  'f5-print': '#41454f',
-  'f5-meet': '#343d55',
-  'f5-canteen': '#4a463f',
-  'f5-med': '#36504c',
-  hall5: '#3b3e46',
 };
 
 /** Openings in each floor's slab (logical coords of that floor): the stairwell below + the lift. */
@@ -210,7 +203,8 @@ export class OfficeScene {
 
     for (const z of ZONES) {
       const zf = floorOf(z.x0);
-      const base = floorTexture(z.floor as FloorKind, FLOOR_TINT[z.id] ?? '#eeeeee');
+      const tint = z.id.startsWith('f5-') ? ROOM_META[z.id.slice(3) as MoleRoom]?.tint : FLOOR_TINT[z.id];
+      const base = floorTexture(z.floor as FloorKind, tint ?? '#eeeeee');
       for (const r of subtract(z, HOLES[zf])) {
         const w = r.x1 - r.x0;
         const d = r.z1 - r.z0;
@@ -315,6 +309,7 @@ export class OfficeScene {
     });
     for (const it of INTERACTABLES) {
       if (it.kind === 'cinema') continue; // reached by walking up (E) or from the cinema panel
+      if (it.id.startsWith('mole-door:') || it.id.startsWith('mole-vent:')) continue; // E only (a click there means "walk through")
       const L = layer(it.x);
       if (it.kind === 'elevator') {
         const l = LIFTS.find((q) => Math.abs(q.cx - it.x) < 0.1)!;
@@ -576,7 +571,7 @@ export class OfficeScene {
                 : fl === 3 && Math.abs(lx - KARA.x1) < 0.01 && cz < KARA.z1
                   ? '#2c2230'
                   : fl === 4
-                    ? '#2c3240'
+                    ? '#5a6479'
                     : C.wall;
       this.addFadeWall(new THREE.BoxGeometry(sx, UP_WALL_H, sz), color, cx, UP_WALL_H / 2, cz, root);
       rbox(stat, alongX ? len : WALL_T + 0.04, 0.12, alongX ? WALL_T + 0.04 : len, C.wallTrim, cx, 0.06, cz, 0.01);
@@ -606,6 +601,8 @@ export class OfficeScene {
     const ceilMat = new THREE.MeshStandardMaterial({ color: '#f4f1ec', roughness: 1, emissive: '#cfc9bf', emissiveIntensity: 0.55 });
     const darkMat = new THREE.MeshStandardMaterial({ color: '#221c29', roughness: 1 });
     const panelGeo = new THREE.PlaneGeometry(1.2, 0.3);
+    const f5Mat = this.f5PanelMat;
+    const moleCeil = new THREE.MeshStandardMaterial({ color: '#4a5263', roughness: 1 });
     for (const z of ZONES) {
       const zf = floorOf(z.x0);
       const above = holesAbove(zf).map((h) => ({ ...h, x0: h.x0 + zf * UP_DX, x1: h.x1 + zf * UP_DX }));
@@ -614,7 +611,7 @@ export class OfficeScene {
       const h = z.kind === 'cinema' ? CINEMA_WALL_H : WALL_H;
       const dark = z.kind === 'cinema' || z.kind === 'bar' || z.kind === 'game' || z.kind === 'karaoke' || z.kind === 'wolf' || z.kind === 'mole';
       for (const r of subtract(z, above)) {
-        const ceil = new THREE.Mesh(new THREE.PlaneGeometry(r.x1 - r.x0, r.z1 - r.z0), dark ? darkMat : ceilMat);
+        const ceil = new THREE.Mesh(new THREE.PlaneGeometry(r.x1 - r.x0, r.z1 - r.z0), z.kind === 'mole' ? moleCeil : dark ? darkMat : ceilMat);
         ceil.rotation.x = Math.PI / 2; // faces down: visible from inside, culled from the camera above
         ceil.position.set((r.x0 + r.x1) / 2, h, (r.z0 + r.z1) / 2);
         parent.add(ceil);
@@ -624,7 +621,7 @@ export class OfficeScene {
       for (let x = z.x0 + step / 2; x < z.x1; x += step) {
         for (let zz = z.z0 + step / 2; zz < z.z1; zz += step) {
           if (inHole(x, zz)) continue;
-          const p = new THREE.Mesh(panelGeo, z.kind === 'focus' || z.kind === 'lounge' || z.kind === 'cinema' || z.kind === 'game' ? warmMat : panelMat);
+          const p = new THREE.Mesh(panelGeo, z.kind === 'mole' ? f5Mat : z.kind === 'focus' || z.kind === 'lounge' || z.kind === 'cinema' || z.kind === 'game' ? warmMat : panelMat);
           p.rotation.x = Math.PI / 2;
           p.position.set(x, h - 0.02, zz);
           if (z.kind === 'cinema' || z.kind === 'game') p.scale.set(0.3, 1, 1);
@@ -636,6 +633,12 @@ export class OfficeScene {
       c.visible = false;
       this.levels[f].add(c);
     });
+  }
+
+  /** Floor 5's ceiling lamps: soft, and off in a blackout. */
+  private f5PanelMat = new THREE.MeshBasicMaterial({ color: '#aab6c8', toneMapped: false });
+  setF5Lamps(on: boolean) {
+    this.f5PanelMat.color.set(on ? '#aab6c8' : '#1a1e26');
   }
 
   setCeiling(on: boolean) {

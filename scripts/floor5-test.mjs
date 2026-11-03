@@ -85,11 +85,10 @@ function client(cookie, cid, name) {
 }
 
 
-const STATIONS = {
-  'st-reboot': [243.2, 1.65], 'st-bugs-s': [249.5, 6.65], 'st-bugs-d': [255.5, 1.65], 'st-code-d': [264.5, 1.65], 'st-files': [276.5, 1.65],
-  'st-code-a': [278.35, 6.5], 'st-paper': [241.65, 14.0], 'st-plant-p': [249.6, 16.85], 'st-coffee': [278.35, 12.5], 'st-plant-c': [270.5, 16.85],
-  'st-files-p': [242.4, 10.65], 'st-scan': [243.0, 26.45], 'st-coffee-h': [278.35, 21.0],
-};
+// where you stand to use each station / console (see shared/mole.ts)
+const STATIONS = {"st-reboot":[242.6,1.55],"st-bugs-s":[241.55,10.6],"st-bugs-d":[250.2,1.55],"st-code-d":[255.2,1.45],"st-code-q":[259.4,1.45],"st-files":[267.4,1.45],"st-coffee":[278.35,3.4],"st-plant-k":[271,1.65],"st-files-t":[247.5,12.5],"st-paper":[241.65,16.6],"st-plant-l":[253,19.35],"st-files-n":[255.2,10.35],"st-reboot-e":[271,10.45],"st-code-c":[278.55,11.4],"st-coffee-b":[278.35,18.6],"st-scan":[243,26.45]};
+const CRIT_A = [246.65, 5.6];
+const CRIT_B = [272.35, 20.9];
 (async () => {
   console.log(`Office: ${BASE}`);
   const res = await fetch(`${BASE}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passcode: PASSCODE }) });
@@ -143,6 +142,43 @@ const STATIONS = {
   await sleep(400);
   const p2 = [...crew[1].inbox].reverse().find((m) => m.t === 'mole');
   ok(Math.abs(p2.v.progress - 1 / 12) < 0.01, "a mole's fake task does not count");
+  // doors: anyone playing can shut / open one they stand by; the move is shown to the whole floor
+  crew[0].move(264, 20.6); // the meeting room's south door (d-hp-sh)
+  await sleep(300);
+  for (const c of P) c.clear();
+  crew[0].send({ t: 'mole', m: { a: 'door', door: 'd-hp-sh' } });
+  const shutV = await crew[2].wait((m) => m.t === 'mole' && m.v.doors.includes('d-hp-sh'), 3000);
+  ok(!!shutV, 'a door is shut by hand and everyone sees it');
+  ok(!!(await crew[3].wait((m) => m.t === 'moleFx' && m.fx.kind === 'door' && m.fx.shut, 2000)), 'the door noise goes out to the floor');
+  crew[1].move(250, 2);
+  await sleep(300);
+  crew[1].send({ t: 'mole', m: { a: 'door', door: 'd-hp-sh' } });
+  await sleep(400);
+  ok([...crew[2].inbox].reverse().find((m) => m.t === 'mole').v.doors.includes('d-hp-sh'), "you can't work a door from across the floor");
+  await sleep(700);
+  crew[0].send({ t: 'mole', m: { a: 'door', door: 'd-hp-sh' } });
+  ok(!!(await crew[2].wait((m) => m.t === 'mole' && !m.v.doors.includes('d-hp-sh'), 3000)), 'and opened again');
+  // ducts: only the mole can use them; inside you are hidden; you crawl only along one network
+  crew[0].move(242.2, 7.6);
+  await sleep(300);
+  crew[0].send({ t: 'mole', m: { a: 'vent', vent: 'v-server' } });
+  await sleep(400);
+  ok(![...crew[1].inbox].reverse().find((m) => m.t === 'mole').v.hidden.length, 'an employee cannot get into a duct');
+  mole.move(242.2, 7.6);
+  await sleep(300);
+  mole.send({ t: 'mole', m: { a: 'vent', vent: 'v-server' } });
+  const inV = await crew[1].wait((m) => m.t === 'mole' && m.v.hidden.includes(mole.cid), 3000);
+  ok(!!inV, 'the mole jumps into a duct and disappears');
+  ok(!!(await crew[1].wait((m) => m.t === 'moleFx' && m.fx.kind === 'vent' && m.fx.vent === 'v-server', 2000)), 'the hatch clank goes out to the floor');
+  mole.send({ t: 'mole', m: { a: 'vent', vent: 'v-canteen' } });
+  await sleep(400);
+  ok([...mole.inbox].reverse().find((m) => m.t === 'mole').v.me.vent === 'v-server', "ducts only lead along their own network");
+  mole.send({ t: 'mole', m: { a: 'vent', vent: 'v-med' } });
+  ok(!!(await mole.wait((m) => m.t === 'mole' && m.v.me.vent === 'v-med', 3000)), 'crawl to a linked hatch');
+  mole.move(248.4, 21.2);
+  await sleep(300);
+  mole.send({ t: 'mole', m: { a: 'vent', vent: null } });
+  ok(!!(await crew[1].wait((m) => m.t === 'mole' && !m.v.hidden.length, 3000)), 'climbing out makes you visible again');
   // kill cooldown at the start
   const victim = crew[1];
   victim.move(260, 24);
@@ -158,8 +194,8 @@ const STATIONS = {
   mole.send({ t: 'mole', m: { a: 'sabotage', kind: 'crit' } });
   const crit = await crew[0].wait((m) => m.t === 'mole' && m.v.crit > 0, 3000);
   ok(!!crit, 'the mole triggers a server overload');
-  crew[2].move(252.25, 1.6); // console A (server room)
-  crew[3].move(267.75, 7.4); // console B (archive)
+  crew[2].move(...CRIT_A); // console A (server room)
+  crew[3].move(...CRIT_B); // console B (director's office)
   await sleep(400);
   crew[2].send({ t: 'mole', m: { a: 'hold', console: 'mole-crit-a' } });
   await sleep(300);

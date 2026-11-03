@@ -15,6 +15,7 @@ import {
   SEATS,
   SEAT_BY_ID,
   STAIRWAYS,
+  TALL_KINDS,
   WALLS,
   stairAt,
   stairPoints,
@@ -158,6 +159,13 @@ export class World {
   readonly cssScene = new THREE.Scene();
   viewMode: ViewMode = 'third';
   private fpPitch = 0;
+  /** first-person look settings + mouse movement still to be eased in */
+  private fpLook = { sens: 0.6, smooth: true, bob: false };
+  private lookPend = { x: 0, y: 0 };
+  setFpLook(v: { sens: number; smooth: boolean; bob: boolean }) {
+    this.fpLook = { sens: Math.max(0.15, Math.min(2.5, v.sens)), smooth: v.smooth, bob: v.bob };
+    if (!v.smooth) this.lookPend.x = this.lookPend.y = 0;
+  }
   private eyeH = 1.6;
   private bob = 0;
   private dim = 0; // cinema darkness: film playing (local only)
@@ -372,8 +380,14 @@ export class World {
         if (!this.drag.moved && Math.hypot(dx, dy) > 6) this.drag.moved = true;
         if (this.drag.moved) {
           if (this.viewMode === 'first') {
-            this.camYaw -= dx * 0.005;
-            this.fpPitch = Math.max(-1.2, Math.min(1.2, this.fpPitch - dy * 0.004));
+            const k = this.fpLook.sens;
+            if (this.fpLook.smooth) {
+              this.lookPend.x -= dx * 0.005 * k;
+              this.lookPend.y -= dy * 0.004 * k;
+            } else {
+              this.camYaw -= dx * 0.005 * k;
+              this.fpPitch = Math.max(-1.2, Math.min(1.2, this.fpPitch - dy * 0.004 * k));
+            }
           } else {
             this.camYaw -= dx * 0.006;
             this.camPitch = Math.max(0.3, Math.min(1.3, this.camPitch + dy * 0.004));
@@ -529,7 +543,10 @@ export class World {
     let best: { d: number; text: string; run: () => void } | null = null;
     for (const it of INTERACTABLES) {
       const d = Math.hypot(it.x - c.x, it.z - c.z);
-      if (d < it.radius && (!best || d < best.d)) best = { d, text: it.label, run: it.kind === 'elevator' ? () => this.callLift(LIFTS[floorOf(it.x)]) : () => this.cb.onInteract(it.id) };
+      if (!(d < it.radius && (!best || d < best.d))) continue;
+      const dyn = it.kind === 'mole' && this.interactLabel ? this.interactLabel(it.id) : '';
+      if (dyn === null) continue;
+      best = { d, text: dyn || it.label, run: it.kind === 'elevator' ? () => this.callLift(LIFTS[floorOf(it.x)]) : () => this.cb.onInteract(it.id) };
     }
     if (best) return best;
     for (const s of SEATS) {
@@ -892,12 +909,23 @@ export class World {
   // ------------------------------------------------------------------ Nội Gián (floor 5)
   private vision: { radius: number; seeAll: boolean; seeGhosts: boolean; ghosts: Set<string> } | null = null;
   private visCache = new Map<string, { t: number; vis: boolean }>();
-  private losRects: { x0: number; z0: number; x1: number; z1: number }[] = WALLS.filter((w) => w.x0 >= 230 && w.kind !== 'hidden' && w.kind !== 'rail').map((w) => ({
-    x0: Math.min(w.x0, w.x1) - 0.1,
-    z0: Math.min(w.z0, w.z1) - 0.1,
-    x1: Math.max(w.x0, w.x1) + 0.1,
-    z1: Math.max(w.z0, w.z1) + 0.1,
-  }));
+  private losRects: { x0: number; z0: number; x1: number; z1: number }[] = [
+    ...WALLS.filter((w) => w.x0 >= 230 && w.kind !== 'hidden' && w.kind !== 'rail').map((w) => ({
+      x0: Math.min(w.x0, w.x1) - 0.1,
+      z0: Math.min(w.z0, w.z1) - 0.1,
+      x1: Math.max(w.x0, w.x1) + 0.1,
+      z1: Math.max(w.z0, w.z1) + 0.1,
+    })),
+    // tall furniture (racks, shelves, cabinets, screens) hides whoever stands behind it
+    ...FURNITURE.filter((f) => f.x >= 230 && TALL_KINDS.has(f.kind)).map((f) => {
+      const rot = Math.abs(Math.sin(f.ry)) > 0.7;
+      const hw = (rot ? f.d : f.w) / 2 - 0.05;
+      const hd = (rot ? f.w : f.d) / 2 - 0.05;
+      return { x0: f.x - hw, z0: f.z - Math.max(0.02, hd), x1: f.x + hw, z1: f.z + Math.max(0.02, hd) };
+    }),
+  ];
+  /** People hiding in a duct (never drawn). */
+  private hiddenIds = new Set<string>();
   private extraRects: { x0: number; z0: number; x1: number; z1: number }[] = [];
 
   /** Fog of war on floor 5: see people within `radius` and not behind walls (null = see everyone). */
@@ -962,9 +990,26 @@ export class World {
     return this.canSeeSpot(x, z);
   }
 
+  /** Is this person drawn for you right now (same floor, in view)? */
+  isShown(id: string): boolean {
+    return this.players.get(id)?.holder.visible ?? false;
+  }
+
+  /** Nội Gián: people in a duct. */
+  setHidden(ids: Iterable<string>) {
+    this.hiddenIds = new Set(ids);
+  }
+
+  /** Dynamic text for an interactable's E prompt (null = no prompt, '' = the static label). */
+  interactLabel: ((id: string) => string | null) | null = null;
+
   private canSeeSpot(x: number, z: number): boolean {
     const v = this.vision;
-    if (!v || v.seeAll || !this.me || this.myFloor !== 4 || x < 230) return true;
+    if (!this.me || this.myFloor !== 4 || x < 230) return true;
+    if (v?.seeAll) return true;
+    // only the room you are in (and through an open door you stand by)
+    if (!this.office.f5.roomVisible(x, z)) return false;
+    if (!v) return true;
     const mx = this.me.x;
     const mz = this.me.z;
     if (Math.hypot(x - mx, z - mz) > v.radius) return false;
@@ -973,9 +1018,12 @@ export class World {
 
   private canSeePlayer(p: PlayerView, now: number): boolean {
     const v = this.vision;
-    if (!v || this.myFloor !== 4 || p.x < 230) return true;
-    if (v.ghosts.has(p.id)) return v.seeGhosts;
-    if (v.seeAll) return true;
+    if (this.myFloor !== 4 || p.x < 230) return true;
+    if (this.hiddenIds.has(p.id)) return p.isMe ? false : !!v?.seeAll;
+    if (p.isMe) return true;
+    if (v?.ghosts.has(p.id)) return v.seeGhosts;
+    if (v?.seeAll) return true;
+    if (!v) return this.office.f5.roomVisible(p.x, p.z);
     const c = this.visCache.get(p.id);
     if (c && now - c.t < 100) return c.vis;
     const vis = this.canSeeSpot(p.x, p.z);
@@ -1060,7 +1108,18 @@ export class World {
       if (fpMode) {
         // first person: A/D (←/→) turn the body + view; W/S walk where you look
         const turn = (c.keys.has('KeyA') || c.keys.has('ArrowLeft') ? 1 : 0) - (c.keys.has('KeyD') || c.keys.has('ArrowRight') ? 1 : 0);
-        if (turn) this.camYaw += turn * 2.4 * dt;
+        if (turn) this.camYaw += turn * 2.4 * this.fpLook.sens * dt;
+        // smoothed mouse look: the view eases toward where you dragged it
+        if (this.lookPend.x || this.lookPend.y) {
+          const f = 1 - Math.exp(-14 * dt);
+          const ax = this.lookPend.x * f;
+          const ay = this.lookPend.y * f;
+          this.camYaw += ax;
+          this.fpPitch = Math.max(-1.2, Math.min(1.2, this.fpPitch + ay));
+          this.lookPend.x -= ax;
+          this.lookPend.y -= ay;
+          if (Math.abs(this.lookPend.x) < 1e-4 && Math.abs(this.lookPend.y) < 1e-4) this.lookPend.x = this.lookPend.y = 0;
+        }
       }
       c.update(dt, this.camYaw, fpMode);
       this.updateFloors(c, dt);
@@ -1213,7 +1272,7 @@ export class World {
       const seated = me.anim === 'sit';
       this.eyeH = damp(this.eyeH, (seated ? 1.2 : 1.62) * me.state.avatar.height, 6, dt);
       this.bob += me.speed * dt * 4.4;
-      const bobY = Math.sin(this.bob) * 0.022 * Math.min(1, me.speed / 1.5);
+      const bobY = this.fpLook.bob ? Math.sin(this.bob) * 0.022 * Math.min(1, me.speed / 1.5) : 0;
       const fx = -Math.sin(this.camYaw);
       const fz = -Math.cos(this.camYaw);
       // seated: the body is shifted onto the chair, and the eyes sit a bit forward of it
@@ -1232,8 +1291,9 @@ export class World {
       this.camera.lookAt(this.camTarget);
     }
     if (this.me) {
-      if (this.me.avatar) this.me.avatar.root.visible = !fp;
-      this.me.tag.object.visible = !fp;
+      const ducked = this.hiddenIds.has(this.me.id); // in a duct: you're not drawn, even for yourself
+      if (this.me.avatar) this.me.avatar.root.visible = !fp && !ducked;
+      this.me.tag.object.visible = !fp && !ducked;
     }
 
     // lighting: time of day + cinema darkness for whoever sits in the dark
@@ -1295,6 +1355,7 @@ export class World {
       const hits = new Set(this.ray.intersectObjects(this.office.fadeWalls.map((w) => w.mesh), false).map((h) => h.object));
       this.ray.far = Infinity;
       for (const w of this.office.fadeWalls) w.target = !fp && hits.has(w.mesh) ? 0.05 : 1;
+      if (this.myFloor === 4) this.office.f5.cameraRay(this.camera.position, head);
     }
     for (const w of this.office.fadeWalls) {
       if (Math.abs(w.material.opacity - w.target) > 0.005) {
@@ -1322,6 +1383,8 @@ export class World {
       const t = Date.now();
       for (const v of this.players.values()) v.tag.tickPomo(t);
     }
+    if (this.myFloor === 4 && this.me) this.office.f5.setViewer(this.me.x, this.me.z, !!this.vision?.seeAll);
+    else this.office.f5.setViewer(null, 0, true);
     this.office.tick(dt, this.beatClock(), this.myFloor);
     this.staff.update(dt, this.serverClock(), this.myFloor === 1);
 

@@ -135,6 +135,8 @@ function MapCanvas({ onClose }: { onClose(): void }) {
         for (const p of Object.values(s.players)) {
           const pos = world.positionOf(p.id);
           if (!pos || !onFloor(pos.x, a.floor)) continue;
+          // Nội Gián floor: only the people you can actually see (same room, not in a duct…)
+          if (a.floor === 4 && !world.isShown(p.id)) continue;
           g.fillStyle = STATUS_META[p.status].color;
           g.beginPath();
           g.arc(pos.x * S, pos.z * S, 3.2, 0, Math.PI * 2);

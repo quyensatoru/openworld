@@ -4,13 +4,15 @@ import { STATUS_META } from '../../shared/protocol';
 import { game } from '../game';
 import { loadPref, savePref } from '../profile';
 import { getState, setState, useStore } from '../store';
+import { FpLookControls } from './FpLook';
 import { CharacterCreator } from './CharacterCreator';
 import { BigScreen } from './BigScreen';
 import { BarPanel, CinemaPanel } from './Cinema';
 import { ArcadePill, ArcadeWindow, LiftPanel } from './Arcade';
 import { KaraPhonesAsk, KaraScore, KaraZoomBar, KaraokePanel } from './Karaoke';
 import { WolfEnd, WolfNight, WolfPanel } from './Werewolf';
-import { MoleActions, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal, MoleSplash } from './Mole';
+import { MOLE_ROOMS } from '../../shared/mole';
+import { MoleActions, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal, MoleSplash, MoleVent } from './Mole';
 import { MoleTaskModal } from './MoleTasks';
 import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
 import { MeetingTvButton } from './MeetingTv';
@@ -33,7 +35,7 @@ export function Office() {
   const inBar = useStore((s) => s.me?.zone === 'bar');
   const inKara = useStore((s) => s.me?.zone === 'karaoke');
   const inWolf = useStore((s) => s.me?.zone === 'wolfroom');
-  const inMole = useStore((s) => s.me?.zone === 'hall5' || !!s.me?.zone.startsWith('f5-'));
+  const inMole = useStore((s) => !!s.me?.zone.startsWith('f5-'));
   const theater = useStore((s) => s.me?.zone === 'cinema' && !!s.me.seat?.startsWith('cine-') && !!s.cinema && s.cinema.pausedAt == null) || inBar || inKara;
   const idle = useIdle(2500, theater);
 
@@ -83,6 +85,7 @@ export function Office() {
         <MolePanel />
         <MoleHud />
         <MoleActions />
+        <MoleVent />
         <LiftPanel />
         <Prompt />
         <VoiceStatus />
@@ -145,7 +148,7 @@ const PLACES = [
   { id: 'netcafe', floor: 2, icon: '🎮', name: 'Phòng game', hint: 'Rắn săn mồi · cờ caro', zones: ['netcafe'] },
   { id: 'karaoke', floor: 3, icon: '🎤', name: 'Karaoke', hint: 'Hát cùng cả team', zones: ['karaoke'] },
   { id: 'wolfroom', floor: 3, icon: '🐺', name: 'Ma Sói', hint: '5–12 người · cần mic', zones: ['wolfroom'] },
-  { id: 'mole', floor: 4, icon: '🕵️', name: 'Nội Gián', hint: '4–12 người · làm nhiệm vụ, tìm kẻ phá', zones: ['hall5', 'f5-server', 'f5-design', 'f5-archive', 'f5-print', 'f5-meet', 'f5-canteen', 'f5-med'] },
+  { id: 'mole', floor: 4, icon: '🕵️', name: 'Nội Gián', hint: '4–12 người · làm nhiệm vụ, tìm kẻ phá', zones: MOLE_ROOMS.map((r) => `f5-${r}`) },
 ] as const;
 
 /** Top-left: where you are + how many people are online; click to go somewhere else. */
@@ -387,6 +390,10 @@ function Settings() {
               ⚡ Nhẹ (máy yếu)
             </button>
           </div>
+        </div>
+        <div className="field">
+          <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Góc nhìn thứ nhất — độ nhạy khi xoay (giảm xuống nếu thấy chóng mặt)</label>
+          <FpLookControls />
         </div>
         <div className="field">
           <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Âm thanh không gian (gõ phím, điều hoà, bước chân, nhạc ở bar)</label>
