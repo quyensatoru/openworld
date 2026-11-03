@@ -348,7 +348,8 @@ export class MoleGame {
         if (!me || this.phase !== 'play' || me.role !== 'crew') return;
         const t = me.tasks.find((x) => x.st === m.st && !x.done);
         const st = STATION_BY_ID.get(String(m.st));
-        if (!t || !st || dist(pp, st) > MOLE_TASK_RANGE + 1.2) return;
+        if (!t || !st) return this.host.err(pp.id, 'Nhiệm vụ này không còn trong danh sách của bạn — tải lại trang nếu vừa có bản cập nhật.');
+        if (dist(pp, st) > MOLE_TASK_RANGE + 1.2) return this.host.err(pp.id, 'Bạn đứng xa chỗ làm nhiệm vụ quá — lại gần rồi làm lại nhé.');
         t.done = true;
         // a medical scan is a show for everyone nearby (moles can't fake it)
         if (st.kind === 'scan') this.toFloor({ t: 'moleFx', fx: { kind: 'scan', id: me.id, x: pp.x, z: pp.z } });

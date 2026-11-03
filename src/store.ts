@@ -78,6 +78,8 @@ export interface OfficeStore {
   /** Standing in a lift car on this floor (show the floor buttons). */
   liftPanel: Floor | null;
   updateReady: boolean;
+  /** the server still runs an older build than this page (mid-deploy) */
+  serverStale: boolean;
   cinema: CinemaState | null;
   cinemaPanel: boolean;
   jukebox: CinemaState | null;
@@ -110,6 +112,8 @@ export interface OfficeStore {
   molePanel: boolean;
   /** Open mini-game: a station id, 'fuse', or a critical console id. `fake` for moles pretending. */
   moleTask: { id: string; fake: boolean } | null;
+  /** a mole's pretend tasks they already "did" (ticked locally only, so the act looks right) */
+  moleFakeDone: string[];
   /** A big dramatic moment on screen (meeting called, you got laid off…). */
   moleSplash: { kind: 'report' | 'bell' | 'killed' | 'kill'; by?: string; body?: string | null; at: number } | null;
   wolfSpeech: boolean;
@@ -160,6 +164,7 @@ export const useStore = create<OfficeStore>(() => ({
   floor: 0,
   liftPanel: null,
   updateReady: false,
+  serverStale: false,
   cinema: null,
   cinemaPanel: false,
   jukebox: null,
@@ -185,6 +190,7 @@ export const useStore = create<OfficeStore>(() => ({
   mole: null,
   molePanel: true,
   moleTask: null,
+  moleFakeDone: [],
   moleSplash: null,
   wolfSpeech: loadPref('wolfSpeech', true),
   activity: {},

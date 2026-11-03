@@ -580,7 +580,10 @@ class Game {
     const world = this.world!;
     // drop remotes that vanished while we were offline
     for (const id of stale) world.removePlayer(id);
-    if (m.build && m.build !== BUILD_ID) setState({ updateReady: true });
+    // build ids are build timestamps: a newer server → reload; an older one → it is still switching over
+    if (m.build && m.build > BUILD_ID) setState({ updateReady: true, serverStale: false });
+    else if (m.build && m.build < BUILD_ID) setState({ serverStale: true, updateReady: false });
+    else setState({ serverStale: false });
     world.setLocal(m.you);
     setState({ floor: floorOf(m.you.x) });
     for (const p of m.players) world.upsertRemote(p);
@@ -1408,6 +1411,7 @@ class Game {
       }
       if (v.phase === 'play' || v.phase === 'end' || v.phase === 'lobby') w.setFrozen(false);
       if (v.phase === 'roles') {
+        setState({ moleFakeDone: [] });
         this.ambience?.sfx('shh');
         window.setTimeout(() => this.ambience?.sfx('reveal'), 1500);
       }
@@ -1585,7 +1589,10 @@ class Game {
     if (!t) return;
     if (t.id === 'fuse') return this.mole({ a: 'fix' });
     if (!t.fake && t.id.startsWith('st-')) this.mole({ a: 'task', st: t.id });
-    else if (t.fake) this.ambience?.sfx('task');
+    else if (t.fake) {
+      this.ambience?.sfx('task');
+      if (t.id.startsWith('st-')) setState({ moleFakeDone: [...new Set([...getState().moleFakeDone, t.id])] });
+    }
   }
 
   /** The duct hatch a (living, playing) mole stands on, or null. */

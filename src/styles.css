@@ -5063,3 +5063,26 @@ input[type='range'] {
   color: #ff9aa8;
   word-break: break-word;
 }
+
+/* password task: how long the code stays on screen */
+.mg-timer {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  margin: -4px 0 8px;
+}
+.mg-timer i {
+  display: block;
+  height: 100%;
+  background: #39ff88;
+  animation: mg-timer linear forwards;
+}
+@keyframes mg-timer {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0;
+  }
+}

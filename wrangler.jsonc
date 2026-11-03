@@ -8,7 +8,10 @@
     "run_worker_first": ["/api/*"]
   },
   "durable_objects": {
-    "bindings": [{ "name": "OFFICE", "class_name": "OfficeRoom" }]
+    "bindings": [{ "name": "OFFICE", "class_name": "OfficeRoom" }],
+    // the office room must run the same build as the page (client and server share types/layout):
+    // switch over at deploy instead of Cloudflare's default "keep old code up to 5 min while busy"
+    "code_update_strategy": { "mode": "immediate" }
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OfficeRoom"] }],
   "d1_databases": [

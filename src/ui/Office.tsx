@@ -334,6 +334,7 @@ function Banners() {
   const me = useStore((s) => s.me);
   const kicked = useStore((s) => s.kicked);
   const updateReady = useStore((s) => s.updateReady);
+  const serverStale = useStore((s) => s.serverStale);
 
   if (kicked)
     return (
@@ -357,6 +358,11 @@ function Banners() {
       {updateReady && (
         <button className="banner glass update-banner" onClick={() => location.reload()}>
           🔄 Văn phòng vừa được nâng cấp — bấm để tải lại
+        </button>
+      )}
+      {serverStale && (
+        <button className="banner glass update-banner" onClick={() => location.reload()}>
+          ⏳ Máy chủ đang chuyển sang bản mới — đợi một lát rồi bấm để tải lại (đừng bắt đầu ván lúc này)
         </button>
       )}
       {!connected && (

@@ -178,6 +178,7 @@ function Rules() {
 
 function InGame({ v }: { v: MoleView }) {
   const me = v.me;
+  const fakeDone = useStore((s) => s.moleFakeDone);
   if (!me.inGame)
     return (
       <div className="mp-dim">
@@ -201,14 +202,15 @@ function InGame({ v }: { v: MoleView }) {
         {me.tasks.map((t) => {
           const st = STATION_BY_ID.get(t.st);
           if (!st || !TASK_META[t.kind]) return null;
+          const done = t.done || (mole && fakeDone.includes(t.st));
           return (
-            <li key={t.st} className={t.done ? 'done' : ''}>
+            <li key={t.st} className={done ? 'done' : ''}>
               <span>{TASK_META[t.kind].emoji}</span>
               <div>
                 <b>{TASK_META[t.kind].name}</b>
                 <small>{ROOM_META[st.room].name}</small>
               </div>
-              {t.done && <em>✓</em>}
+              {done && <em>✓</em>}
             </li>
           );
         })}

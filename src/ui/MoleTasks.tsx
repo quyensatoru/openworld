@@ -74,6 +74,30 @@ function Game({ kind, done }: { kind: MoleTaskKind; done(): void }) {
   }
 }
 
+/** Hold Space as well as the mouse button (the "hold" games). */
+function useSpaceHold(down: () => void, up: () => void) {
+  const ref = useRef({ down, up });
+  ref.current = { down, up };
+  useEffect(() => {
+    const kd = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      e.preventDefault();
+      if (!e.repeat) ref.current.down();
+    };
+    const ku = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      e.preventDefault();
+      ref.current.up();
+    };
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    return () => {
+      window.removeEventListener('keydown', kd);
+      window.removeEventListener('keyup', ku);
+    };
+  }, []);
+}
+
 /** Little "✅ Xong!" pause before closing. */
 function useFinish(done: () => void) {
   const [ok, setOk] = useState(false);
@@ -124,6 +148,10 @@ function Coffee({ done }: { done(): void }) {
       setLevel(0);
     }
   };
+  useSpaceHold(
+    () => !ok && (setMsg(''), setPour(true)),
+    () => release(),
+  );
   return (
     <div className="mg-coffee">
       <div className="cup">
@@ -133,7 +161,7 @@ function Coffee({ done }: { done(): void }) {
       <button className={`mg-big${pour ? ' on' : ''}`} onPointerDown={() => (setMsg(''), setPour(true))} onPointerUp={release} onPointerLeave={release} disabled={ok}>
         {ok ? '✅ Xong!' : pour ? 'Đang rót…' : 'Giữ để rót'}
       </button>
-      <div className="mg-msg">{msg}</div>
+      <div className="mg-msg">{msg || 'Giữ chuột hoặc phím Space'}</div>
     </div>
   );
 }
@@ -276,6 +304,7 @@ function Paper({ done }: { done(): void }) {
 
 function Code({ done }: { done(): void }) {
   const make = () => String(Math.floor(10000 + Math.random() * 89999));
+  const SHOW_MS = 3000;
   const [code, setCode] = useState(make);
   const [show, setShow] = useState(true);
   const [typed, setTyped] = useState('');
@@ -283,38 +312,67 @@ function Code({ done }: { done(): void }) {
   const [ok, finish] = useFinish(done);
   useEffect(() => {
     if (!show) return;
-    const t = setTimeout(() => setShow(false), 2000);
+    const t = setTimeout(() => setShow(false), SHOW_MS);
     return () => clearTimeout(t);
   }, [show]);
+  // latest state for the keyboard handler
+  const st = useRef({ show, ok, typed, code });
+  st.current = { show, ok, typed, code };
   const press = (d: string) => {
+    const { show, ok, typed, code } = st.current;
     if (show || ok) return;
     const n = (typed + d).slice(0, 5);
+    st.current.typed = n;
     setTyped(n);
     if (n.length === 5) {
       if (n === code) finish();
       else {
-        setMsg('❌ Sai mã — xem lại nhé.');
+        setMsg('❌ Sai mã — xem lại mã mới nhé.');
         setTyped('');
         setCode(make());
         setShow(true);
       }
     }
   };
+  const back = () => {
+    if (st.current.show || st.current.ok) return;
+    setTyped(st.current.typed.slice(0, -1));
+  };
+  // type on the keyboard too (top row or numpad)
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const m = /^(?:Digit|Numpad)([0-9])$/.exec(e.code);
+      if (m) {
+        e.preventDefault();
+        press(m[1]);
+      } else if (e.code === 'Backspace') {
+        e.preventDefault();
+        back();
+      }
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="mg-code">
       <div className="screen">{show ? code : typed.padEnd(5, '•')}</div>
+      {show && (
+        <div className="mg-timer">
+          <i key={code} style={{ animationDuration: `${SHOW_MS}ms` }} />
+        </div>
+      )}
       <div className="pad">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', ' '].map((d) =>
           d === ' ' ? (
             <span key="sp" />
           ) : (
-            <button key={d} disabled={show || ok} onClick={() => (d === '⌫' ? setTyped(typed.slice(0, -1)) : press(d))}>
+            <button key={d} disabled={show || ok} onClick={() => (d === '⌫' ? back() : press(d))}>
               {d}
             </button>
           ),
         )}
       </div>
-      <div className="mg-msg">{ok ? '✅ Đã đổi mật khẩu!' : show ? 'Ghi nhớ mã này…' : msg || 'Nhập lại mã'}</div>
+      <div className="mg-msg">{ok ? '✅ Đã đổi mật khẩu!' : show ? 'Ghi nhớ mã này…' : msg || 'Nhập lại mã (bấm số hoặc gõ phím)'}</div>
     </div>
   );
 }
@@ -340,6 +398,10 @@ function Hold({ done, secs, label }: { done(): void; secs: number; label: string
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [hold, ok]); // eslint-disable-line react-hooks/exhaustive-deps
+  useSpaceHold(
+    () => !ok && setHold(true),
+    () => (setHold(false), !ok && setP(0)),
+  );
   return (
     <div className="mg-hold">
       <div className="bar">
@@ -348,7 +410,7 @@ function Hold({ done, secs, label }: { done(): void; secs: number; label: string
       <button className={`mg-big${hold ? ' on' : ''}`} onPointerDown={() => setHold(true)} onPointerUp={() => (setHold(false), !ok && setP(0))} onPointerLeave={() => (setHold(false), !ok && setP(0))}>
         {ok ? '✅ Xong!' : label}
       </button>
-      <div className="mg-msg">{ok ? '' : 'Thả tay giữa chừng là phải làm lại.'}</div>
+      <div className="mg-msg">{ok ? '' : 'Giữ chuột hoặc phím Space — thả giữa chừng là phải làm lại.'}</div>
     </div>
   );
 }
