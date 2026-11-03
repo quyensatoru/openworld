@@ -5372,3 +5372,155 @@ body {
     overflow-y: auto;
   }
 }
+
+/* the lift's floor buttons on a phone: up top, two columns, clear of the thumbs */
+.office.touch .lift-panel {
+  right: auto;
+  left: 50%;
+  bottom: auto;
+  top: 58px;
+  transform: translateX(-50%);
+  width: min(460px, calc(100vw - 24px));
+  grid-template-columns: 1fr 1fr;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  z-index: 7;
+}
+.office.touch .lift-panel .lp-title {
+  grid-column: 1 / -1;
+}
+.office.touch .lift-panel .btn {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+/* security camera screen (the canvas draws the pictures inside the .cctv-feed boxes) */
+.cctv {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  padding: 12px;
+  pointer-events: none;
+  color: #c8ffd8;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+.cctv-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 14px;
+}
+.cctv-top b {
+  font-family: 'Be Vietnam Pro', sans-serif;
+  letter-spacing: 0.5px;
+}
+.cctv-rec {
+  color: #ff3e5a;
+  font-weight: 800;
+  animation: wp-pulse 1.2s infinite;
+}
+.cctv-x {
+  margin-left: auto;
+  pointer-events: auto;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 700;
+  font-family: 'Be Vietnam Pro', sans-serif;
+}
+.cctv-x kbd {
+  margin-left: 6px;
+  font-size: 10.5px;
+  color: #2d3142;
+}
+.cctv-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 8px;
+  min-height: 0;
+}
+.cctv-feed {
+  position: relative;
+  border-radius: 8px;
+  border: 2px solid rgba(160, 255, 190, 0.35);
+  overflow: hidden;
+  /* scanlines + a little vignette over the live picture */
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px), radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.45));
+}
+.cctv-name {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+@media (max-aspect-ratio: 1/1) {
+  .cctv-grid {
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+  }
+}
+
+/* watching the cameras: only the toolbar (mic…) stays over the screen wall */
+.office.cctv-on .hud > * {
+  visibility: hidden;
+}
+.office.cctv-on .hud > .toolbar,
+.office.cctv-on .hud > .banner,
+.office.cctv-on .hud > .popover {
+  visibility: visible;
+}
+
+/* ---- phones: nothing may sit under the thumbs. Open menus go on top; panels that lived bottom-left
+   move up under the location pill; while one is open the stick steps aside (fold it to walk). */
+.office.touch .topbar {
+  z-index: 9;
+}
+.office.touch .places {
+  max-height: calc(100vh - 80px);
+  width: min(330px, calc(100vw - 24px));
+}
+.office.touch .popover {
+  z-index: 9;
+}
+.office.touch .cinema-panel,
+.office.touch .cinema-pill,
+.office.touch .kara-panel,
+.office.touch .kara-pill,
+.office.touch .wolf-panel,
+.office.touch .wolf-pill {
+  top: 60px;
+  bottom: auto;
+  z-index: 7;
+}
+.office.touch .cinema-panel,
+.office.touch .kara-panel,
+.office.touch .wolf-panel {
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+}
+.office.touch .pcard {
+  left: 50%;
+  transform: translateX(-50%);
+  top: 60px;
+  z-index: 8;
+  max-width: calc(100vw - 24px);
+}
+.office.touch .voice-status {
+  bottom: auto;
+  top: 60px;
+}
+.office.touch:has(.places, .more-menu, .cinema-panel, .kara-panel:not([style*='none']), .wolf-panel, .mole-panel, .pcard) .t-stick {
+  display: none;
+}
+.office.touch:has(.places, .more-menu) .t-right {
+  display: none;
+}

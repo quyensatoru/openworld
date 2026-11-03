@@ -28,22 +28,21 @@ type R4 = { x0: number; z0: number; x1: number; z1: number };
 const run = (spec: [string, number][]) => spec.map(([c, n]) => c.repeat(n)).join('');
 const ROW = {
   a: run([['S', 8], ['D', 10], ['Q', 5], ['A', 7], ['K', 10]]),
-  b: run([['S', 8], ['D', 10], ['-', 5], ['A', 7], ['K', 10]]),
-  c: run([['S', 8], ['-', 22], ['K', 10]]),
-  d: run([['S', 5], ['T', 5], ['-', 2], ['N', 6], ['M', 8], ['-', 2], ['E', 5], ['C', 7]]),
-  e: run([['P', 5], ['T', 5], ['-', 2], ['N', 6], ['M', 8], ['-', 2], ['E', 5], ['C', 7]]),
-  f: run([['P', 10], ['-', 2], ['N', 6], ['M', 8], ['-', 2], ['E', 5], ['C', 7]]),
-  g: run([['P', 10], ['-', 2], ['L', 6], ['M', 8], ['-', 2], ['E', 5], ['C', 7]]),
-  h: run([['P', 10], ['-', 2], ['L', 6], ['M', 8], ['-', 5], ['B', 9]]),
-  i: run([['Y', 10], ['-', 2], ['L', 6], ['H', 8], ['-', 5], ['B', 9]]),
+  b: run([['S', 8], ['D', 10], ['X', 5], ['A', 7], ['K', 10]]),
+  d: run([['S', 5], ['T', 5], ['N', 8], ['M', 8], ['E', 7], ['C', 7]]),
+  e: run([['P', 5], ['T', 5], ['N', 8], ['M', 8], ['E', 7], ['C', 7]]),
+  f: run([['P', 10], ['N', 8], ['M', 8], ['E', 7], ['C', 7]]),
+  g: run([['P', 10], ['L', 8], ['M', 8], ['E', 7], ['C', 7]]),
+  h: run([['P', 10], ['L', 8], ['M', 8], ['W', 5], ['B', 9]]),
+  i: run([['Y', 10], ['L', 8], ['H', 8], ['W', 5], ['B', 9]]),
   j: run([['Y', 10], ['H', 21], ['B', 9]]),
   k: run([['Y', 10], ['H', 30]]),
 };
 const rows = (r: string, n: number) => Array<string>(n).fill(r);
+/** No corridors: every room opens straight into its neighbours; only the stairs hall is shared. */
 export const MOLE_GRID: string[] = [
   ...rows(ROW.a, 5),
-  ...rows(ROW.b, 2),
-  ...rows(ROW.c, 2),
+  ...rows(ROW.b, 4),
   ...rows(ROW.d, 4),
   ROW.e,
   ROW.f,
@@ -71,8 +70,9 @@ export type MoleRoom =
   | 'acct'
   | 'boss'
   | 'med'
-  | 'hall'
-  | 'corr';
+  | 'photo'
+  | 'maint'
+  | 'hall';
 
 export interface MoleRoomMeta {
   ch: string;
@@ -82,7 +82,7 @@ export interface MoleRoomMeta {
   tint: string;
   /** colour of the ceiling light pools */
   light: string;
-  /** a real room (doors can be locked from the sabotage menu) — not the hall or the corridors */
+  /** a real room (doors can be locked from the sabotage menu) — not the stairs hall */
   room: boolean;
   /** rectangles (logical coords) covering the room */
   rects: R4[];
@@ -103,8 +103,9 @@ const META: Record<MoleRoom, Omit<MoleRoomMeta, 'rects'>> = {
   acct: { ch: 'C', name: 'Phòng Kế Toán', floor: 'wood', tint: '#5a5040', light: '#fff1c8', room: true },
   boss: { ch: 'B', name: 'Phòng Giám Đốc', floor: 'wood', tint: '#6e4a34', light: '#ffd49a', room: true },
   med: { ch: 'Y', name: 'Phòng Y Tế', floor: 'tile', tint: '#4f6e69', light: '#c8fff0', room: true },
+  photo: { ch: 'X', name: 'Phòng Photo', floor: 'tile', tint: '#555b6b', light: '#e6ecff', room: true },
+  maint: { ch: 'W', name: 'Phòng Bảo Trì', floor: 'stone', tint: '#4d4a3c', light: '#ffd27a', room: true },
   hall: { ch: 'H', name: 'Sảnh tầng 5', floor: 'stone', tint: '#4a4d57', light: '#dfe6ff', room: false },
-  corr: { ch: '-', name: 'Hành Lang', floor: 'stone', tint: '#3b3f4a', light: '#c8d4ff', room: false },
 };
 const BY_CH = new Map(Object.entries(META).map(([k, m]) => [m.ch, k as MoleRoom]));
 
@@ -142,7 +143,7 @@ function rectsOf(ch: string): R4[] {
 
 export const ROOM_META = Object.fromEntries(Object.entries(META).map(([k, m]) => [k, { ...m, rects: rectsOf(m.ch) }])) as Record<MoleRoom, MoleRoomMeta>;
 export const MOLE_ROOMS = Object.keys(ROOM_META) as MoleRoom[];
-/** Rooms whose doors a mole can slam shut (everything but the hall and corridors). */
+/** Rooms whose doors a mole can slam shut (everything but the hall). */
 export const LOCKABLE_ROOMS = MOLE_ROOMS.filter((r) => ROOM_META[r].room);
 
 export function roomAt(x: number, z: number): MoleRoom | null {
@@ -165,31 +166,31 @@ export interface MoleDoor {
 }
 // [id, axis, local at, local from, local to]
 const DOOR_SPEC: [string, 'x' | 'z', number, number, number][] = [
-  ['d-sv-hl', 'z', 8, 7, 9],
   ['d-sv-ds', 'z', 8, 2, 4],
-  ['d-ds-hl', 'x', 7, 12, 14],
-  ['d-an-hl', 'x', 5, 19, 21],
-  ['d-ar-hl', 'x', 7, 25, 27],
-  ['d-ct-hl', 'z', 30, 7, 9],
-  ['d-vt-hl', 'z', 10, 10, 12],
-  ['d-in-hl', 'z', 10, 16, 18],
-  ['d-in-yt', 'x', 20, 3, 5],
+  ['d-sv-ds2', 'z', 8, 7, 9],
   ['d-sv-in', 'x', 13, 1, 3],
-  ['d-ns-hl', 'z', 12, 10, 12],
+  ['d-ds-ph', 'z', 18, 6, 8],
+  ['d-an-ph', 'x', 5, 19, 21],
+  ['d-ph-ar', 'z', 23, 6, 8],
+  ['d-ar-ct', 'z', 30, 7, 9],
+  ['d-ds-ns', 'x', 9, 13, 15],
+  ['d-ph-hp', 'x', 9, 20, 22],
+  ['d-ar-di', 'x', 9, 27, 29],
+  ['d-ct-kt', 'x', 9, 35, 37],
+  ['d-vt-ns', 'z', 10, 10, 12],
   ['d-ns-hp', 'z', 18, 11, 13],
-  ['d-ng-hl', 'z', 12, 17, 19],
-  ['d-ng-sh', 'x', 21, 14, 16],
-  ['d-hp-hl', 'x', 9, 21, 23],
-  ['d-hp-sh', 'x', 20, 23, 25],
-  ['d-hp-he', 'z', 26, 13, 15],
-  ['d-di-hl', 'z', 28, 10, 12],
+  ['d-ns-ng', 'x', 15, 13, 15],
+  ['d-hp-di', 'z', 26, 13, 15],
   ['d-di-kt', 'z', 33, 12, 14],
-  ['d-kt-ct', 'x', 9, 35, 37],
-  ['d-gd-hl', 'z', 31, 17, 19],
+  ['d-di-bt', 'x', 16, 27, 29],
+  ['d-bt-gd', 'z', 31, 17, 19],
+  ['d-bt-sh', 'x', 21, 27, 29],
   ['d-gd-sh', 'x', 22, 35, 37],
+  ['d-hp-sh', 'x', 20, 23, 25],
+  ['d-ng-sh', 'x', 21, 14, 16],
+  ['d-in-ng', 'z', 10, 16, 18],
+  ['d-in-yt', 'x', 20, 3, 5],
   ['d-yt-sh', 'z', 10, 23, 25],
-  ['d-he-sh', 'x', 21, 27, 29],
-  ['d-hl-sh', 'x', 21, 10, 12],
 ];
 const cellAt = (lx: number, lz: number) => (lx < 0 || lz < 0 || lx >= GRID_W || lz >= GRID_D ? ' ' : MOLE_GRID[lz][lx]);
 export const MOLE_DOORS: MoleDoor[] = DOOR_SPEC.map(([id, axis, at, from, to]) => {
@@ -299,16 +300,18 @@ export const STATIONS: Station[] = [
   st('st-files-t', 'files', 7.5, 13.45, PI),
   st('st-paper', 'paper', 0.7, 16.6, PI / 2),
   st('st-plant-l', 'plant', 13.0, 20.3, PI),
-  st('st-files-n', 'files', 15.2, 9.4, 0),
+  st('st-files-n', 'files', 16.9, 9.4, 0),
   st('st-reboot-e', 'reboot', 31.0, 9.5, 0),
   st('st-code-c', 'code', 39.5, 11.4, -PI / 2),
   st('st-coffee-b', 'coffee', 39.3, 18.6, -PI / 2),
   st('st-scan', 'scan', 3.0, 27.4, PI),
+  st('st-paper-x', 'paper', 18.6, 8.5, PI / 2),
+  st('st-reboot-w', 'reboot', 30.45, 16.35, 0),
 ];
 export const STATION_BY_ID = new Map(STATIONS.map((s) => [s.id, s]));
 
 /** Fuse box (lights out is fixed here, Phòng Điện) and the emergency bell (on the meeting table). */
-export const FUSE = { x: F5 + 28.12, z: 14.7, ry: PI / 2 };
+export const FUSE = { x: F5 + 26.12, z: 11.0, ry: PI / 2 };
 /** Where you stand to use the fuse box. */
 export const FUSE_SPOT = { x: FUSE.x + Math.sin(FUSE.ry) * 0.9, z: FUSE.z + Math.cos(FUSE.ry) * 0.9 };
 export const BELL = { x: F5 + 22, z: 14.5 };
@@ -319,6 +322,31 @@ export const CRIT = [
   { id: 'mole-crit-b', x: F5 + 31.4, z: 20.9, ry: PI / 2, room: 'boss' as MoleRoom },
 ];
 export const MOLE_CRIT_MS = 45_000;
+/**
+ * Security cameras (Phòng An Ninh): a mount high on a wall (x, z) looking at a spot (tx, tz).
+ * Anyone at the monitor desk can watch them; while someone does, their red lights blink.
+ */
+export interface MoleCam {
+  id: string;
+  name: string;
+  x: number;
+  z: number;
+  tx: number;
+  tz: number;
+}
+const cam = (id: string, name: string, lx: number, z: number, ltx: number, tz: number): MoleCam => ({ id, name, x: lx + F5, z, tx: ltx + F5, tz });
+export const MOLE_CAMS: MoleCam[] = [
+  cam('cam-hall', 'Sảnh tầng 5', 10.3, 21.3, 30, 25.5),
+  cam('cam-meet', 'Phòng Họp Khẩn', 25.7, 9.3, 19, 19),
+  cam('cam-canteen', 'Căng Tin', 39.7, 8.7, 32.5, 1.5),
+  cam('cam-server', 'Phòng Server', 7.7, 8.7, 1.5, 1.5),
+  cam('cam-elec', 'Phòng Điện', 26.3, 9.3, 32.5, 15.5),
+  cam('cam-med', 'Phòng Y Tế', 9.7, 20.3, 1.5, 27),
+];
+/** The monitor desk in Phòng An Ninh (where you watch from). */
+export const CAM_DESK = { x: F5 + 21.6, z: 1.45 };
+export const MOLE_CAM_RANGE = 2.2;
+
 /** The game board in the hall (on the meeting room's south wall). */
 export const MOLE_BOARD = { x: F5 + 20, z: 20.12 };
 
@@ -399,6 +427,8 @@ export interface MoleView {
   doors: string[];
   /** people hiding in a duct right now (not drawn) */
   hidden: string[];
+  /** how many people are watching the security cameras (their lights blink) */
+  cams: number;
   meeting: { by: string; byName: string; reason: 'report' | 'bell'; body: string | null } | null;
   /** vote phase: who has voted (ids); result: voter → target */
   voted: string[];
@@ -447,4 +477,6 @@ export type MoleMsg =
   | { a: 'vote'; target: string }
   | { a: 'door'; door: string }
   /** enter the duct here (`vent`), move to a linked one, or climb out (`vent: null`) */
-  | { a: 'vent'; vent: string | null };
+  | { a: 'vent'; vent: string | null }
+  /** start / stop watching the security cameras */
+  | { a: 'cams'; on: boolean };

@@ -140,7 +140,7 @@ class Game {
             3500,
           );
         },
-        inputBlocked: () => getState().arcadeOpen || !!getState().moleTask,
+        inputBlocked: () => getState().arcadeOpen || !!getState().moleTask || getState().cctv,
         onGraphicsLost: (lost) => setState({ glLost: lost }),
         onLift: (phase, from, to) => {
           this.ambience?.ding();
@@ -1360,6 +1360,7 @@ class Game {
       ...v,
       doors: (v.doors ?? []).filter((id) => DOOR_BY_ID.has(id)),
       hidden: v.hidden ?? [],
+      cams: v.cams ?? 0,
       bodies: v.bodies ?? [],
       locks: (v.locks ?? []).filter((l) => DOOR_BY_ID.has(l.door)),
       me: {
@@ -1384,6 +1385,9 @@ class Game {
     const ghost = live && !v.me.alive;
     w.setExtraRects(ghost ? [] : v.doors.map((id) => DOOR_BY_ID.get(id)).filter((d) => !!d).map((d) => doorRect(d!)));
     w.setHidden(v.hidden);
+    w.office.f5.setCamsWatched(v.cams > 0);
+    // the camera screen closes when a meeting starts / you die / a game starts
+    if (getState().cctv && v.me.inGame && v.phase !== 'lobby' && v.phase !== 'end' && (v.phase !== 'play' || (prev?.me.alive && !v.me.alive))) this.closeCams();
     // in a duct: sit at the hatch you're under, frozen, till you climb out
     if (v.me.vent !== (prev?.me.vent ?? null)) {
       const vent = v.me.vent ? VENT_BY_ID.get(v.me.vent) : null;
@@ -1532,6 +1536,29 @@ class Game {
     return v.me.role === 'mole' ? VISION.mole : v.lights > serverNow() ? VISION.dark : VISION.crew;
   }
 
+  /** Sit at the security desk and watch the cameras. */
+  openCams() {
+    const v = getState().mole;
+    if (v && v.me.inGame && v.phase !== 'lobby' && v.phase !== 'end' && v.phase !== 'play') return;
+    if (v?.me.vent || getState().cctv || !this.world) return;
+    this.mole({ a: 'cams', on: true });
+    setState({ cctv: true });
+    this.world.setCctv(true);
+    this.ambience?.sfx('flip');
+  }
+
+  closeCams() {
+    if (!getState().cctv) return;
+    this.mole({ a: 'cams', on: false });
+    setState({ cctv: false });
+    this.world?.setCctv(false);
+  }
+
+  /** The camera screen tells the world where its picture boxes are. */
+  setCctvCells(fn: (() => Element[]) | null) {
+    if (this.world) this.world.cctvCells = fn;
+  }
+
   /** What the E prompt says for floor-5 things (null = no prompt here). */
   private moleLabel(id: string): string | null {
     const v = getState().mole;
@@ -1562,6 +1589,7 @@ class Game {
       if (!v || v.phase !== 'play' || v.me.role !== 'mole' || !v.me.alive) return;
       return this.mole({ a: 'vent', vent: id.slice(10) });
     }
+    if (id === 'mole-cams') return this.openCams();
     if (!v || !v.me.inGame || v.phase !== 'play') {
       if (id.startsWith('st-')) toast('🕵️ Nhiệm vụ chỉ làm được trong một ván Nội Gián — tham gia ở bảng trong sảnh tầng 5.', 'info', 4000);
       return;

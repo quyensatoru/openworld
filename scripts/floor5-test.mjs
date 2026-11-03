@@ -86,7 +86,7 @@ function client(cookie, cid, name) {
 
 
 // where you stand to use each station / console (see shared/mole.ts)
-const STATIONS = {"st-reboot":[242.6,1.55],"st-bugs-s":[241.55,10.6],"st-bugs-d":[250.2,1.55],"st-code-d":[255.2,1.45],"st-code-q":[259.4,1.45],"st-files":[267.4,1.45],"st-coffee":[278.35,3.4],"st-plant-k":[271,1.65],"st-files-t":[247.5,12.5],"st-paper":[241.65,16.6],"st-plant-l":[253,19.35],"st-files-n":[255.2,10.35],"st-reboot-e":[271,10.45],"st-code-c":[278.55,11.4],"st-coffee-b":[278.35,18.6],"st-scan":[243,26.45]};
+const STATIONS = {"st-reboot":[242.6,1.55],"st-bugs-s":[241.55,10.6],"st-bugs-d":[250.2,1.55],"st-code-d":[255.2,1.45],"st-code-q":[259.4,1.45],"st-files":[267.4,1.45],"st-coffee":[278.35,3.4],"st-plant-k":[271,1.65],"st-files-t":[247.5,12.5],"st-paper":[241.65,16.6],"st-plant-l":[253,19.35],"st-files-n":[256.9,10.35],"st-reboot-e":[271,10.45],"st-code-c":[278.55,11.4],"st-coffee-b":[278.35,18.6],"st-scan":[243,26.45],"st-paper-x":[259.55,8.5],"st-reboot-w":[270.45,17.3]};
 const CRIT_A = [246.65, 5.6];
 const CRIT_B = [272.35, 20.9];
 (async () => {
@@ -179,6 +179,18 @@ const CRIT_B = [272.35, 20.9];
   await sleep(300);
   mole.send({ t: 'mole', m: { a: 'vent', vent: null } });
   ok(!!(await crew[1].wait((m) => m.t === 'mole' && !m.v.hidden.length, 3000)), 'climbing out makes you visible again');
+  // security cameras: watch from the desk in Phòng An Ninh; the count shows up for everyone
+  crew[2].move(261.6, 1.6);
+  await sleep(300);
+  crew[2].send({ t: 'mole', m: { a: 'cams', on: true } });
+  ok(!!(await crew[3].wait((m) => m.t === 'mole' && m.v.cams === 1, 3000)), 'someone watches the cameras (their lights blink for everyone)');
+  crew[3].move(250, 2);
+  await sleep(300);
+  crew[3].send({ t: 'mole', m: { a: 'cams', on: true } });
+  await sleep(400);
+  ok([...crew[3].inbox].reverse().find((m) => m.t === 'mole').v.cams === 1, 'you can only watch from the security desk');
+  crew[2].send({ t: 'mole', m: { a: 'cams', on: false } });
+  ok(!!(await crew[3].wait((m) => m.t === 'mole' && m.v.cams === 0, 3000)), 'and stop watching');
   // kill cooldown at the start
   const victim = crew[1];
   victim.move(260, 24);

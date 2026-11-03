@@ -117,6 +117,8 @@ export interface OfficeStore {
   moleTask: { id: string; fake: boolean } | null;
   /** a mole's pretend tasks they already "did" (ticked locally only, so the act looks right) */
   moleFakeDone: string[];
+  /** watching the security cameras (Phòng An Ninh) */
+  cctv: boolean;
   /** A big dramatic moment on screen (meeting called, you got laid off…). */
   moleSplash: { kind: 'report' | 'bell' | 'killed' | 'kill'; by?: string; body?: string | null; at: number } | null;
   wolfSpeech: boolean;
@@ -203,6 +205,7 @@ export const useStore = create<OfficeStore>(() => ({
   molePanel: !IS_TOUCH, // phones: start folded into the little pill
   moleTask: null,
   moleFakeDone: [],
+  cctv: false,
   moleSplash: null,
   wolfSpeech: loadPref('wolfSpeech', true),
   activity: {},

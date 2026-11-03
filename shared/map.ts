@@ -1,5 +1,5 @@
 // Office layout shared by the client (3D build, collision, path finding) and the server (zones).
-import { BELL, CRIT, FUSE, FUSE_SPOT, MOLE_BOARD, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, MOLE_WALLS, ROOM_META, STATIONS, TASK_META, doorMid, type MoleTaskKind } from './mole';
+import { BELL, CAM_DESK, CRIT, FUSE, FUSE_SPOT, MOLE_BOARD, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, MOLE_WALLS, ROOM_META, STATIONS, TASK_META, doorMid, type MoleTaskKind } from './mole';
 // Units are metres. x grows to the east, z grows to the south, y is up.
 // Character yaw `ry`: 0 = facing +z (south), PI/2 = facing +x (east).
 
@@ -798,6 +798,7 @@ for (const l of LIFTS) {
     INTERACTABLES.push({ id: `mole-door:${d.id}`, kind: 'mole', x: m.x, z: m.z, radius: 1.5, label: '🚪 Cửa' });
   }
   for (const v of MOLE_VENTS) INTERACTABLES.push({ id: `mole-vent:${v.id}`, kind: 'mole', x: v.x, z: v.z, radius: 1.3, label: '🕳️ Ống kỹ thuật' });
+  INTERACTABLES.push({ id: 'mole-cams', kind: 'mole', x: CAM_DESK.x, z: CAM_DESK.z, radius: 1.4, label: '📹 Xem camera an ninh' });
   // the game board (hall side of the meeting room's south wall) + somewhere to wait
   FURNITURE.push({ id: 'moleBoard-0', kind: 'moleBoard', x: MOLE_BOARD.x, z: MOLE_BOARD.z, ry: 0, w: 3.2, d: 0.2, solid: true, zone: Z('hall') });
   INTERACTABLES.push({ id: 'mole-board', kind: 'mole', x: MOLE_BOARD.x, z: MOLE_BOARD.z + 1.4, radius: 1.8, label: '🕵️ Bảng Nội Gián · tham gia' });
@@ -889,10 +890,20 @@ for (const l of LIFTS) {
   f('bigPlant', 39.35, 27.35, 0.7, 0.7, 0, 'hall');
   f('bigPlant', 39.35, 22.6, 0.7, 0.7, 0, 'hall');
   f('crates', 38.8, 24.8, 1.0, 0.9, 0.2, 'hall');
-  f('crates', 22.5, 6.4, 0.9, 0.8, 0, 'corr');
-  f('crates', 30.4, 16.5, 0.9, 0.8, 0.15, 'corr');
-  f('crates', 26.5, 20.4, 0.9, 0.8, -0.1, 'corr');
-  f('plant', 8.6, 7.4, 0.5, 0.5, 0, 'corr');
+  // Phòng Photo (under security): a big copier, paper stacks, a corner behind the shelf
+  f('printer', 22.2, 5.45, 1.2, 0.8, 0, 'photo');
+  f('crates', 22.6, 8.6, 0.9, 0.8, 0.1, 'photo');
+  // Phòng Bảo Trì: tool cabinets and crates
+  f('cabinet', 26.4, 18.0, 0.9, 0.5, PI / 2, 'maint');
+  f('cabinet', 26.4, 19.0, 0.9, 0.5, PI / 2, 'maint');
+  f('crates', 26.5, 16.6, 0.9, 0.8, 0.15, 'maint');
+  f('crates', 30.5, 20.5, 0.9, 0.8, -0.1, 'maint');
+  f('plant', 17.5, 8.5, 0.5, 0.5, 0, 'design');
+  // the wider HR room, lounge and electrical room
+  f('sofa', 10.6, 13.6, 2.0, 0.9, PI / 2, 'hr');
+  f('bigPlant', 10.6, 9.6, 0.7, 0.7, 0, 'hr');
+  f('bigPlant', 10.6, 20.4, 0.7, 0.7, 0, 'lounge');
+  f('cabinet', 27.6, 12.0, 0.9, 0.5, PI / 2, 'elec');
 }
 
 /** Furniture tall enough to hide behind on floor 5 (blocks the line of sight). */

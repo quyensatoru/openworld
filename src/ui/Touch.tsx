@@ -53,16 +53,20 @@ export function TouchControls() {
   const prompt = useStore((s) => s.prompt);
   const task = useStore((s) => s.moleTask);
   const vent = useStore((s) => !!s.mole?.me.vent && s.mole.phase === 'play');
+  const lift = useStore((s) => s.liftPanel != null);
+  const cctv = useStore((s) => s.cctv);
   // a full-screen side panel (chat…) on a small screen: the thumbs belong to it
   const sheet = useStore((s) => !!s.panel) && window.innerWidth < 720;
   const busy = useStore((s) => s.kanbanOpen || s.creatorOpen || s.settingsOpen || s.arcadeOpen);
-  if (!touch || task || sheet || busy) return null;
+  if (!touch || task || sheet || busy || cctv) return null;
   const sitting = !!prompt?.startsWith('Đang ngồi');
+  // the lift panel already shows the choices — no bubble on top of it
+  const showLabel = !!prompt && !lift;
   return (
     <>
       {!vent && <Stick />}
       <div className="t-right">
-        {prompt && (
+        {showLabel && (
           <button className="t-label" onClick={() => game.touchUse()}>
             {prompt}
           </button>

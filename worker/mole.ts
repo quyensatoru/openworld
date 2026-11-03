@@ -5,11 +5,13 @@
 // and only talk among themselves. Positions come from the players' own movement messages.
 import {
   BELL,
+  CAM_DESK,
   CRIT,
   DOOR_BY_ID,
   FUSE_SPOT,
   LOCKABLE_ROOMS,
   MOLE_BELL_RANGE,
+  MOLE_CAM_RANGE,
   MOLE_CRIT_MS,
   MOLE_DEFAULTS,
   MOLE_DOORS,
@@ -84,6 +86,8 @@ export class MoleGame {
   private doorAt = new Map<string, number>();
   /** moles hiding in a duct: id → vent */
   private inVent = new Map<string, string>();
+  /** people watching the security cameras */
+  private watching = new Set<string>();
   private sabReady = 0;
   private meeting: MoleView['meeting'] = null;
   private votes = new Map<string, string>();
@@ -158,9 +162,10 @@ export class MoleGame {
     this.crit = 0;
     this.critHeld.clear();
     this.locks.clear();
-    // everything opens up again (meeting, new game, game over) and everyone climbs out
+    // everything opens up again (meeting, new game, game over), everyone climbs out, screens off
     this.shut.clear();
     this.inVent.clear();
+    this.watching.clear();
   }
 
   // ------------------------------------------------------------------ voice
@@ -206,6 +211,7 @@ export class MoleGame {
       locks: [...this.locks].map(([door, until]) => ({ door, until })),
       doors: [...new Set([...this.shut, ...this.locks.keys()])],
       hidden: [...this.inVent.keys()],
+      cams: this.watching.size,
       meeting: this.meeting,
       voted: this.phase === 'vote' ? [...this.votes.keys()] : [],
       votes: this.phase === 'result' || this.phase === 'end' ? Object.fromEntries(this.votes) : null,
@@ -269,6 +275,7 @@ export class MoleGame {
 
   /** Disconnected: one minute to come back. */
   leave(id: string) {
+    if (this.watching.delete(id)) this.broadcast();
     if (!this.playing && this.joined.delete(id)) return this.broadcast();
     const p = this.get(id);
     if (!p || !p.alive || this.phase === 'end') return;
@@ -488,6 +495,16 @@ export class MoleGame {
           if (!ventLinks(cur).some((v) => v.id === to.id)) return;
           this.inVent.set(me.id, to.id);
         }
+        return this.broadcast();
+      }
+      case 'cams': {
+        if (m.on) {
+          if (pp.x < MOLE_FLOOR_X0 || dist(pp, CAM_DESK) > MOLE_CAM_RANGE + 0.8) return;
+          if (this.playing && this.phase !== 'end' && this.phase !== 'play') return;
+          if (me && this.inVent.has(me.id)) return;
+          if (this.watching.has(pp.id)) return;
+          this.watching.add(pp.id);
+        } else if (!this.watching.delete(pp.id)) return;
         return this.broadcast();
       }
       case 'vote': {

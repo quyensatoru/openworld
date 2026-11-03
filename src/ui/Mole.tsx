@@ -2,7 +2,7 @@
 // (kill, report, sabotage), alerts, the meeting + vote card, role reveal, the end screen and the
 // fog of war overlay.
 import { useEffect, useRef, useState } from 'react';
-import { LOCKABLE_ROOMS, MOLE_MAX, MOLE_MIN, ROOM_META, STATION_BY_ID, TASK_META, VENT_BY_ID, molesFor, ventLinks, type MoleView } from '../../shared/mole';
+import { LOCKABLE_ROOMS, MOLE_CAMS, MOLE_MAX, MOLE_MIN, ROOM_META, STATION_BY_ID, TASK_META, VENT_BY_ID, molesFor, ventLinks, type MoleView } from '../../shared/mole';
 import { game } from '../game';
 import { serverNow, setState, useStore } from '../store';
 import { AvatarDot } from './common';
@@ -594,7 +594,9 @@ export function MoleEnd() {
 export function MoleFog() {
   const ref = useRef<HTMLDivElement>(null);
   const v = useStore((s) => s.mole);
-  const active = !!v && v.me.inGame && v.phase === 'play' && v.me.alive;
+  const cctv = useStore((s) => s.cctv);
+  // (the camera screen shows rooms far away — no fog over it)
+  const active = !!v && v.me.inGame && v.phase === 'play' && v.me.alive && !cctv;
   useEffect(() => {
     if (!active) return;
     let raf = 0;
@@ -615,4 +617,52 @@ export function MoleFog() {
   }, [active]);
   if (!active) return null;
   return <div className="mole-fog" ref={ref} />;
+}
+
+// ------------------------------------------------------------------ security cameras
+/** Phòng An Ninh's screen wall: six live feeds (the world draws the pictures into these boxes). */
+export function MoleCams() {
+  const on = useStore((s) => s.cctv);
+  const touch = useStore((s) => s.touch);
+  const grid = useRef<HTMLDivElement>(null);
+  useTick(1000);
+  useEffect(() => {
+    if (!on) return;
+    game.setCctvCells(() => (grid.current ? [...grid.current.querySelectorAll('.cctv-feed')] : []));
+    const key = (e: KeyboardEvent) => {
+      if (e.code === 'Escape' || e.code === 'KeyE') {
+        e.preventDefault();
+        game.closeCams();
+      }
+    };
+    window.addEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('keydown', key);
+      game.setCctvCells(null);
+    };
+  }, [on]);
+  if (!on) return null;
+  const t = new Date();
+  const clock = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
+  return (
+    <div className="cctv">
+      <div className="cctv-top">
+        <b>📹 Camera an ninh</b>
+        <span className="cctv-rec">● REC</span>
+        <span className="cctv-clock">{clock}</span>
+        <button className="cctv-x" onClick={() => game.closeCams()}>
+          ✕ Rời màn hình {!touch && <kbd>Esc</kbd>}
+        </button>
+      </div>
+      <div className="cctv-grid" ref={grid}>
+        {MOLE_CAMS.map((c, i) => (
+          <div className="cctv-feed" key={c.id}>
+            <span className="cctv-name">
+              CAM {i + 1} · {c.name}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

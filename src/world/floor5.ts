@@ -5,7 +5,7 @@
 // Lives in the floor-5 group (logical coords).
 import * as THREE from 'three';
 import { DOOR_H, FLOOR_H, UP_DX, UP_WALL_H, WALL_T } from '../../shared/map';
-import { MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, ROOM_META, STATION_BY_ID, TASK_META, doorMid, roomAt, type MoleRoom, type MoleView } from '../../shared/mole';
+import { MOLE_CAMS, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, ROOM_META, STATION_BY_ID, TASK_META, doorMid, roomAt, type MoleRoom, type MoleView } from '../../shared/mole';
 import { canvasTexture } from './materials';
 
 const label = (text: string, bg: string) =>
@@ -125,6 +125,10 @@ export class Floor5Fx {
   private seeAll = true;
 
   private vents = new Map<string, { lid: THREE.Group; t: number }>();
+  /** the security cameras' red lights (blink while someone watches) */
+  private camLeds: THREE.MeshBasicMaterial[] = [];
+  private camModels: THREE.Group[] = [];
+  private camsWatched = false;
 
   constructor(private root: THREE.Group) {
     const glow = (() => {
@@ -260,6 +264,33 @@ export class Floor5Fx {
       g.add(lid);
       root.add(g);
       this.vents.set(v.id, { lid, t: 9 });
+    }
+    // security cameras: a wall bracket, a body pointing at what it films, a red light
+    const camBody = new THREE.MeshStandardMaterial({ color: '#e9ecf2', roughness: 0.4 });
+    const camDark = new THREE.MeshStandardMaterial({ color: '#2a2f3a', roughness: 0.5 });
+    for (const c of MOLE_CAMS) {
+      const g = new THREE.Group();
+      g.position.set(c.x, 2.85, c.z);
+      g.rotation.y = Math.atan2(c.tx - c.x, c.tz - c.z);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.22), camDark);
+      arm.position.z = -0.1;
+      g.add(arm);
+      const head = new THREE.Group();
+      head.rotation.x = 0.45; // tilted down at the room
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.32), camBody);
+      head.add(body);
+      const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.04, 14), camDark);
+      lens.rotation.x = Math.PI / 2;
+      lens.position.z = 0.17;
+      head.add(lens);
+      const ledMat = new THREE.MeshBasicMaterial({ color: '#5a0d16', toneMapped: false });
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 6), ledMat);
+      led.position.set(0.05, 0.05, 0.16);
+      head.add(led);
+      g.add(head);
+      root.add(g);
+      this.camLeds.push(ledMat);
+      this.camModels.push(g);
     }
     this.alarm = new THREE.Mesh(
       new THREE.PlaneGeometry(40, 28),
@@ -407,6 +438,31 @@ export class Floor5Fx {
     this.scans.push({ g, t: 0 });
   }
 
+  /** Someone is watching the cameras: their red lights blink. */
+  setCamsWatched(on: boolean) {
+    this.camsWatched = on;
+  }
+
+  /**
+   * About to film with a security camera: no shroud, no "your task" markers, every body shown.
+   * Returns a function that puts everything back.
+   */
+  feedBegin(): () => void {
+    const back: [THREE.Object3D, boolean][] = [];
+    const set = (o: THREE.Object3D, v: boolean) => {
+      back.push([o, o.visible]);
+      o.visible = v;
+    };
+    for (const s of this.shrouds.values()) for (const m of s.meshes) set(m, false);
+    for (const g of this.markers.values()) set(g, false);
+    for (const g of this.bodies.values()) set(g, true);
+    // the cameras themselves would sit right in front of their own lens
+    for (const g of this.camModels) set(g, false);
+    return () => {
+      for (const [o, v] of back) o.visible = v;
+    };
+  }
+
   /** Doors shut / locked right now. */
   setDoors(shut: string[], locked: string[]) {
     this.shut = new Set([...shut, ...locked]);
@@ -504,6 +560,8 @@ export class Floor5Fx {
       s.mat.opacity = o < 0.01 && target === 0 ? 0 : o;
       for (const m of s.meshes) m.visible = s.mat.opacity > 0.005 && !this.blocking.has(m);
     }
+    const blink = this.camsWatched && Math.sin(this.t * 7) > 0;
+    for (const m of this.camLeds) m.color.set(blink ? '#ff2a3d' : this.camsWatched ? '#7a1020' : '#4a0a12');
     // duct hatches: flip up, then bang shut
     for (const v of this.vents.values()) {
       if (v.t > 1.2) continue;

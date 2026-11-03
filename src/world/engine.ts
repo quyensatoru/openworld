@@ -43,6 +43,7 @@ import { NavGrid } from './pathfinding';
 import { BarStaff } from './npc';
 import { VrmAvatar } from './avatar/vrm-avatar';
 import { party } from './bar';
+import { MOLE_CAMS } from '../../shared/mole';
 
 export interface WorldCallbacks {
   onLocalMove(x: number, z: number, ry: number, anim: AnimState): void;
@@ -1038,6 +1039,100 @@ export class World {
     return this.canSeeSpot(x, z);
   }
 
+  // ------------------------------------------------------------------ security cameras
+  private cctv: {
+    feeds: { cam: THREE.PerspectiveCamera; rt: THREE.WebGLRenderTarget; quad: THREE.Mesh }[];
+    scene: THREE.Scene;
+    ortho: THREE.OrthographicCamera;
+    next: number;
+  } | null = null;
+  /** The DOM boxes the camera pictures go into (set by the camera screen UI). */
+  cctvCells: (() => Element[]) | null = null;
+
+  /** Watch the floor-5 security cameras (replaces the normal view) — or stop. */
+  setCctv(on: boolean) {
+    if (!on) {
+      if (!this.cctv) return;
+      for (const f of this.cctv.feeds) {
+        f.rt.dispose();
+        (f.quad.material as THREE.Material).dispose();
+      }
+      this.cctv = null;
+      this.labels.domElement.style.visibility = '';
+      this.css3d.domElement.style.visibility = '';
+      return;
+    }
+    if (this.cctv) return;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#05070b');
+    const ortho = new THREE.OrthographicCamera(0, 1, 1, 0, -10, 10);
+    const plane = new THREE.PlaneGeometry(1, 1);
+    const y0 = 4 * FLOOR_H;
+    const feeds = MOLE_CAMS.map((c) => {
+      const cam = new THREE.PerspectiveCamera(68, 16 / 9, 0.1, 60);
+      cam.position.set(visualX(c.x), y0 + 2.8, c.z);
+      cam.lookAt(visualX(c.tx), y0 + 0.5, c.tz);
+      const rt = new THREE.WebGLRenderTarget(480, 270, { type: THREE.HalfFloatType });
+      const quad = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ map: rt.texture }));
+      quad.visible = false;
+      scene.add(quad);
+      return { cam, rt, quad };
+    });
+    this.cctv = { feeds, scene, ortho, next: 0 };
+    // name tags / web screens belong to the normal view
+    this.labels.domElement.style.visibility = 'hidden';
+    this.css3d.domElement.style.visibility = 'hidden';
+  }
+
+  /** A frame of the camera screen: refresh a couple of feeds, then lay them all out. */
+  private renderCctv() {
+    const c = this.cctv!;
+    const el = this.renderer.domElement;
+    const W = el.clientWidth;
+    const H = el.clientHeight;
+    // film: no shroud, everybody who is really there (not ghosts for the living, not people in ducts)
+    const restoreF5 = this.office.f5.feedBegin();
+    const back: [THREE.Object3D, boolean][] = [];
+    const v = this.vision;
+    for (const p of this.players.values()) {
+      back.push([p.holder, p.holder.visible]);
+      const ghost = !!v?.ghosts.has(p.id) && !v.seeGhosts;
+      p.holder.visible = this.sharesFloor(p.x, p.z) && !this.hiddenIds.has(p.id) && !ghost;
+    }
+    const per = this.renderer.getPixelRatio() < 1.5 ? 1 : 2; // light graphics: one feed a frame
+    for (let k = 0; k < per; k++) {
+      const f = c.feeds[c.next];
+      c.next = (c.next + 1) % c.feeds.length;
+      this.renderer.setRenderTarget(f.rt);
+      this.renderer.render(this.scene, f.cam);
+    }
+    this.renderer.setRenderTarget(null);
+    for (const [o, vis] of back) o.visible = vis;
+    restoreF5();
+    // lay the pictures into the boxes the UI drew
+    const cells = this.cctvCells?.() ?? [];
+    const box = el.getBoundingClientRect();
+    c.ortho.right = W;
+    c.ortho.top = H;
+    c.ortho.updateProjectionMatrix();
+    c.feeds.forEach((f, i) => {
+      const cell = cells[i];
+      if (!cell) {
+        f.quad.visible = false;
+        return;
+      }
+      const r = cell.getBoundingClientRect();
+      f.quad.visible = true;
+      f.quad.position.set(r.left - box.left + r.width / 2, H - (r.top - box.top + r.height / 2), 0);
+      f.quad.scale.set(r.width, r.height, 1);
+      if (r.height > 0 && Math.abs(f.cam.aspect - r.width / r.height) > 0.01) {
+        f.cam.aspect = r.width / r.height;
+        f.cam.updateProjectionMatrix();
+      }
+    });
+    this.renderer.render(c.scene, c.ortho);
+  }
+
   /** Is this person drawn for you right now (same floor, in view)? */
   isShown(id: string): boolean {
     return this.players.get(id)?.holder.visible ?? false;
@@ -1402,7 +1497,7 @@ export class World {
       this.ray.far = len;
       const hits = new Set(this.ray.intersectObjects(this.office.fadeWalls.map((w) => w.mesh), false).map((h) => h.object));
       this.ray.far = Infinity;
-      for (const w of this.office.fadeWalls) w.target = !fp && hits.has(w.mesh) ? 0.05 : 1;
+      for (const w of this.office.fadeWalls) w.target = !fp && !this.cctv && hits.has(w.mesh) ? 0.05 : 1;
       if (this.myFloor === 4) this.office.f5.cameraRay(this.camera.position, head);
     }
     for (const w of this.office.fadeWalls) {
@@ -1439,6 +1534,11 @@ export class World {
     if (this.warmPending) {
       this.warmPending = false;
       this.warmRender();
+    }
+    if (this.cctv) {
+      this.renderer.shadowMap.needsUpdate = false;
+      this.renderCctv();
+      return;
     }
     // shadows: every other frame, and not at all in the dark (cinema film / bar)
     this.shadowTick = (this.shadowTick + 1) % 2;

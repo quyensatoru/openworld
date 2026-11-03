@@ -14,7 +14,7 @@ import { ArcadePill, ArcadeWindow, LiftPanel } from './Arcade';
 import { KaraPhonesAsk, KaraScore, KaraZoomBar, KaraokePanel } from './Karaoke';
 import { WolfEnd, WolfNight, WolfPanel } from './Werewolf';
 import { MOLE_ROOMS } from '../../shared/mole';
-import { MoleActions, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal, MoleSplash, MoleVent } from './Mole';
+import { MoleActions, MoleCams, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal, MoleSplash, MoleVent } from './Mole';
 import { MoleTaskModal } from './MoleTasks';
 import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
 import { MeetingTvButton } from './MeetingTv';
@@ -70,8 +70,9 @@ export function Office() {
 
   const glError = useStore((s) => s.glError);
   const touch = useStore((s) => s.touch);
+  const cctv = useStore((s) => s.cctv);
   return (
-    <div className={`office${touch ? ' touch' : ''}`} ref={ref}>
+    <div className={`office${touch ? ' touch' : ''}${cctv ? ' cctv-on' : ''}`} ref={ref}>
       {glError && <GraphicsHelp />}
       <div className={`hud${theater ? ' theater' : ''}${inBar || inKara ? ' bar-mode' : ''}${inKara ? ' kara-mode' : ''}${inWolf ? ' wolf-mode' : ''}${inMole ? ' mole-mode' : ''}${theater && idle ? ' idle' : ''}`}>
         <Safe><TopBar /></Safe>
@@ -99,6 +100,7 @@ export function Office() {
       </div>
       <Safe><WolfNight /></Safe>
       <Safe><MoleFog /></Safe>
+      <Safe><MoleCams /></Safe>
       <Safe><MoleMeeting /></Safe>
       <Safe><MoleEject /></Safe>
       <Safe><MoleSplash /></Safe>
