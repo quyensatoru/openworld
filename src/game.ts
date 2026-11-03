@@ -1584,7 +1584,7 @@ function mentions(text: string, name: string): boolean {
   const t = normalize(text);
   const n = normalize(name);
   const first = n.split(/\s+/).pop() ?? n;
-  return t.includes(`@${n}`) || t.includes(`@${first}`) || t.includes('@all') || t.includes('@team');
+  return t.includes(`@${n}`) || t.includes(`@${n.replace(/\s+/g, '')}`) || new RegExp(`@${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(t) || t.includes('@all') || t.includes('@team');
 }
 
 function mediaError(err: unknown, what: string): string {

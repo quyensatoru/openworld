@@ -4566,3 +4566,132 @@ input[type='range'] {
   bottom: 46px;
   background: #39ff88;
 }
+
+/* chat v2: full height, even spacing, @mention picker */
+.side {
+  top: 14px;
+  bottom: 14px;
+}
+@media (max-width: 1180px) {
+  .side {
+    bottom: 84px;
+  }
+}
+.side-tabs {
+  padding: 10px 12px;
+}
+.chat-sub {
+  padding: 12px 14px 4px;
+}
+.chat-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-list {
+  padding: 10px 14px 14px;
+  gap: 12px;
+}
+.msg.cont {
+  margin-top: -8px;
+}
+.msg-gap {
+  width: 28px;
+  flex: none;
+}
+.msg-text .tagged {
+  color: #4060e0;
+  font-weight: 600;
+}
+.msg.system .pill .rep {
+  color: #4060e0;
+}
+.chat-new {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: #4060e0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(64, 96, 224, 0.35);
+}
+.chat-input {
+  position: relative;
+  padding: 12px 14px 14px;
+  align-items: center;
+}
+.chat-input .input {
+  flex: 1;
+  padding: 11px 14px;
+  border-radius: 12px;
+}
+.chat-send {
+  padding: 10px 14px;
+  border-radius: 12px;
+}
+.mention-pop {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% - 4px);
+  padding: 6px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 34px rgba(45, 49, 66, 0.22);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 1px;
+  z-index: 3;
+  animation: pop-down 0.12s ease-out;
+}
+.mention-pop .mp-title {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+}
+.mention-pop button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  text-align: left;
+}
+.mention-pop button.on {
+  background: #eef1ff;
+}
+.mp-all {
+  width: 24px;
+  text-align: center;
+}
+.mp-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-handle {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.mp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c9ced6;
+}
+.mp-dot.on {
+  background: var(--good);
+}

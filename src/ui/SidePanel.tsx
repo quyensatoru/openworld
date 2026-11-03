@@ -38,6 +38,15 @@ export function SidePanel() {
 }
 
 // ------------------------------------------------------------------ chat
+const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase();
+
+/** The handle typed after @ for a person: their given name (last word) if nobody else shares it. */
+function handleFor(name: string, all: string[]): string {
+  const last = name.trim().split(/\s+/).pop() ?? name;
+  const same = all.filter((n) => norm(n.trim().split(/\s+/).pop() ?? '') === norm(last)).length;
+  return same > 1 ? name.replace(/\s+/g, '') : last;
+}
+
 function Chat() {
   const chat = useStore((s) => s.chat);
   const tab = useStore((s) => s.chatTab);
@@ -48,23 +57,86 @@ function Chat() {
   const team = useStore((s) => s.team);
   const draft = useStore((s) => s.chatDraft);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const stick = useRef(true);
+  const [fresh, setFresh] = useState(0);
+  const [pick, setPick] = useState(0);
+  const [caret, setCaret] = useState(0);
   const zoneName = ZONE_BY_ID.get(zone)?.name ?? 'Khu vực';
 
   const msgs = useMemo(() => chat.filter((m) => (tab === 'global' ? m.ch === 'global' : m.ch === `zone:${zone}`)), [chat, tab, zone]);
-  useEffect(() => {
+  const lastId = msgs[msgs.length - 1]?.id;
+  const toBottom = (smooth = false) => {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [msgs.length, tab]);
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    setFresh(0);
+    stick.current = true;
+  };
+  // open / switch tab → the newest messages
+  useEffect(() => {
+    toBottom();
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  // a new message: follow it (unless you scrolled far up to read something — then show a button)
+  useEffect(() => {
+    if (!lastId) return;
+    const mine = msgs[msgs.length - 1]?.from === meId;
+    if (stick.current || mine) requestAnimationFrame(() => toBottom());
+    else setFresh((n) => n + 1);
+  }, [lastId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setState({ unread: 0 });
   }, [chat.length]);
+  const onScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
+    if (stick.current && fresh) setFresh(0);
+  };
+
+  // @mentions: the word being typed at the caret
+  const people = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string; online: boolean }>();
+    for (const p of Object.values(players)) seen.set(p.id, { id: p.id, name: p.name, online: true });
+    for (const t of Object.values(team)) if (!seen.has(t.id) && t.id !== meId) seen.set(t.id, { id: t.id, name: t.name, online: false });
+    return [...seen.values()];
+  }, [players, team, meId]);
+  const before = draft.slice(0, caret);
+  const at = before.match(/(^|\s)@([\p{L}\p{N}_.-]*)$/u);
+  const query = at ? norm(at[2]) : null;
+  const allNames = people.map((p) => p.name);
+  const options =
+    query == null
+      ? []
+      : [
+          ...(norm('all').startsWith(query) || norm('team').startsWith(query) || norm('ca team').startsWith(query) ? [{ id: '@all', name: 'Cả team', online: true, handle: 'all' }] : []),
+          ...people
+            .filter((p) => !query || norm(p.name).split(/\s+/).some((w) => w.startsWith(query)) || norm(p.name).replace(/\s+/g, '').startsWith(query))
+            .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name, 'vi'))
+            .map((p) => ({ ...p, handle: handleFor(p.name, allNames) })),
+        ].slice(0, 7);
+  const showMentions = options.length > 0;
+  const choose = (handle: string) => {
+    if (!at) return;
+    const start = before.length - at[2].length - 1;
+    const next = `${draft.slice(0, start)}@${handle} ${draft.slice(caret)}`;
+    setState({ chatDraft: next });
+    const pos = start + handle.length + 2;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(pos, pos);
+      setCaret(pos);
+    });
+    setPick(0);
+  };
 
   const send = (e: React.FormEvent) => {
     e.preventDefault();
+    if (showMentions) return choose(options[Math.min(pick, options.length - 1)].handle);
     const text = getState().chatDraft.trim();
     if (!text) return;
     game.sendChat(text, tab);
     setState({ chatDraft: '' });
+    setCaret(0);
   };
 
   const avatarOf = (id: string) => players[id]?.avatar ?? team[id]?.avatar ?? (id === meId ? getState().me?.avatar : undefined);
@@ -79,24 +151,74 @@ function Chat() {
           📍 {zoneName}
         </button>
       </div>
-      <div className="chat-list scroll" ref={listRef}>
-        {!msgs.length && (
-          <div className="empty">{tab === 'global' ? 'Chưa có tin nhắn nào. Chào cả nhà một câu đi! 👋' : `Tin nhắn ở đây chỉ những người đang ở “${zoneName}” thấy.`}</div>
+      <div className="chat-wrap">
+        <div className="chat-list scroll" ref={listRef} onScroll={onScroll}>
+          {!msgs.length && (
+            <div className="empty">{tab === 'global' ? 'Chưa có tin nhắn nào. Chào cả nhà một câu đi! 👋' : `Tin nhắn ở đây chỉ những người đang ở “${zoneName}” thấy.`}</div>
+          )}
+          {msgs.map((m, i) => {
+            const prev = msgs[i - 1];
+            // same person, a few minutes apart → one block (no repeated avatar / name)
+            const cont = !!prev && prev.from === m.from && m.from !== 'system' && m.ts - prev.ts < 3 * 60_000;
+            // the same system line over and over → shown once with a counter
+            if (m.from === 'system' && msgs[i + 1]?.from === 'system' && msgs[i + 1].text === m.text) return null;
+            let repeat = 1;
+            if (m.from === 'system') for (let j = i - 1; j >= 0 && msgs[j].from === 'system' && msgs[j].text === m.text; j--) repeat++;
+            return <Message key={m.id} m={m} myName={myName} avatar={avatarOf(m.from)} cont={cont} repeat={repeat} />;
+          })}
+        </div>
+        {fresh > 0 && (
+          <button className="chat-new" onClick={() => toBottom(true)}>
+            ↓ {fresh} tin nhắn mới
+          </button>
         )}
-        {msgs.map((m) => (
-          <Message key={m.id} m={m} myName={myName} avatar={avatarOf(m.from)} />
-        ))}
       </div>
       <form className="chat-input" onSubmit={send}>
+        {showMentions && (
+          <div className="mention-pop">
+            <div className="mp-title">Gọi tên</div>
+            {options.map((o, i) => (
+              <button
+                type="button"
+                key={o.id}
+                className={i === pick ? 'on' : ''}
+                onMouseEnter={() => setPick(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  choose(o.handle);
+                }}
+              >
+                {o.id === '@all' ? <span className="mp-all">📣</span> : <AvatarDot name={o.name} avatar={avatarOf(o.id)} size={24} />}
+                <span className="mp-name">{o.name}</span>
+                <span className="mp-handle">@{o.handle}</span>
+                {o.id !== '@all' && <span className={`mp-dot${o.online ? ' on' : ''}`} />}
+              </button>
+            ))}
+          </div>
+        )}
         <input
+          ref={inputRef}
           className="input"
           maxLength={500}
           value={draft}
-          placeholder={tab === 'global' ? 'Nhắn cả văn phòng… (@tên để gọi)' : `Nhắn trong ${zoneName}…`}
-          onChange={(e) => setState({ chatDraft: e.target.value })}
-          onKeyDown={(e) => e.key === 'Escape' && (e.target as HTMLInputElement).blur()}
+          placeholder={tab === 'global' ? 'Nhắn cả văn phòng… gõ @ để gọi ai đó' : `Nhắn trong ${zoneName}…`}
+          onChange={(e) => {
+            setState({ chatDraft: e.target.value });
+            setCaret(e.target.selectionStart ?? e.target.value.length);
+            setPick(0);
+          }}
+          onSelect={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
+          onKeyDown={(e) => {
+            if (showMentions && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+              e.preventDefault();
+              setPick((p) => (p + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length);
+            } else if (showMentions && e.key === 'Tab') {
+              e.preventDefault();
+              choose(options[Math.min(pick, options.length - 1)].handle);
+            } else if (e.key === 'Escape') (e.target as HTMLInputElement).blur();
+          }}
         />
-        <button className="btn primary" style={{ padding: '10px 14px' }}>
+        <button className="btn primary chat-send" title="Gửi (Enter)">
           ➤
         </button>
       </form>
@@ -104,26 +226,31 @@ function Chat() {
   );
 }
 
-function Message({ m, myName, avatar }: { m: ChatMsg; myName: string; avatar?: Parameters<typeof AvatarDot>[0]['avatar'] }) {
+function Message({ m, myName, avatar, cont, repeat }: { m: ChatMsg; myName: string; avatar?: Parameters<typeof AvatarDot>[0]['avatar']; cont: boolean; repeat: number }) {
   if (m.from === 'system')
     return (
       <div className="msg system">
-        <span className="pill">{m.text}</span>
+        <span className="pill">
+          {m.text}
+          {repeat > 1 && <b className="rep"> ×{repeat}</b>}
+        </span>
       </div>
     );
   const parts = m.text.split(/(@[\p{L}\p{N}_.-]+)/u);
   return (
-    <div className="msg">
-      <AvatarDot name={m.name} avatar={avatar} />
+    <div className={`msg${cont ? ' cont' : ''}`}>
+      {cont ? <span className="msg-gap" /> : <AvatarDot name={m.name} avatar={avatar} />}
       <div style={{ minWidth: 0 }}>
-        <div className="msg-head">
-          {m.name}
-          <time>{fmtTime(m.ts)}</time>
-        </div>
+        {!cont && (
+          <div className="msg-head">
+            {m.name}
+            <time>{fmtTime(m.ts)}</time>
+          </div>
+        )}
         <div className="msg-text">
           {parts.map((p, i) =>
             p.startsWith('@') ? (
-              <span key={i} className={isMe(p, myName) ? 'mention' : undefined} style={isMe(p, myName) ? undefined : { color: '#4060e0', fontWeight: 600 }}>
+              <span key={i} className={isMe(p, myName) ? 'mention' : 'tagged'}>
                 {p}
               </span>
             ) : (
