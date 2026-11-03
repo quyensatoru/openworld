@@ -1,0 +1,4 @@
+VRoid sample characters by pixiv Inc. (VRoid Project), released under CC0 1.0:
+https://vroid.pixiv.help/hc/en-us/articles/4402614652569
+Sources: https://github.com/madjin/vrm-samples (vroid/beta).
+Shrunk for the web by scripts/prepare-vrm.mjs (npm run assets:vrm).

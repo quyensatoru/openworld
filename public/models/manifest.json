@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "animations": "/models/anims.glb",
+  "clips": {
+    "idle": "Idle_Loop",
+    "talk": "Idle_Talking_Loop",
+    "walk": "Walk_Loop",
+    "run": "Jog_Fwd_Loop",
+    "sitDown": "Sitting_Enter",
+    "sit": "Sitting_Idle_Loop",
+    "sitTalk": "Sitting_Talking_Loop",
+    "standUp": "Sitting_Exit",
+    "dance": "Dance_Loop",
+    "jump": "Jump_Loop"
+  },
+  "bodies": [
+    {
+      "id": "shirt",
+      "label": "Áo sọc",
+      "clips": {
+        "idle": "HumanArmature|Man_Idle",
+        "walk": "HumanArmature|Man_Walk",
+        "run": "HumanArmature|Man_Run",
+        "sitDown": "HumanArmature|Man_Sitting@0-0.55",
+        "sit": "HumanArmature|Man_Sitting@0.6-8.3",
+        "standUp": "HumanArmature|Man_Standing",
+        "clap": "HumanArmature|Man_Clapping",
+        "cheer": "HumanArmature|Man_Jump",
+        "jump": "HumanArmature|Man_Jump"
+      },
+      "clothing": false,
+      "hairstyles": false,
+      "builds": false,
+      "materials": {
+        "skin": "^Skin$",
+        "hair": "^Hair2?$",
+        "top": "^Shirt$",
+        "top2": "^Shirt2$",
+        "bottom": "^Pants$",
+        "shoes": "^Shoes$"
+      },
+      "walkSpeed": 1.35,
+      "runSpeed": 3.2,
+      "sitOffset": {
+        "y": 0.04,
+        "z": 0.3
+      },
+      "height": 1.76,
+      "url": "/models/body-shirt.glb"
+    },
+    {
+      "id": "longsleeve",
+      "label": "Áo len dài tay",
+      "clips": {
+        "idle": "HumanArmature|Man_Idle",
+        "walk": "HumanArmature|Man_Walk",
+        "run": "HumanArmature|Man_Run",
+        "sitDown": "HumanArmature|Man_Sitting@0-0.55",
+        "sit": "HumanArmature|Man_Sitting@0.6-8.3",
+        "standUp": "HumanArmature|Man_Standing",
+        "clap": "HumanArmature|Man_Clapping",
+        "cheer": "HumanArmature|Man_Jump",
+        "jump": "HumanArmature|Man_Jump"
+      },
+      "clothing": false,
+      "hairstyles": false,
+      "builds": false,
+      "materials": {
+        "skin": "^Skin$",
+        "hair": "^Hair2?$",
+        "top": "^Shirt$",
+        "top2": "^Shirt2$",
+        "bottom": "^Pants$",
+        "shoes": "^Shoes$"
+      },
+      "walkSpeed": 1.35,
+      "runSpeed": 3.2,
+      "sitOffset": {
+        "y": 0.04,
+        "z": 0.3
+      },
+      "height": 1.76,
+      "url": "/models/body-longsleeve.glb"
+    },
+    {
+      "id": "suit",
+      "label": "Vest công sở",
+      "clips": {
+        "idle": "HumanArmature|Man_Idle",
+        "walk": "HumanArmature|Man_Walk",
+        "run": "HumanArmature|Man_Run",
+        "sitDown": "HumanArmature|Man_Sitting@0-0.55",
+        "sit": "HumanArmature|Man_Sitting@0.6-8.3",
+        "standUp": "HumanArmature|Man_Standing",
+        "clap": "HumanArmature|Man_Clapping",
+        "cheer": "HumanArmature|Man_Jump",
+        "jump": "HumanArmature|Man_Jump"
+      },
+      "clothing": false,
+      "hairstyles": false,
+      "builds": false,
+      "materials": {
+        "skin": "^Skin$",
+        "hair": "^Hair2?$",
+        "top": "^Shirt$",
+        "top2": "^Shirt2$",
+        "bottom": "^Pants$",
+        "shoes": "^Shoes$"
+      },
+      "walkSpeed": 1.35,
+      "runSpeed": 3.2,
+      "sitOffset": {
+        "y": 0.04,
+        "z": 0.3
+      },
+      "height": 1.76,
+      "url": "/models/body-suit.glb"
+    },
+    {
+      "id": "casual",
+      "label": "Áo phông + quần short",
+      "clips": {
+        "idle": "HumanArmature|Man_Idle",
+        "walk": "HumanArmature|Man_Walk",
+        "run": "HumanArmature|Man_Run",
+        "sitDown": "HumanArmature|Man_Sitting@0-0.55",
+        "sit": "HumanArmature|Man_Sitting@0.6-8.3",
+        "standUp": "HumanArmature|Man_Standing",
+        "clap": "HumanArmature|Man_Clapping",
+        "cheer": "HumanArmature|Man_Jump",
+        "jump": "HumanArmature|Man_Jump"
+      },
+      "clothing": false,
+      "hairstyles": false,
+      "builds": false,
+      "materials": {
+        "skin": "^Skin$",
+        "hair": "^Hair2?$",
+        "top": "^Shirt$",
+        "top2": "^Shirt2$",
+        "bottom": "^Pants$",
+        "shoes": "^Shoes$"
+      },
+      "walkSpeed": 1.35,
+      "runSpeed": 3.2,
+      "sitOffset": {
+        "y": 0.04,
+        "z": 0.3
+      },
+      "height": 1.76,
+      "url": "/models/body-casual.glb"
+    },
+    {
+      "id": "female",
+      "label": "Nữ",
+      "height": 1.65,
+      "url": "/models/body-female.glb"
+    },
+    {
+      "id": "male",
+      "label": "Nam thể thao",
+      "height": 1.75,
+      "url": "/models/body-male.glb"
+    }
+  ],
+  "hairFile": "/models/hair.glb",
+  "hair": [
+    {
+      "id": "parted",
+      "label": "Rẽ ngôi",
+      "node": "Hair_SimpleParted"
+    },
+    {
+      "id": "buzzed",
+      "label": "Đầu đinh",
+      "node": "Hair_Buzzed"
+    },
+    {
+      "id": "pixie",
+      "label": "Tóc tém",
+      "node": "Hair_BuzzedFemale"
+    },
+    {
+      "id": "long",
+      "label": "Tóc dài",
+      "node": "Hair_Long"
+    },
+    {
+      "id": "buns",
+      "label": "Búi tóc",
+      "node": "Hair_Buns"
+    },
+    {
+      "id": "none",
+      "label": "Không tóc"
+    }
+  ],
+  "beardNode": "Hair_Beard",
+  "materials": {
+    "skin": "^MI_Superhero",
+    "hair": "^MI_Hair"
+  },
+  "clothing": true,
+  "bones": {},
+  "head": null,
+  "walkSpeed": 0.975,
+  "runSpeed": 5.36,
+  "sitOffset": {
+    "y": 0.05,
+    "z": 0.3
+  }
+}

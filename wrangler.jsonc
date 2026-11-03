@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bss-office",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "OFFICE", "class_name": "OfficeRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OfficeRoom"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bss-office",
+      "database_id": "ba59776d-59b5-4130-b8a5-59fa113ee50e",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "OFFICE_NAME": "BSS Office",
+    "TZ_OFFSET_MINUTES": "420"
+  },
+  "observability": { "enabled": true }
+}

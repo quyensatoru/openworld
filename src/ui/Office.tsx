@@ -1,0 +1,477 @@
+import { useEffect, useRef, useState } from 'react';
+import { ZONE_BY_ID } from '../../shared/map';
+import { STATUS_META } from '../../shared/protocol';
+import { game } from '../game';
+import { loadPref, savePref } from '../profile';
+import { getState, setState, useStore } from '../store';
+import { CharacterCreator } from './CharacterCreator';
+import { BigScreen } from './BigScreen';
+import { BarPanel, CinemaPanel } from './Cinema';
+import { ArcadePill, ArcadeWindow, LiftPanel } from './Arcade';
+import { KaraPhonesAsk, KaraScore, KaraZoomBar, KaraokePanel } from './Karaoke';
+import { WolfEnd, WolfNight, WolfPanel } from './Werewolf';
+import { MoleActions, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal } from './Mole';
+import { MoleTaskModal } from './MoleTasks';
+import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
+import { MeetingTvButton } from './MeetingTv';
+import { VoiceStatus } from './VoiceStatus';
+import { AvatarDot } from './common';
+import { Kanban } from './Kanban';
+import { Minimap } from './Minimap';
+import { SidePanel } from './SidePanel';
+import { Toolbar } from './Toolbar';
+import { VideoStrip } from './VideoStrip';
+
+export function Office() {
+  const ref = useRef<HTMLDivElement>(null);
+  const kanbanOpen = useStore((s) => s.kanbanOpen);
+  const creatorOpen = useStore((s) => s.creatorOpen);
+  const settingsOpen = useStore((s) => s.settingsOpen);
+  const helpOpen = useStore((s) => s.helpOpen);
+  const panel = useStore((s) => s.panel);
+  // theater mode: seated in the cinema while a film plays → hide almost everything, fade the rest when idle
+  const inBar = useStore((s) => s.me?.zone === 'bar');
+  const inKara = useStore((s) => s.me?.zone === 'karaoke');
+  const inWolf = useStore((s) => s.me?.zone === 'wolfroom');
+  const inMole = useStore((s) => s.me?.zone === 'hall5' || !!s.me?.zone.startsWith('f5-'));
+  const theater = useStore((s) => s.me?.zone === 'cinema' && !!s.me.seat?.startsWith('cine-') && !!s.cinema && s.cinema.pausedAt == null) || inBar || inKara;
+  const idle = useIdle(2500, theater);
+
+  useEffect(() => {
+    game.start(ref.current!);
+    if (!loadPref('helpSeen', false)) {
+      setState({ helpOpen: true });
+      savePref('helpSeen', true);
+    }
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        setState({ panel: 'chat' });
+        setTimeout(() => document.querySelector<HTMLInputElement>('.chat-input input')?.focus(), 30);
+      } else if (e.key === 'Escape') {
+        setState({ kanbanOpen: false, settingsOpen: false, helpOpen: false, bigScreen: null, screenOf: null, arcadeOpen: false });
+        if (getState().karaZoom) game.karaZoom(false);
+      } else if (e.key.toLowerCase() === 'k' && !e.ctrlKey && !e.metaKey) {
+        setState((s) => ({ kanbanOpen: !s.kanbanOpen }));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      game.stop();
+    };
+  }, []);
+
+  const glError = useStore((s) => s.glError);
+  return (
+    <div className="office" ref={ref}>
+      {glError && <GraphicsHelp />}
+      <div className={`hud${theater ? ' theater' : ''}${inBar || inKara ? ' bar-mode' : ''}${inKara ? ' kara-mode' : ''}${inWolf ? ' wolf-mode' : ''}${inMole ? ' mole-mode' : ''}${theater && idle ? ' idle' : ''}`}>
+        <TopBar />
+        <VideoStrip />
+        <PlayerCard />
+        <Minimap />
+        {panel && <SidePanel />}
+        <CinemaPanel />
+        <BarPanel />
+        <ArcadePill />
+        <KaraokePanel />
+        <KaraZoomBar />
+        <WolfPanel />
+        <MolePanel />
+        <MoleHud />
+        <MoleActions />
+        <LiftPanel />
+        <Prompt />
+        <VoiceStatus />
+        <MeetingTvButton />
+        <Toolbar />
+        <Banners />
+      </div>
+      <WolfNight />
+      <MoleFog />
+      <MoleMeeting />
+      <MoleReveal />
+      <MoleEnd />
+      <MoleTaskModal />
+      <KaraScore />
+      <KaraPhonesAsk />
+      <WolfEnd />
+      <ClaudeScreenModal />
+      <ArcadeWindow />
+      {kanbanOpen && <Kanban />}
+      {creatorOpen && <CharacterCreator mode="edit" onDone={() => setState({ creatorOpen: false })} />}
+      {settingsOpen && <Settings />}
+      {helpOpen && <Help />}
+    </div>
+  );
+}
+
+/** true after `ms` without mouse/keyboard activity (only tracked while `on`). */
+function useIdle(ms: number, on: boolean): boolean {
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    if (!on) {
+      setIdle(false);
+      return;
+    }
+    let t = window.setTimeout(() => setIdle(true), ms);
+    const wake = () => {
+      setIdle(false);
+      clearTimeout(t);
+      t = window.setTimeout(() => setIdle(true), ms);
+    };
+    window.addEventListener('pointermove', wake);
+    window.addEventListener('pointerdown', wake);
+    window.addEventListener('keydown', wake);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('pointermove', wake);
+      window.removeEventListener('pointerdown', wake);
+      window.removeEventListener('keydown', wake);
+    };
+  }, [ms, on]);
+  return idle;
+}
+
+const PLACES = [
+  { id: 'office', floor: 0, icon: '🏢', name: 'Văn phòng', hint: 'Bàn làm việc · phòng họp · pantry', zones: ['workspace', 'library', 'lounge', 'meetA', 'meetB', 'pantry', 'lobby'] },
+  { id: 'cinema', floor: 1, icon: '🎬', name: 'Rạp phim', hint: 'Xem YouTube cùng nhau', zones: ['cinema'] },
+  { id: 'bar', floor: 1, icon: '🍸', name: 'BSS Bar', hint: 'Nhạc · đồ uống · vòng quay', zones: ['bar'] },
+  { id: 'netcafe', floor: 2, icon: '🎮', name: 'Phòng game', hint: 'Rắn săn mồi · cờ caro', zones: ['netcafe'] },
+  { id: 'karaoke', floor: 3, icon: '🎤', name: 'Karaoke', hint: 'Hát cùng cả team', zones: ['karaoke'] },
+  { id: 'wolfroom', floor: 3, icon: '🐺', name: 'Ma Sói', hint: '5–12 người · cần mic', zones: ['wolfroom'] },
+  { id: 'mole', floor: 4, icon: '🕵️', name: 'Nội Gián', hint: '4–12 người · làm nhiệm vụ, tìm kẻ phá', zones: ['hall5', 'f5-server', 'f5-design', 'f5-archive', 'f5-print', 'f5-meet', 'f5-canteen', 'f5-med'] },
+] as const;
+
+/** Top-left: where you are + how many people are online; click to go somewhere else. */
+function TopBar() {
+  const zone = useStore((s) => s.me?.zone);
+  const floor = useStore((s) => s.floor);
+  const online = useStore((s) => Object.keys(s.players).length + (s.me ? 1 : 0));
+  const connected = useStore((s) => s.connected);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [open]);
+  const zoneName = (zone ? ZONE_BY_ID.get(zone)?.name ?? '' : '…').replace(/\s*\(tầng \d\)/, '').replace(/ — .*/, '');
+  return (
+    <div className="topbar" ref={ref}>
+      <button className={`loc-pill glass${open ? ' on' : ''}`} onClick={() => setOpen(!open)} title="Đi tới nơi khác">
+        <span className="loc-floor">T{floor + 1}</span>
+        <span className="loc-zone">{zoneName}</span>
+        <span className="loc-online" title="Đang online">
+          <span className={`conn${connected ? '' : ' off'}`} />
+          {online}
+        </span>
+        <span className="loc-caret">▾</span>
+      </button>
+      {open && <PlacesMenu zone={zone ?? ''} onPick={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+function PlacesMenu({ zone, onPick }: { zone: string; onPick(): void }) {
+  const players = useStore((s) => s.players);
+  const meZone = useStore((s) => s.me?.zone);
+  const kara = useStore((s) => s.kara.now);
+  const count = (zones: readonly string[]) => Object.values(players).filter((p) => zones.includes(p.zone)).length + (meZone && zones.includes(meZone) ? 1 : 0);
+  const floors = [0, 1, 2, 3, 4];
+  return (
+    <div className="places glass">
+      <div className="places-title">Đi tới</div>
+      {floors.map((f) => (
+        <div key={f} className="places-floor">
+          <div className="pf-label">Tầng {f + 1}</div>
+          <div className="pf-items">
+            {PLACES.filter((p) => p.floor === f).map((p) => {
+              const here = (p.zones as readonly string[]).includes(zone);
+              const n = count(p.zones);
+              const live = p.id === 'karaoke' && kara ? `🎶 ${kara.song.title || 'đang hát'}` : p.hint;
+              return (
+                <button
+                  key={p.id}
+                  className={`place${here ? ' here' : ''}`}
+                  disabled={here}
+                  onClick={() => {
+                    game.travel(p.id);
+                    onPick();
+                  }}
+                >
+                  <span className="pl-icon">{p.icon}</span>
+                  <span className="pl-text">
+                    <b>{p.name}</b>
+                    <small>{here ? 'Bạn đang ở đây' : live}</small>
+                  </span>
+                  {n > 0 && <span className="pl-count">👥 {n}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Prompt() {
+  const prompt = useStore((s) => s.prompt);
+  if (!prompt) return null;
+  const sitting = prompt.startsWith('Đang ngồi');
+  return (
+    <div className="prompt glass">
+      {!sitting && <kbd>E</kbd>}
+      <span>{prompt}</span>
+    </div>
+  );
+}
+
+function PlayerCard() {
+  const id = useStore((s) => s.selected);
+  const p = useStore((s) => (s.selected ? s.players[s.selected] : null));
+  const task = useStore((s) => (p?.taskId ? s.tasks[p.taskId] : null));
+  const hasScreen = useStore((s) => !!(s.selected && s.activity[s.selected]?.length && s.players[s.selected]?.seat));
+  if (!id || !p) return null;
+  const meta = STATUS_META[p.status];
+  return (
+    <div className="pcard glass">
+      <button className="close-x" onClick={() => setState({ selected: null })}>
+        ✕
+      </button>
+      <div className="row">
+        <AvatarDot name={p.name} avatar={p.avatar} />
+        <div>
+          <div className="nm">{p.name}</div>
+          <div className="st">
+            {meta.emoji} {meta.label} · {ZONE_BY_ID.get(p.zone)?.name}
+          </div>
+        </div>
+      </div>
+      {(task || p.statusText) && <div className="task">{task ? `🔨 ${task.title}` : p.statusText}</div>}
+      {hasScreen && (
+        <button className="btn" style={{ width: '100%', marginTop: 10, background: '#2a2826', color: '#f5f5f4' }} onClick={() => setState({ screenOf: p.id })}>
+          <span style={{ color: '#d97757' }}>✻</span> Xem màn hình Claude Code
+        </button>
+      )}
+      <div className="acts">
+        <button className="btn" onClick={() => game.wave(p.id)}>
+          👋 Vẫy tay
+        </button>
+        <button className="btn" onClick={() => game.goToPlayer(p.id)}>
+          🚶 Đi tới
+        </button>
+        <button
+          className="btn"
+          onClick={() => {
+            setState({ panel: 'chat', chatTab: 'global', chatDraft: `@${p.name.split(/\s+/).pop()} ` });
+            setTimeout(() => document.querySelector<HTMLInputElement>('.chat-input input')?.focus(), 40);
+          }}
+        >
+          💬
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 3D can't start: the browser has WebGL / graphics acceleration off. Explain how to fix it. */
+function GraphicsHelp() {
+  const isChrome = /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
+  const isEdge = /Edg\//.test(navigator.userAgent);
+  const settings = isEdge ? 'edge://settings/system' : 'chrome://settings/system';
+  const gpu = isEdge ? 'edge://gpu' : 'chrome://gpu';
+  const copy = (t: string) => void navigator.clipboard?.writeText(t).catch(() => {});
+  return (
+    <div className="gl-help">
+      <div className="gl-card">
+        <div className="gl-icon">🖥️</div>
+        <h2>Trình duyệt đang tắt đồ hoạ 3D</h2>
+        <p className="muted">
+          Văn phòng cần WebGL (đồ hoạ 3D) nhưng trình duyệt trên máy này đang chặn nó — thường do trình duyệt vừa cập nhật mà chưa khởi động lại, hoặc đã tắt “tăng tốc phần cứng”.
+        </p>
+        <ol>
+          <li>
+            <b>Khởi động lại trình duyệt</b> (nếu góc trên có nút “Finish update / Cập nhật” thì bấm vào nó). Hay gặp nhất, làm cái này trước.
+          </li>
+          {(isChrome || isEdge) && (
+            <li>
+              Mở <code onClick={() => copy(settings)}>{settings}</code> → bật <b>“Use graphics acceleration when available / Sử dụng tính năng tăng tốc phần cứng”</b> → bấm Relaunch.
+            </li>
+          )}
+          {(isChrome || isEdge) && (
+            <li>
+              Vẫn lỗi? Mở <code onClick={() => copy(gpu)}>{gpu}</code>: nếu dòng WebGL ghi “Disabled” thì cập nhật driver card màn hình, hoặc thử trình duyệt khác (Edge / Firefox).
+            </li>
+          )}
+          <li>Tắt bớt tab nặng (Figma, game, video…) rồi tải lại trang.</li>
+        </ol>
+        <p className="muted small">Bấm vào đường dẫn để copy, rồi dán vào thanh địa chỉ (trang web không tự mở được các trang cài đặt này).</p>
+        <button className="btn primary" onClick={() => location.reload()}>
+          🔄 Thử lại
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Banners() {
+  const connected = useStore((s) => s.connected);
+  const glLost = useStore((s) => s.glLost);
+  const me = useStore((s) => s.me);
+  const kicked = useStore((s) => s.kicked);
+  const updateReady = useStore((s) => s.updateReady);
+
+  if (kicked)
+    return (
+      <div className="modal-bg">
+        <div className="modal glass" style={{ textAlign: 'center' }}>
+          <h2>Bạn đã vào từ nơi khác</h2>
+          <p className="muted">{kicked}</p>
+          <button className="btn primary" onClick={() => location.reload()}>
+            Dùng tab này
+          </button>
+        </div>
+      </div>
+    );
+  return (
+    <>
+      {glLost && (
+        <button className="banner glass update-banner" onClick={() => location.reload()}>
+          ⚠️ Đồ hoạ 3D bị gián đoạn (card màn hình vừa khởi động lại) — đang khôi phục… bấm để tải lại trang
+        </button>
+      )}
+      {updateReady && (
+        <button className="banner glass update-banner" onClick={() => location.reload()}>
+          🔄 Văn phòng vừa được nâng cấp — bấm để tải lại
+        </button>
+      )}
+      {!connected && (
+        <div className="banner glass">
+          <div className="spinner" style={{ width: 18, height: 18, borderWidth: 3 }} />
+          {me ? 'Mất kết nối — đang kết nối lại…' : 'Đang vào văn phòng…'}
+        </div>
+      )}
+      <BigScreen />
+    </>
+  );
+}
+
+function Settings() {
+  const quality = useStore((s) => s.quality);
+  const ambience = useStore((s) => s.ambience);
+  const close = () => setState({ settingsOpen: false });
+  return (
+    <div className="modal-bg" onClick={close}>
+      <div className="modal glass" onClick={(e) => e.stopPropagation()}>
+        <button className="close-x" onClick={close}>
+          ✕
+        </button>
+        <h2>Cài đặt</h2>
+        <div className="field">
+          <label style={{ fontWeight: 600, display: 'block', marginBottom: 8 }}>Chất lượng đồ hoạ</label>
+          <div className="chips">
+            <button className={`chip${quality === 'high' ? ' on' : ''}`} onClick={() => game.setQuality('high')}>
+              ✨ Đẹp
+            </button>
+            <button className={`chip${quality === 'low' ? ' on' : ''}`} onClick={() => game.setQuality('low')}>
+              ⚡ Nhẹ (máy yếu)
+            </button>
+          </div>
+        </div>
+        <div className="field">
+          <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Âm thanh không gian (gõ phím, điều hoà, bước chân, nhạc ở bar)</label>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button className={`chip${ambience.on ? ' on' : ''}`} onClick={() => game.setAmbience(!ambience.on, ambience.volume)}>
+              {ambience.on ? '🔊 Đang bật' : '🔈 Đang tắt'}
+            </button>
+            <input type="range" min={0} max={1} step={0.05} value={ambience.volume} onChange={(e) => game.setAmbience(true, Number(e.target.value))} />
+          </div>
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <ClaudeConnect />
+        </div>
+        <div style={{ display: 'grid', gap: 10, marginTop: 22 }}>
+          <button className="btn" onClick={() => setState({ settingsOpen: false, creatorOpen: true })}>
+            🧑‍🎨 Chỉnh nhân vật & tên
+          </button>
+          <button
+            className="btn"
+            onClick={() => {
+              if ('Notification' in window) Notification.requestPermission();
+            }}
+          >
+            🔔 Bật thông báo trên máy
+          </button>
+          <button className="btn" onClick={() => setState({ settingsOpen: false, helpOpen: true })}>
+            ⌨️ Phím tắt & hướng dẫn
+          </button>
+          <button
+            className="btn danger"
+            onClick={async () => {
+              await fetch('/api/logout', { method: 'POST' });
+              location.reload();
+            }}
+          >
+            Đăng xuất khỏi văn phòng
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Help() {
+  const close = () => setState({ helpOpen: false });
+  const rows: [string, string][] = [
+    ['W A S D / ← ↑ → ↓', 'Đi lại (giữ Shift để chạy)'],
+    ['Click chuột trái', 'Đi tới chỗ đó · click ghế để ngồi · click người để tương tác'],
+    ['Kéo chuột / cuộn', 'Xoay camera / phóng to thu nhỏ'],
+    ['V', 'Góc nhìn thứ nhất ↔ thứ ba (ở góc thứ nhất: A/D để quay người)'],
+    ['Cầu thang / thang máy', 'Tầng 2 (rạp phim, bar), tầng 3 (phòng game), tầng 4 (karaoke, ma sói): đi cầu thang ở sảnh, hoặc vào thang máy kính rồi bấm chọn tầng'],
+    ['Space', 'Nhảy'],
+    ['E', 'Tương tác: ngồi xuống, mở Kanban, pha cà phê…'],
+    ['1 – 9', 'Biểu cảm: vẫy tay, vỗ tay, ăn mừng, nhảy… · 9 = 🥂 cạn ly (đứng cạnh ai đó cùng bấm)'],
+    ['📸', 'Chụp ảnh khung cảnh hiện tại, tải về máy'],
+    ['🎮 BSS Net', 'Phòng game tầng 3: ngồi vào máy để chơi Rắn săn mồi (cả phòng) hoặc Cờ caro với đồng nghiệp'],
+    ['🎤 Karaoke', 'Tầng 4: tìm bài trên YouTube, cầm mic lên sân khấu, chỉnh echo/vang; cả phòng nghe và thả 👏🌹 — hết bài có chấm điểm'],
+    ['🐺 Ma sói', 'Tầng 4: ngồi gốc cây quanh đống lửa (5–12 người), bật mic. Ban đêm chỉ bầy sói nghe được nhau, người chết chỉ nói với người chết'],
+    ['🕵️ Nội Gián', 'Tầng 5: tham gia ở bảng trong sảnh (4–12 người). Nhân viên làm nhiệm vụ, nội gián loại người (Q), báo cáo (R), họp và bỏ phiếu'],
+    ['Enter', 'Mở chat'],
+    ['K', 'Mở bảng Kanban'],
+    ['Esc', 'Đóng cửa sổ / huỷ đi tới'],
+  ];
+  return (
+    <div className="modal-bg" onClick={close}>
+      <div className="modal glass" onClick={(e) => e.stopPropagation()}>
+        <button className="close-x" onClick={close}>
+          ✕
+        </button>
+        <h2>Chào mừng đến văn phòng ảo 👋</h2>
+        <div className="help-grid">
+          {rows.map(([k, v]) => (
+            <div key={k} style={{ display: 'contents' }}>
+              <div>
+                <kbd>{k}</kbd>
+              </div>
+              <div>{v}</div>
+            </div>
+          ))}
+        </div>
+        <p className="muted" style={{ fontSize: 14, lineHeight: 1.5, marginTop: 18 }}>
+          🎙️ Bật mic rồi đi vào vòng tròn xanh của đồng nghiệp là nói chuyện được (càng xa càng nhỏ). Trong phòng họp ai cũng nghe thấy nhau, còn Thư viện là vùng yên tĩnh. Ngồi vào bàn để check-in giờ làm. Tầng 2 có 🎬 rạp phim (ngồi ghế đỏ, dán link YouTube là cả rạp cùng xem) và 🍸 BSS Bar (đứng trên sàn LED là tự nhảy).
+        </p>
+        <button className="btn primary" style={{ width: '100%', marginTop: 6 }} onClick={close}>
+          Bắt đầu thôi!
+        </button>
+      </div>
+    </div>
+  );
+}
