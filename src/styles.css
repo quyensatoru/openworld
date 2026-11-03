@@ -4561,7 +4561,12 @@ input[type='range'] {
   font-size: 46px;
   transition: transform 0.15s;
 }
-.mg-code .screen {
+.mg-code {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+.mg-code .code-lcd {
   font-family: ui-monospace, monospace;
   font-size: 34px;
   letter-spacing: 10px;
@@ -5066,6 +5071,8 @@ input[type='range'] {
 
 /* password task: how long the code stays on screen */
 .mg-timer {
+  width: 220px;
+  max-width: 100%;
   height: 5px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.12);
@@ -5084,5 +5091,284 @@ input[type='range'] {
   }
   to {
     width: 0;
+  }
+}
+
+/* ================================================================ phones / touch screens */
+html,
+body {
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+.office canvas {
+  touch-action: none;
+}
+.office.touch {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.office.touch input,
+.office.touch textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* keyboard hints mean nothing on a phone */
+.office.touch kbd,
+.office.touch .prompt {
+  display: none;
+}
+/* thumb stick */
+.t-stick {
+  position: absolute;
+  left: max(18px, env(safe-area-inset-left));
+  bottom: 92px;
+  z-index: 6;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06));
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.25);
+  touch-action: none;
+  display: grid;
+  place-items: center;
+  opacity: 0.75;
+  transition: opacity 0.15s;
+}
+.t-stick.on {
+  opacity: 1;
+}
+.t-stick i {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+/* use / jump */
+.t-right {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: 92px;
+  z-index: 6;
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  pointer-events: none;
+}
+.t-right > * {
+  pointer-events: auto;
+}
+.t-label {
+  max-width: min(62vw, 340px);
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.t-btns {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.t-btn {
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  touch-action: none;
+}
+.t-jump {
+  width: 56px;
+  height: 56px;
+  font-size: 24px;
+  background: rgba(30, 36, 54, 0.7);
+}
+.t-use {
+  width: 78px;
+  height: 78px;
+  font-size: 32px;
+  background: rgba(30, 36, 54, 0.55);
+}
+.t-use.ready {
+  background: linear-gradient(160deg, #6b8cff, #2de2e6);
+  animation: wp-pulse 1.4s infinite;
+}
+.t-use:disabled {
+  opacity: 0.45;
+}
+.t-btn:active {
+  transform: scale(0.94);
+}
+.t-hint {
+  position: absolute;
+  top: 110px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  padding: 9px 14px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.t-hint b {
+  margin-left: 6px;
+  color: var(--muted);
+}
+
+/* HUD pieces that sat where the thumbs go */
+.office.touch .minimap-btn {
+  left: auto;
+  right: 12px;
+  top: 12px;
+  bottom: auto;
+}
+.office.touch .minimap {
+  top: 60px;
+  bottom: auto;
+}
+.office.touch .mole-pill,
+.office.touch .mole-panel {
+  top: 60px;
+  bottom: auto;
+}
+.office.touch .mole-panel {
+  max-height: calc(100vh - 250px);
+  width: min(320px, calc(100vw - 28px));
+  z-index: 7; /* an open panel sits over the stick — fold it to walk */
+}
+.office.touch .mole-actions {
+  bottom: 232px;
+  right: max(18px, env(safe-area-inset-right));
+}
+.office.touch .ma-btn {
+  width: 66px;
+  height: 66px;
+  font-size: 24px;
+  border-radius: 20px;
+}
+.office.touch .ma-btn span {
+  font-size: 11px;
+}
+.office.touch .ma-menu {
+  bottom: 76px;
+  right: 0;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+}
+.office.touch .mole-vent {
+  bottom: auto;
+  top: 64px;
+}
+.office.touch .popover {
+  left: 50% !important;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+/* small screens (phones, either way round) */
+@media (max-width: 720px), (max-height: 500px) {
+  .toolbar {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    padding: 5px;
+  }
+  .tb {
+    min-width: 40px;
+    height: 40px;
+    padding: 0 8px;
+    font-size: 17px;
+  }
+  .side {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    bottom: 70px;
+    width: auto;
+  }
+  .mt-card,
+  .mm-card,
+  .modal {
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+  }
+  .cinema-panel,
+  .kara-panel,
+  .wolf-panel {
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 90px);
+    overflow-y: auto;
+  }
+  .mole-hud {
+    transform: translateX(-50%) scale(0.85);
+    transform-origin: top center;
+  }
+}
+@media (max-height: 500px) {
+  /* landscape phone: everything a bit lower and tighter */
+  .t-stick {
+    width: 112px;
+    height: 112px;
+    bottom: 70px;
+  }
+  .t-right {
+    bottom: 70px;
+  }
+  /* landscape phone: the mole's buttons sit left of jump / use */
+  .office.touch .mole-actions {
+    bottom: 66px;
+    right: 172px;
+  }
+  .office.touch .ma-menu {
+    max-height: calc(100vh - 90px);
+  }
+  /* mini-games: tighter so the whole thing fits on a short screen */
+  .mt-bg {
+    padding: 6px;
+  }
+  .mt-card {
+    padding: 10px 14px;
+  }
+  .mt-how {
+    margin: 2px 0 8px;
+  }
+  .mg-code {
+    grid-template-columns: auto auto;
+    align-items: center;
+    column-gap: 18px;
+  }
+  .mg-code > * {
+    grid-column: 1;
+  }
+  .mg-code .pad {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+  .mg-code .pad button {
+    height: 40px;
+  }
+  .office.touch .mole-panel {
+    max-height: calc(100vh - 76px);
+  }
+  .office.touch .mole-panel .mp-body {
+    overflow-y: auto;
   }
 }

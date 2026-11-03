@@ -31,6 +31,8 @@ export class LocalController {
   anim: AnimState = 'idle';
   seat: Seat | null = null;
   keys = new Set<string>();
+  /** analog stick (phones): x = right, y = forward, both -1..1 */
+  stick = { x: 0, y: 0 };
   run = false;
   private path: { x: number; z: number }[] | null = null;
   private pathRun = false;
@@ -161,6 +163,14 @@ export class LocalController {
       if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) ix += 1;
       if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) ix -= 1;
     }
+    // the on-screen stick: pushed far = run
+    const sm = Math.hypot(this.stick.x, this.stick.y);
+    let stickRun = false;
+    if (!ix && !iy && sm > 0.18) {
+      ix = this.stick.x;
+      iy = this.stick.y;
+      stickRun = sm > 0.85;
+    }
 
     if (this.seat) {
       if (ix || iy) this.standUp();
@@ -169,7 +179,7 @@ export class LocalController {
 
     let wx = 0;
     let wz = 0;
-    let running = this.run;
+    let running = this.run || stickRun;
     if (ix || iy) {
       this.cancelPath();
       const fx = -Math.sin(camYaw);

@@ -355,7 +355,7 @@ function Code({ done }: { done(): void }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="mg-code">
-      <div className="screen">{show ? code : typed.padEnd(5, '•')}</div>
+      <div className="code-lcd">{show ? code : typed.padEnd(5, '•')}</div>
       {show && (
         <div className="mg-timer">
           <i key={code} style={{ animationDuration: `${SHOW_MS}ms` }} />

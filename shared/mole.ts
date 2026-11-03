@@ -15,7 +15,7 @@ export const TASK_META: Record<MoleTaskKind, { name: string; emoji: string; how:
   files: { name: 'Xếp hồ sơ', emoji: '📑', how: 'Bấm các tập hồ sơ theo thứ tự 1 → 9.' },
   plant: { name: 'Tưới cây', emoji: '🌿', how: 'Tưới từng chậu cho tới khi kim nằm trong vùng xanh — tưới quá là úng!' },
   paper: { name: 'Gỡ kẹt máy in', emoji: '🖨️', how: 'Kéo hết những tờ giấy bị kẹt ra (bấm mỗi tờ vài lần).' },
-  code: { name: 'Đổi mật khẩu', emoji: '🔐', how: 'Nhớ mã 5 số hiện trong 2 giây rồi nhập lại.' },
+  code: { name: 'Đổi mật khẩu', emoji: '🔐', how: 'Nhớ mã 5 số hiện trong 3 giây rồi nhập lại (bấm nút hoặc gõ phím số).' },
   reboot: { name: 'Khởi động lại server', emoji: '🔄', how: 'Giữ nút cho tới khi thanh tiến trình đầy.' },
   scan: { name: 'Khám sức khoẻ', emoji: '🩺', how: 'Giữ nút và đứng yên 4 giây cho máy đo xong.' },
 };

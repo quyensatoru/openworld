@@ -4,6 +4,7 @@ import { STATUS_META } from '../../shared/protocol';
 import { game } from '../game';
 import { loadPref, savePref } from '../profile';
 import { getState, setState, useStore } from '../store';
+import { TouchControls, setTouchUi } from './Touch';
 import { Safe } from './Safe';
 import { FpLookControls } from './FpLook';
 import { CharacterCreator } from './CharacterCreator';
@@ -68,8 +69,9 @@ export function Office() {
   }, []);
 
   const glError = useStore((s) => s.glError);
+  const touch = useStore((s) => s.touch);
   return (
-    <div className="office" ref={ref}>
+    <div className={`office${touch ? ' touch' : ''}`} ref={ref}>
       {glError && <GraphicsHelp />}
       <div className={`hud${theater ? ' theater' : ''}${inBar || inKara ? ' bar-mode' : ''}${inKara ? ' kara-mode' : ''}${inWolf ? ' wolf-mode' : ''}${inMole ? ' mole-mode' : ''}${theater && idle ? ' idle' : ''}`}>
         <Safe><TopBar /></Safe>
@@ -91,6 +93,7 @@ export function Office() {
         <Safe><Prompt /></Safe>
         <Safe><VoiceStatus /></Safe>
         <Safe><MeetingTvButton /></Safe>
+        <Safe><TouchControls /></Safe>
         <Safe><Toolbar /></Safe>
         <Safe><Banners /></Safe>
       </div>
@@ -378,6 +381,7 @@ function Banners() {
 
 function Settings() {
   const quality = useStore((s) => s.quality);
+  const touch = useStore((s) => s.touch);
   const ambience = useStore((s) => s.ambience);
   const close = () => setState({ settingsOpen: false });
   return (
@@ -395,6 +399,14 @@ function Settings() {
             </button>
             <button className={`chip${quality === 'low' ? ' on' : ''}`} onClick={() => game.setQuality('low')}>
               ⚡ Nhẹ (máy yếu)
+            </button>
+          </div>
+        </div>
+        <div className="field">
+          <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Nút điều khiển cảm ứng (điện thoại, máy tính bảng)</label>
+          <div className="chips">
+            <button className={`chip${touch ? ' on' : ''}`} onClick={() => setTouchUi(!touch)}>
+              {touch ? '📱 Đang hiện' : '📱 Đang ẩn'}
             </button>
           </div>
         </div>

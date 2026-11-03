@@ -302,7 +302,7 @@ export class Floor5Fx {
     g.fillStyle = '#e8ecff';
     if (!v || v.phase === 'lobby' || v.phase === 'starting') {
       const n = v?.joined.length ?? 0;
-      g.fillText(n ? `${n} người đã tham gia — cần ít nhất 4` : 'Lại gần bấm E để tham gia', W / 2, 170);
+      g.fillText(n ? `${n} người đã tham gia — cần ít nhất 4` : 'Lại gần bấm E (hoặc ✋) để tham gia', W / 2, 170);
       g.font = '500 24px "Be Vietnam Pro", sans-serif';
       g.fillStyle = '#9aa3c7';
       g.fillText('Làm nhiệm vụ · tìm nội gián · họp và bỏ phiếu', W / 2, 225);

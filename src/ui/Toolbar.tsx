@@ -27,6 +27,7 @@ export function Toolbar() {
   const panel = useStore((s) => s.panel);
   const unread = useStore((s) => s.unread);
   const viewMode = useStore((s) => s.viewMode);
+  const touch = useStore((s) => s.touch);
   const ambience = useStore((s) => s.ambience);
   const [pop, setPop] = useState<Pop>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -119,6 +120,18 @@ export function Toolbar() {
             🍅 Pomodoro <small>{me?.pomo ? fmtClock(pomoLeft) : 'tập trung 25 phút'} ›</small>
           </button>
           <div className="menu-sep" />
+          {touch && document.fullscreenEnabled && (
+            <button
+              className="menu-item"
+              onClick={() => {
+                setPop(null);
+                if (document.fullscreenElement) void document.exitFullscreen();
+                else void document.documentElement.requestFullscreen?.().catch(() => {});
+              }}
+            >
+              ⛶ {document.fullscreenElement ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
+            </button>
+          )}
           <button className="menu-item" onClick={() => (setPop(null), void game.takePhoto())}>
             📸 Chụp ảnh khung cảnh
           </button>

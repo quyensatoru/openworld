@@ -9,6 +9,7 @@ import type { MoleView } from '../shared/mole';
 import { create } from 'zustand';
 import type { ActivityEvent, ChatMsg, CinemaState, MediaState, PlayerState, Task, TeamMember, WorklogDay } from '../shared/protocol';
 import { loadPref } from './profile';
+import { IS_TOUCH } from './ui/touch-detect';
 
 export interface FpLook {
   sens: number;
@@ -63,6 +64,8 @@ export interface OfficeStore {
   unread: number;
   toasts: Toast[];
   quality: Quality;
+  /** show the phone controls (thumb stick, use / jump buttons) */
+  touch: boolean;
   /** first-person view: look sensitivity (×), smoothing, head bob */
   fpLook: FpLook;
 
@@ -150,7 +153,16 @@ export const useStore = create<OfficeStore>(() => ({
   chatDraft: '',
   unread: 0,
   toasts: [],
-  quality: loadPref<Quality>('quality', 'high'),
+  quality: loadPref<Quality>('quality', IS_TOUCH ? 'low' : 'high'),
+  touch: (() => {
+    try {
+      const v = localStorage.getItem('bss-touch-ui');
+      if (v === '1' || v === '0') return v === '1';
+    } catch {
+      /* private mode */
+    }
+    return IS_TOUCH;
+  })(),
   fpLook: { ...FP_LOOK_DEFAULT, ...loadPref<Partial<FpLook>>('fpLook', {}) },
 
   media: { mic: false, cam: false, screen: false },
@@ -188,7 +200,7 @@ export const useStore = create<OfficeStore>(() => ({
   wolf: null,
   wolfPanel: true,
   mole: null,
-  molePanel: true,
+  molePanel: !IS_TOUCH, // phones: start folded into the little pill
   moleTask: null,
   moleFakeDone: [],
   moleSplash: null,

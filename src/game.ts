@@ -134,7 +134,7 @@ class Game {
               '⬆️ Tầng 2 — 🎬 Rạp phim bên trái · 🍸 BSS Bar bên phải · cầu thang lên tầng 3 ở góc phải',
               '🎮 Tầng 3 — phòng game BSS Net bên phải · cầu thang lên tầng 4 ở bên trái',
               '🎤 Tầng 4 — phòng Karaoke bên trái · 🐺 Làng Ma Sói bên phải · cầu thang lên tầng 5 ở góc phải',
-              '🕵️ Tầng 5 — Nội Gián: bấm E ở bảng trong sảnh để tham gia',
+              getState().touch ? '🕵️ Tầng 5 — Nội Gián: tới bảng trong sảnh, bấm nút ✋ để tham gia' : '🕵️ Tầng 5 — Nội Gián: bấm E ở bảng trong sảnh để tham gia',
             ][floor],
             'info',
             3500,
@@ -609,7 +609,14 @@ class Game {
     this.updateWhiteboard();
     this.updateTvs();
     this.rtc?.evaluate();
-    if (!reconnect) toast(`Chào mừng đến ${m.office.name}! WASD để đi, click vào ghế để ngồi 🙌`, 'success', 6000);
+    if (!reconnect)
+      toast(
+        getState().touch
+          ? `Chào mừng đến ${m.office.name}! Kéo cần gạt bên trái để đi, chạm vào ghế để ngồi, vuốt màn hình để xoay, chụm 2 ngón để thu phóng 🙌`
+          : `Chào mừng đến ${m.office.name}! WASD để đi, click vào ghế để ngồi 🙌`,
+        'success',
+        6000,
+      );
   }
 
   private patchMe(patch: Partial<PlayerState>) {
@@ -1732,6 +1739,18 @@ class Game {
     startOfDay.setHours(0, 0, 0, 0);
     const done = Object.values(s.tasks).filter((t) => t.doneAt && t.doneAt >= startOfDay.getTime()).length;
     this.world?.office.updateWhiteboard({ online: Object.keys(s.players).length + (s.me ? 1 : 0), doneToday: done, officeName: s.officeName });
+  }
+
+  // ------------------------------------------------------------------ phone controls
+  touchStick(x: number, y: number) {
+    this.world?.setStick(x, y);
+  }
+  touchJump() {
+    this.world?.jump();
+  }
+  /** The phone's "use" button = the E key. */
+  touchUse() {
+    this.world?.interact();
   }
 
   /** First-person look: sensitivity, smoothing, head bob (saved on this device). */

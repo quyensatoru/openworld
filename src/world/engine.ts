@@ -201,6 +201,25 @@ export class World {
   private camYaw = 0;
   private camPitch = 0.78;
   private camDist = 11;
+  /** fingers on the canvas (pinch zoom) */
+  private touchPts = new Map<number, { x: number; y: number }>();
+  private pinch: { d: number; cam: number; fov: number } | null = null;
+
+  /** On-screen stick (phones): x right, y forward, -1..1. */
+  setStick(x: number, y: number) {
+    if (this.controller) this.controller.stick = { x, y };
+  }
+
+  /** Jump (the Space key / the phone's jump button). */
+  jump() {
+    const c = this.controller;
+    if (c && !c.seat && !c.busy) this.cb.onEmoteKey(-1);
+  }
+
+  /** What E would do right now (for the phone's action button), or null. */
+  actionLabel(): string | null {
+    return this.nearestAction()?.text ?? null;
+  }
   private camTarget = new THREE.Vector3(20, 1.2, 24);
   private drag: { x: number; y: number; moved: boolean; button: number } | null = null;
   private lastSend = 0;
@@ -370,10 +389,29 @@ export class World {
     });
     this.on(el, 'contextmenu', (e) => e.preventDefault());
     this.on(el, 'pointerdown', ((e: PointerEvent) => {
+      this.touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.touchPts.size === 2) {
+        // two fingers: pinch to zoom (no drag, no tap)
+        const [a, b] = [...this.touchPts.values()];
+        this.pinch = { d: Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)), cam: this.camDist, fov: this.camera.fov };
+        this.drag = null;
+        return;
+      }
+      if (this.touchPts.size > 2) return;
       this.drag = { x: e.clientX, y: e.clientY, moved: false, button: e.button };
       el.setPointerCapture(e.pointerId);
     }) as EventListener);
     this.on(el, 'pointermove', ((e: PointerEvent) => {
+      if (this.touchPts.has(e.pointerId)) this.touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pinch && this.touchPts.size >= 2) {
+        const [a, b] = [...this.touchPts.values()];
+        const k = this.pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y));
+        if (this.viewMode === 'first') {
+          this.camera.fov = Math.max(30, Math.min(85, this.pinch.fov * k));
+          this.camera.updateProjectionMatrix();
+        } else this.camDist = Math.max(4, Math.min(26, this.pinch.cam * k));
+        return;
+      }
       if (this.drag) {
         const dx = e.clientX - this.drag.x;
         const dy = e.clientY - this.drag.y;
@@ -397,10 +435,20 @@ export class World {
         }
       } else this.hover(e);
     }) as EventListener);
+    const lift = (e: PointerEvent) => {
+      this.touchPts.delete(e.pointerId);
+      if (this.touchPts.size < 2) this.pinch = null;
+    };
     this.on(el, 'pointerup', ((e: PointerEvent) => {
+      const wasPinch = !!this.pinch || this.touchPts.size > 1;
+      lift(e);
       const d = this.drag;
       this.drag = null;
-      if (d && !d.moved && d.button === 0) this.click(e);
+      if (d && !d.moved && d.button === 0 && !wasPinch) this.click(e);
+    }) as EventListener);
+    this.on(el, 'pointercancel', ((e: PointerEvent) => {
+      lift(e);
+      this.drag = null;
     }) as EventListener);
     this.on(
       el,
