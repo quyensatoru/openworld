@@ -58,6 +58,7 @@ export function savePref(key: string, value: unknown): void {
   } catch {
     /* ignore */
   }
+  if (HANDOFF_PREFS.includes(key)) refreshHandoffSoon();
 }
 
 // ------------------------------------------------------------ iPhone home-screen app
@@ -65,8 +66,10 @@ export function savePref(key: string, value: unknown): void {
 // would be a stranger. While it runs in Safari the page address therefore carries the profile
 // (#me=…): "Add to Home Screen" saves that address (the manifest has no start_url on purpose) and
 // the app adopts it on its first launch. Never adopted in a normal tab — a copied link must not
-// hand someone else your identity.
+// hand someone else your identity. The settings travel too: without them the app fell back to the
+// phone defaults ("⚡ Nhẹ": a third of the screen's resolution) and the people looked jagged.
 const ME_RE = /^#me=([A-Za-z0-9_-]+)$/;
+const HANDOFF_PREFS = ['quality', 'fpsCap', 'fpLook', 'ambience', 'wolfSpeech', 'helpSeen', 'minimapOpen', 'jukeboxVolume', 'karaVolume', 'karaMonitorVol', 'karaFx', 'karaPhones'];
 
 function b64url(s: string): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(s)))
@@ -93,11 +96,28 @@ function refreshHandoff() {
   if (!isIos() || isInstalled()) return;
   const raw = read();
   if (typeof raw.cid !== 'string' || !raw.name) return;
-  setHash('#me=' + b64url(JSON.stringify({ cid: raw.cid, name: raw.name, avatar: raw.avatar ?? null })));
+  const prefs: Record<string, string> = {};
+  try {
+    for (const k of HANDOFF_PREFS) {
+      const v = localStorage.getItem(`bss-office-${k}`);
+      if (v != null && v.length < 500) prefs[k] = v;
+    }
+    const touch = localStorage.getItem('bss-touch-ui');
+    if (touch === '0' || touch === '1') prefs.touchUi = touch;
+  } catch {
+    /* private mode */
+  }
+  setHash('#me=' + b64url(JSON.stringify({ cid: raw.cid, name: raw.name, avatar: raw.avatar ?? null, prefs })));
 }
 
-/** Once at startup, before anything reads the profile. */
-export function profileHandoff(): void {
+let soon = 0;
+/** (a slider saves on every step — Safari refuses rapid address changes) */
+function refreshHandoffSoon() {
+  clearTimeout(soon);
+  soon = window.setTimeout(refreshHandoff, 600);
+}
+
+function profileHandoff(): void {
   const m = location.hash.match(ME_RE);
   if (m) {
     setHash('');
@@ -105,6 +125,12 @@ export function profileHandoff(): void {
       const p = JSON.parse(unb64url(m[1])) as Record<string, unknown>;
       if (isInstalled() && !read().cid && typeof p.cid === 'string' && CID_RE.test(p.cid)) {
         saveProfile({ cid: p.cid, name: typeof p.name === 'string' ? p.name : '', avatar: p.avatar ? sanitizeAvatar(p.avatar) : null });
+        const prefs = (p.prefs ?? {}) as Record<string, unknown>;
+        for (const k of HANDOFF_PREFS) {
+          const v = prefs[k];
+          if (typeof v === 'string' && v.length < 500) localStorage.setItem(`bss-office-${k}`, v);
+        }
+        if (prefs.touchUi === '0' || prefs.touchUi === '1') localStorage.setItem('bss-touch-ui', prefs.touchUi);
       }
     } catch {
       /* not ours */
@@ -112,3 +138,7 @@ export function profileHandoff(): void {
   }
   refreshHandoff();
 }
+
+// At load, before anything reads the profile or the settings (the store reads them as it is created
+// and imports this module first).
+profileHandoff();
