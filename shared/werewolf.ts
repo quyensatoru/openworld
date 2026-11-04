@@ -142,6 +142,8 @@ export interface WolfSettings {
   dayS: number;
   /** Show a dead player's role to everyone. */
   reveal: boolean;
+  /** The dead and onlookers see everyone's role (off: they could pass it on in chat / out loud). */
+  ghostsSee: boolean;
 }
 
 export const WOLF_DEFAULTS: WolfSettings = {
@@ -150,6 +152,7 @@ export const WOLF_DEFAULTS: WolfSettings = {
   roles: { alpha: true, minion: true, seer: true, guard: true, witch: true, hunter: false, cupid: false, fool: true, killer: false },
   dayS: 150,
   reveal: true,
+  ghostsSee: false,
 };
 export const WOLF_MIN = 5;
 export const WOLF_MAX = 12;
@@ -160,11 +163,11 @@ export interface WolfPlayer {
   name: string;
   seat: string;
   alive: boolean;
-  /** Only when you may know it (yourself, your pack, revealed deaths, ghosts, the end). */
+  /** Only when you may know it (yourself, your pack, revealed deaths, the end; the dead if allowed). */
   role: WolfRole | null;
   /** How they died (shown on their card). */
   cause?: 'wolf' | 'poison' | 'hang' | 'shot' | 'left' | 'stab' | 'heart';
-  /** In love (shown to the couple, the dead and at the end). */
+  /** In love (shown to the couple, Cupid, at the end; the dead if allowed). */
   lover?: boolean;
 }
 

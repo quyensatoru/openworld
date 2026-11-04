@@ -196,13 +196,14 @@ export class Werewolf {
   // ------------------------------------------------------------------ views
   private viewFor(id: string): WolfView {
     const me = this.get(id);
-    const ghost = !me || !me.alive || this.phase === 'end';
+    // the dead and onlookers only get to see every card when the host allows it
+    const ghost = (!me || !me.alive) && this.playing && this.settings.ghostsSee;
     const wolf = isWolf(me?.role);
     const minion = me?.role === 'minion';
     const cupid = me?.role === 'cupid';
     const players: WolfPlayer[] = this.players.map((p) => {
       const known =
-        p.id === id || this.phase === 'end' || (ghost && this.playing) || ((wolf || minion) && isWolf(p.role)) || (!p.alive && this.settings.reveal);
+        p.id === id || this.phase === 'end' || ghost || ((wolf || minion) && isWolf(p.role)) || (!p.alive && this.settings.reveal);
       const loverKnown = !!p.lover && (ghost || this.phase === 'end' || p.id === id || p.lover === id || cupid);
       return { id: p.id, name: p.name, seat: p.seat, alive: p.alive, role: known ? p.role : null, cause: p.alive ? undefined : p.cause, lover: loverKnown || undefined };
     });
@@ -341,6 +342,7 @@ export class Werewolf {
         if (s.mode === 'auto' || s.mode === 'custom') next.mode = s.mode;
         if (s.wolves != null) next.wolves = Math.max(1, Math.min(4, Math.round(Number(s.wolves)) || 1));
         if (typeof s.reveal === 'boolean') next.reveal = s.reveal;
+        if (typeof s.ghostsSee === 'boolean') next.ghostsSee = s.ghostsSee;
         if (s.roles && typeof s.roles === 'object') for (const k of SPECIALS) if (typeof s.roles[k] === 'boolean') next.roles[k] = s.roles[k]!;
         if (s.dayS != null && DAY_CHOICES.includes(Number(s.dayS))) next.dayS = Number(s.dayS);
         this.settings = next;

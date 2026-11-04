@@ -183,7 +183,7 @@ function client(cookie, cid, name) {
   ok(minionView.v.me.mates.length === 1 && minionView.v.me.mates[0] === P[roles.indexOf('wolf')].cid, 'the traitor knows who the wolf is');
   ok(!views[roles.indexOf('wolf')].v.players.some((p) => p.role === 'minion'), "…but the wolf doesn't know the traitor");
   const sv = await S.wait((m) => m.t === 'wolf' && m.v?.phase === 'reveal');
-  ok(!!sv && sv.v.players.every((p) => p.role), 'onlookers see every role');
+  ok(!!sv && sv.v.players.every((p) => !p.role), "onlookers don't see anyone's role (host setting off by default)");
   S.send({ t: 'sit', seat: 'wolf-06' });
   ok(!!(await S.wait((m) => m.t === 'err' && /Ma Sói đang diễn ra/.test(m.msg))), 'empty stumps are locked during a game');
   const by = (r) => P[roles.indexOf(r)];
@@ -208,6 +208,8 @@ function client(cookie, cid, name) {
   const dead = dawn?.v.players.find((p) => p.id === victim.cid);
   ok(!!dawn && dead && !dead.alive && dead.cause === 'wolf', 'dawn: the wolf’s victim is dead');
   ok(!!dawn && dawn.v.log.some((l) => l.text.includes('Kara') || l.text.includes(dead?.name ?? '???')), 'the game master announces the death');
+  const ghostView = await victim.wait((m) => m.t === 'wolf' && m.v?.phase === 'dawn' && !m.v.me.alive, 5000);
+  ok(!!ghostView && ghostView.v.players.filter((p) => p.alive && p.role).length === 0, "the dead don't see the living players' roles");
   // dead players only reach the dead / onlookers
   for (const c of [...P, S]) c.clear();
   victim.bin([1, 5, 5, 5]);

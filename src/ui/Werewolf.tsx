@@ -183,6 +183,9 @@ function Settings({ v }: { v: WolfView }) {
       <label className="wp-row check">
         <input type="checkbox" checked={s.reveal} onChange={(e) => set({ reveal: e.target.checked })} /> Lộ vai của người chết
       </label>
+      <label className="wp-row check" title="Tắt: người đã chết và người đứng xem chỉ biết vai của chính mình và vai được lộ khi chết, cho tới hết ván">
+        <input type="checkbox" checked={!!s.ghostsSee} onChange={(e) => set({ ghostsSee: e.target.checked })} /> 👻 Người chết & người xem biết vai mọi người
+      </label>
     </div>
   );
 }
