@@ -1,6 +1,7 @@
 // Loads /models/manifest.json (written by scripts/prepare-assets.mjs) and creates avatars.
 // Without a manifest every avatar falls back to the procedural character.
 import * as THREE from 'three';
+import { mergeSkinnedPieces } from './merge';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import type { AvatarConfig } from '../../../shared/avatar';
@@ -105,7 +106,11 @@ class AvatarFactory {
   private gltf(url: string): Promise<GLTF> {
     let p = this.gltfs.get(url);
     if (!p) {
-      p = this.loader.loadAsync(url);
+      // one mesh per material instead of ~190 pieces (see merge.ts); clones of it share the result
+      p = this.loader.loadAsync(url).then((g) => {
+        mergeSkinnedPieces(g.scene);
+        return g;
+      });
       this.gltfs.set(url, p);
     }
     return p;

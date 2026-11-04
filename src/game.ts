@@ -28,7 +28,7 @@ import {
 import { Net, wsUrl } from './net/socket';
 import { loadPref, loadProfile, saveProfile, savePref } from './profile';
 import { RelayMedia } from './rtc/relay';
-import { getState, nameOf, playerById, serverNow, setState, toast, type FpLook } from './store';
+import { getState, nameOf, playerById, serverNow, setState, toast, type FpLook, type Quality } from './store';
 import { askNotificationPermission, chime, flashTitle, notify } from './ui/notify';
 import { World } from './world/engine';
 
@@ -1799,7 +1799,7 @@ class Game {
     this.world?.setFpLook(next);
   }
 
-  setQuality(q: 'high' | 'low') {
+  setQuality(q: Quality) {
     savePref('quality', q);
     setState({ quality: q });
     this.world?.setQuality(q);

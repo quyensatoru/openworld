@@ -10,6 +10,7 @@ import type { Emote } from '../../../shared/protocol';
 import type { Avatar, DriveState } from './types';
 import { makeProp, placeInHand } from './props';
 import { aimBone } from './bone-utils';
+import { mergeSkinnedPieces } from './merge';
 
 /** UAL (Unreal mannequin names) → VRM humanoid bones. */
 const MAP: Record<string, VRMHumanBoneName> = {
@@ -208,6 +209,7 @@ export class VrmAvatar implements Avatar {
     const vrm = gltf.userData.vrm as VRM;
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
     VRMUtils.combineSkeletons?.(gltf.scene);
+    mergeSkinnedPieces(gltf.scene, true); // ~100 hair / body pieces → one per material
     VRMUtils.rotateVRM0(vrm); // VRM 0.x faces -z; the game expects +z
     const glowMats: GlowMat[] = [];
     vrm.scene.traverse((o) => {

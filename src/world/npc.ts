@@ -8,6 +8,7 @@ import type { AnimState, Emote, PlayerState } from '../../shared/protocol';
 import { avatars } from './avatar/manifest';
 import type { Avatar } from './avatar/types';
 import { VrmAvatar } from './avatar/vrm-avatar';
+import { blobShadow } from './blob';
 import { NameTag } from './overlays';
 
 interface Pose {
@@ -171,6 +172,7 @@ export class BarStaff {
     const vrm = STAFF_VRM[name];
     tag.object.position.set(0, vrm ? vrm.height + 0.28 : 1.95 * c.height, 0);
     holder.add(tag.object);
+    holder.add(blobShadow()); // shown on battery saver only (no shadow map then)
     const s: Staff = { name, role, cfg: c, pose, emoteAt, holder, avatar: null, tag, x: 0, z: 0, speed: 0, lastSec: -1, override: null, vrm };
     this.staff.push(s);
     if (!vrm)

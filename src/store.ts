@@ -21,7 +21,7 @@ export const FP_LOOK_DEFAULT: FpLook = { sens: 0.6, smooth: true, bob: false };
 
 export type Phase = 'loading' | 'login' | 'creator' | 'office';
 export type SidePanel = 'chat' | 'people' | 'today' | null;
-export type Quality = 'high' | 'low';
+export type Quality = 'high' | 'low' | 'eco';
 
 export interface Toast {
   id: number;

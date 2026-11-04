@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { DOOR_H, FLOOR_H, UP_DX, UP_WALL_H, WALL_T } from '../../shared/map';
 import { MOLE_CAMS, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, ROOM_META, STATION_BY_ID, TASK_META, doorMid, roomAt, type MoleRoom, type MoleView } from '../../shared/mole';
 import { canvasTexture } from './materials';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const label = (text: string, bg: string) =>
   canvasTexture(512, 128, (g, w, h) => {
@@ -183,9 +184,12 @@ export class Floor5Fx {
       }
       this.shrouds.set(k, { mat, meshes });
     }
+    // parts that never move (door frames, duct openings) are merged into one mesh per material below
+    const fixed: THREE.Mesh[] = [];
     // doors: a lintel, a frame, two sliding leaves with a status strip, a red lamp above
     const lintelMat = new THREE.MeshStandardMaterial({ color: '#5a6479', roughness: 0.9 });
     const frameMat = new THREE.MeshStandardMaterial({ color: '#232835', roughness: 0.6, metalness: 0.3 });
+    const winMat = new THREE.MeshStandardMaterial({ color: '#1b2230', roughness: 0.2, metalness: 0.5 });
     for (const d of MOLE_DOORS) {
       const W = d.to - d.from;
       const g = new THREE.Group();
@@ -197,15 +201,18 @@ export class Floor5Fx {
       const lintel = new THREE.Mesh(new THREE.BoxGeometry(W, lh, WALL_T), lintelMat);
       lintel.position.y = DOOR_H + lh / 2;
       g.add(lintel);
+      fixed.push(lintel);
       const clear = W - WALL_T; // the walls reach WALL_T/2 into the gap on each side
       for (const sx of [-1, 1]) {
         const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, DOOR_H, WALL_T + 0.05), frameMat);
         post.position.set(sx * (clear / 2 - 0.04), DOOR_H / 2, 0);
         g.add(post);
+        fixed.push(post);
       }
       const head = new THREE.Mesh(new THREE.BoxGeometry(clear, 0.1, WALL_T + 0.05), frameMat);
       head.position.y = DOOR_H - 0.05;
       g.add(head);
+      fixed.push(head);
       const half = clear / 2 - 0.06;
       const leafMat = new THREE.MeshStandardMaterial({ color: '#7d8798', roughness: 0.45, metalness: 0.35, emissive: '#ff1f3d', emissiveIntensity: 0 });
       const strip = new THREE.MeshBasicMaterial({ color: STRIP.open.clone(), toneMapped: false });
@@ -216,7 +223,7 @@ export class Floor5Fx {
         const s = new THREE.Mesh(new THREE.BoxGeometry(0.04, DOOR_H - 0.6, 0.075), strip);
         s.position.x = -side * (half / 2 - 0.04);
         L.add(s);
-        const win = new THREE.Mesh(new THREE.BoxGeometry(half * 0.45, 0.42, 0.07), new THREE.MeshStandardMaterial({ color: '#1b2230', roughness: 0.2, metalness: 0.5 }));
+        const win = new THREE.Mesh(new THREE.BoxGeometry(half * 0.45, 0.42, 0.07), winMat);
         win.position.set(0, 0.55, 0);
         L.add(win);
         L.position.y = (DOOR_H - 0.12) / 2 + 0.01;
@@ -235,6 +242,10 @@ export class Floor5Fx {
     // duct hatches
     const grateMat = new THREE.MeshStandardMaterial({ color: '#3a414f', roughness: 0.5, metalness: 0.6 });
     const holeMat = new THREE.MeshBasicMaterial({ color: '#050608' });
+    const grateGeo = mergeGeometries([
+      ...Array.from({ length: 6 }, (_, i) => new THREE.BoxGeometry(0.78, 0.02, 0.07).translate(0, 0, -0.33 + i * 0.132)),
+      ...[-1, 1].map((sx) => new THREE.BoxGeometry(0.04, 0.025, 0.8).translate(sx * 0.39, 0, 0)),
+    ])!;
     for (const v of MOLE_VENTS) {
       const g = new THREE.Group();
       g.position.set(v.x, 0, v.z);
@@ -242,24 +253,16 @@ export class Floor5Fx {
       hole.rotation.x = -Math.PI / 2;
       hole.position.y = 0.012;
       g.add(hole);
+      fixed.push(hole);
       const rim = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.03, 0.95), grateMat);
       rim.position.y = 0.006;
       g.add(rim);
+      fixed.push(rim);
       // the lid hinges on its north edge
       const lid = new THREE.Group();
       lid.position.set(0, 0.03, -0.4);
-      const plate = new THREE.Group();
+      const plate = new THREE.Mesh(grateGeo, grateMat); // slats + side bars, one mesh
       plate.position.z = 0.4;
-      for (let i = 0; i < 6; i++) {
-        const slat = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.02, 0.07), grateMat);
-        slat.position.z = -0.33 + i * 0.132;
-        plate.add(slat);
-      }
-      for (const sx of [-1, 1]) {
-        const side = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.025, 0.8), grateMat);
-        side.position.x = sx * 0.39;
-        plate.add(side);
-      }
       lid.add(plate);
       g.add(lid);
       root.add(g);
@@ -292,6 +295,7 @@ export class Floor5Fx {
       this.camLeds.push(ledMat);
       this.camModels.push(g);
     }
+    bakeFixed(root, fixed);
     this.alarm = new THREE.Mesh(
       new THREE.PlaneGeometry(40, 28),
       new THREE.MeshBasicMaterial({ color: '#ff1f3d', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
@@ -584,5 +588,29 @@ export class Floor5Fx {
     this.alarm.visible = this.alarmOn;
     if (this.alarmOn) (this.alarm.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.1 * Math.max(0, Math.sin(this.t * 6));
     for (const [, g] of this.bodies) g.visible = this.canSee(g.position.x, g.position.z);
+  }
+}
+
+/** Merge meshes that never move into one mesh per material, in `root`'s space (fewer draw calls). */
+function bakeFixed(root: THREE.Object3D, meshes: THREE.Mesh[]) {
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  for (const m of meshes) {
+    let g = m.geometry.clone();
+    if (g.index) g = g.toNonIndexed();
+    for (const n of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(n)) g.deleteAttribute(n);
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+    const mat = m.material as THREE.Material;
+    const list = byMat.get(mat) ?? [];
+    list.push(g);
+    byMat.set(mat, list);
+    m.removeFromParent();
+    m.geometry.dispose();
+  }
+  for (const [mat, geos] of byMat) {
+    const merged = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (merged) root.add(new THREE.Mesh(merged, mat));
   }
 }

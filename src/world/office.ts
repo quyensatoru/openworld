@@ -151,6 +151,7 @@ export class OfficeScene {
   private kanban: { mesh: THREE.Mesh; tex: THREE.CanvasTexture | null } | null = null;
   private whiteboard: { mesh: THREE.Mesh; tex: THREE.CanvasTexture | null } | null = null;
   private arcades: { mesh: THREE.Mesh; tex: THREE.CanvasTexture; t: number; floor: number }[] = [];
+  private arcAcc = 0;
   private clockAcc = 0;
   private monitorOverride = new Map<string, THREE.Material>();
   private occupied = new Set<string>();
@@ -1236,9 +1237,13 @@ export class OfficeScene {
       this.wolfFx.tick(dt);
     }
     if (floor === 4) this.f5.tick(dt);
+    // attract-mode screens: ~20 redraws a second is smooth for pixel art (each one re-uploads a texture)
+    this.arcAcc += dt;
+    const arcDt = this.arcAcc;
+    if (arcDt >= 0.05) this.arcAcc = 0;
     for (const arc of this.arcades) {
-      if (arc.floor !== floor) continue;
-      arc.t += dt;
+      if (arc.floor !== floor || arcDt < 0.05) continue;
+      arc.t += arcDt;
       const canvas = arc.tex.image as HTMLCanvasElement;
       const g = canvas.getContext('2d')!;
       const t = arc.t;

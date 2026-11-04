@@ -402,7 +402,17 @@ function Settings() {
             <button className={`chip${quality === 'low' ? ' on' : ''}`} onClick={() => game.setQuality('low')}>
               ⚡ Nhẹ (máy yếu)
             </button>
+            <button className={`chip${quality === 'eco' ? ' on' : ''}`} onClick={() => game.setQuality('eco')}>
+              🔋 Tiết kiệm pin
+            </button>
           </div>
+          <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+            {quality === 'high'
+              ? 'Nét nhất, bóng đổ thật. Máy giật thì tự hạ độ phân giải một chút, mượt lại thì tự nâng lên.'
+              : quality === 'low'
+                ? 'Vẫn có bóng đổ, độ phân giải thường — hợp máy yếu, màn hình 4K.'
+                : 'Không bóng đổ thật (vệt bóng dưới chân), 30 khung hình/giây — đỡ nóng máy, đỡ tốn pin điện thoại.'}
+          </p>
         </div>
         <div className="field">
           <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Nút điều khiển cảm ứng (điện thoại, máy tính bảng)</label>

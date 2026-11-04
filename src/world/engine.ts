@@ -35,6 +35,7 @@ import {
 } from '../../shared/map';
 import type { AnimState, Emote, PlayerState, Task } from '../../shared/protocol';
 import { avatars } from './avatar/manifest';
+import { blobShadow } from './blob';
 import type { Avatar } from './avatar/types';
 import { LocalController, angleDamp, seatApproach } from './controller';
 import { OfficeScene } from './office';
@@ -105,7 +106,15 @@ interface PlayerView {
   autoDance: boolean;
   /** Karaoke: holding a mic. */
   hold: 'mic' | null;
+  /** Soft shadow at the feet (when characters don't go into the shadow map). */
+  blob: THREE.Mesh;
+  /** Animation time not yet given to the avatar (skipped frames: off screen / far away). */
+  animAcc: number;
+  lodTick: number;
 }
+
+/** "Đẹp": full resolution; "Nhẹ": 1× resolution, smaller shadow map; "Tiết kiệm pin": no shadow map (a blob under people), 30 fps. */
+export type GfxQuality = 'high' | 'low' | 'eco';
 
 /** Room lighting while it is dark: the bar's party lights, karaoke colours, the werewolf village. */
 export type Mood = 'bar' | 'kara' | 'night' | 'camp' | 'facility';
@@ -177,6 +186,17 @@ export class World {
   private doorPeople: { x: number; z: number }[] = [];
   private warmPending = false;
   private shadowTick = 0;
+  private quality: GfxQuality = 'high';
+  /** People drawn into the shadow map — on battery saver there is none, they get a blob at their feet. */
+  private charShadows = true;
+  /** Frame pacing: next frame due (ms), and when the last one was drawn. */
+  private nextFrameAt = 0;
+  private lastFrameAt = 0;
+  /** Resolution that steps down while the machine can't keep up, and back up once it can. */
+  private resScale = 1;
+  private avgGap = 16.7;
+  private slowFor = 0;
+  private quickFor = 0;
   private hemiBase = new THREE.Color('#f4f7ff');
   private static readonly WHITE = new THREE.Color('#ffffff');
   /** Floor you are on (0 = office, 1 = cinema & bar). */
@@ -239,7 +259,7 @@ export class World {
   constructor(
     private container: HTMLElement,
     private cb: WorldCallbacks,
-    quality: 'high' | 'low',
+    quality: GfxQuality,
   ) {
     // alpha: the cinema screen punches a transparent hole so the YouTube iframe behind shows through
     const r = createRenderer();
@@ -327,15 +347,73 @@ export class World {
   }
 
   // ------------------------------------------------------------------ setup
-  setQuality(q: 'high' | 'low') {
-    this.renderer.setPixelRatio(q === 'high' ? Math.min(window.devicePixelRatio, 2) : 1);
+  setQuality(q: GfxQuality) {
+    this.quality = q;
+    this.resScale = 1;
+    this.slowFor = this.quickFor = 0;
+    this.applyPixelRatio();
     const size = q === 'high' ? 2048 : 1024;
     if (this.sun.shadow.mapSize.x !== size) {
       this.sun.shadow.mapSize.set(size, size);
       this.sun.shadow.map?.dispose();
       this.sun.shadow.map = null;
     }
+    // no shadow map at all on battery saver (three.js recompiles the materials once)
+    this.sun.castShadow = q !== 'eco';
+    this.setCharShadows(q !== 'eco');
+    this.renderer.shadowMap.needsUpdate = true;
     this.resize();
+  }
+
+  /** Sets the drawing resolution; false when it was already that. */
+  private applyPixelRatio(): boolean {
+    const dpr = window.devicePixelRatio || 1;
+    const base = this.quality === 'high' ? Math.min(dpr, 2) : Math.min(dpr, 1);
+    // stepping down never goes below 1 on "Đẹp" (a retina screen drawn at 1×), 0.75× otherwise
+    const floor = this.quality === 'high' ? Math.min(base, 1) : 0.75 * base;
+    const r = Math.max(floor, base * this.resScale);
+    if (Math.abs(r - this.renderer.getPixelRatio()) < 0.01) return false;
+    this.renderer.setPixelRatio(r);
+    return true;
+  }
+
+  /** With a shadow map, people cast real shadows; on battery saver there is none and a blob shows. */
+  private setCharShadows(on: boolean) {
+    this.charShadows = on;
+    for (const v of this.players.values()) v.blob.visible = !on && !!v.avatar;
+    for (const h of this.staff.holders()) {
+      const blob = h.getObjectByName('blob-shadow');
+      if (blob) blob.visible = !on;
+    }
+  }
+
+  /**
+   * Too slow for a while (frames ~35 % over the target) → a bit less resolution; quick again for a
+   * good while → back up. Only while the page is in front, and never for one-off hitches.
+   */
+  private adaptResolution(gap: number, target: number, focused: boolean) {
+    if (!focused || gap > 250) return;
+    this.avgGap += (gap - this.avgGap) * 0.05;
+    if (this.avgGap > target * 1.35) {
+      this.slowFor += gap;
+      this.quickFor = 0;
+    } else if (this.avgGap < target * 1.12) {
+      this.quickFor += gap;
+      this.slowFor = 0;
+    } else {
+      this.slowFor = this.quickFor = 0;
+    }
+    if (this.slowFor > 3000 && this.resScale > 0.5) {
+      this.slowFor = 0;
+      const was = this.resScale;
+      this.resScale = Math.max(0.5, this.resScale - 0.15);
+      if (this.applyPixelRatio()) this.resize();
+      else this.resScale = was; // already as low as it goes (resizing the canvas again would only stutter)
+    } else if (this.quickFor > 12000 && this.resScale < 1) {
+      this.quickFor = 0;
+      this.resScale = Math.min(1, this.resScale + 0.15);
+      if (this.applyPixelRatio()) this.resize();
+    }
   }
 
   private resize() {
@@ -753,6 +831,9 @@ export class World {
     proxy.position.y = 0.9;
     proxy.userData.playerId = p.id;
     holder.add(proxy);
+    const blob = blobShadow();
+    blob.visible = false; // until the avatar is there
+    holder.add(blob);
     const v: PlayerView = {
       id: p.id,
       isMe,
@@ -777,6 +858,9 @@ export class World {
       danceT: 0.7,
       autoDance: false,
       hold: null,
+      blob,
+      animAcc: 0,
+      lodTick: Math.random() < 0.5 ? 0 : 1,
     };
     this.players.set(p.id, v);
     this.loadAvatar(v, p.avatar);
@@ -806,6 +890,7 @@ export class World {
       }
       v.avatar = av;
       v.holder.add(av.root);
+      v.blob.visible = !this.charShadows;
     });
   }
 
@@ -1241,8 +1326,16 @@ export class World {
   private frame = () => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.frame);
-    const dt = Math.min(0.1, this.clock.getDelta());
+    // Frame pacing: 60 fps is plenty (120/144 Hz screens drew twice the frames for nothing),
+    // 30 while the window is in the background (people keep the office open beside their work).
     const now = performance.now();
+    const focused = document.hasFocus();
+    const gapWant = 1000 / (this.quality === 'eco' ? (focused ? 30 : 20) : focused ? 60 : 30);
+    if (now < this.nextFrameAt - 2) return;
+    this.nextFrameAt = Math.max(this.nextFrameAt + gapWant, now + gapWant / 2);
+    if (this.lastFrameAt) this.adaptResolution(now - this.lastFrameAt, gapWant, focused);
+    this.lastFrameAt = now;
+    const dt = Math.min(0.1, this.clock.getDelta());
 
     // local
     const c = this.controller;
@@ -1276,7 +1369,9 @@ export class World {
       v.speed = c.speed;
       v.anim = c.seat ? 'sit' : c.anim;
       v.groundY = this.ride ? this.rideY() : damp(v.groundY, groundAt(c.x, c.z), 14, dt);
-      v.holder.position.set(visualX(c.x), v.groundY + this.jumpY(v, dt), c.z);
+      const jy = this.jumpY(v, dt);
+      v.holder.position.set(visualX(c.x), v.groundY + jy, c.z);
+      v.blob.position.y = 0.012 - jy;
       v.holder.rotation.y = c.ry;
       v.x = c.x;
       v.z = c.z;
@@ -1334,7 +1429,9 @@ export class World {
       v.ry = ry;
       v.anim = anim;
       v.groundY = damp(v.groundY, groundAt(x, z), liftAtPos(x, z) ? 2.2 : 14, dt);
-      v.holder.position.set(visualX(x), v.groundY + this.jumpY(v, dt), z);
+      const jy = this.jumpY(v, dt);
+      v.holder.position.set(visualX(x), v.groundY + jy, z);
+      v.blob.position.y = 0.012 - jy;
       v.holder.rotation.y = ry;
       v.holder.visible = this.sharesFloor(x, z) && this.canSeePlayer(v, now);
     }
@@ -1388,7 +1485,17 @@ export class World {
       // during a film, don't let name tags of the audience cover the screen
       if (!v.isMe) v.tag.object.visible = !(this.dimTarget > 0.9 && v.anim === 'sit' && v.state.zone === 'cinema');
       v.tag.object.position.y += (tagY - v.tag.object.position.y) * (1 - Math.exp(-6 * dt));
-      v.avatar?.update(dt, {
+      // nobody sees people on other floors / behind closed doors: don't animate them (bones, hair
+      // physics); people far away move every other frame — at that size nobody can tell
+      v.animAcc = Math.min(0.1, v.animAcc + dt);
+      if (!v.isMe) {
+        if (!v.holder.visible) continue;
+        v.lodTick ^= 1;
+        if (v.lodTick && this.camera.position.distanceToSquared(v.holder.position) > 26 * 26) continue;
+      }
+      const adt = v.animAcc;
+      v.animAcc = 0;
+      v.avatar?.update(adt, {
         speed: v.speed,
         anim: v.anim,
         seatKind: seatId ? SEAT_BY_ID.get(seatId)?.kind ?? null : null,
@@ -1436,6 +1543,7 @@ export class World {
     if (this.me) {
       const ducked = this.hiddenIds.has(this.me.id); // in a duct: you're not drawn, even for yourself
       if (this.me.avatar) this.me.avatar.root.visible = !fp && !ducked;
+      this.me.blob.visible = !this.charShadows && !!this.me.avatar && !fp && !ducked;
       this.me.tag.object.visible = !fp && !ducked;
     }
 
