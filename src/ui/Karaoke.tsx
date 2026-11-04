@@ -36,7 +36,7 @@ export function KaraokePanel() {
           —
         </button>
       </div>
-      <NowPlaying />
+      {(kara.now || tab !== 'search') && <NowPlaying />}
       <div className="kp-seg">
         <button className={tab === 'queue' ? 'on' : ''} onClick={() => setState({ karaTab: 'queue' })}>
           Hàng chờ{kara.queue.length ? ` · ${kara.queue.length}` : ''}
@@ -266,26 +266,26 @@ function SearchTab() {
       {hits && !busy && (
         <ul className="kp-hits">
           {hits.length === 0 && <li className="kp-empty">Không thấy bài nào — thử từ khoá khác nhé.</li>}
-          {hits.map((h) => (
-            <li key={h.id}>
-              <img src={`https://i.ytimg.com/vi/${h.id}/mqdefault.jpg`} alt="" loading="lazy" />
-              <div className="h-info">
-                <div className="h-title">{h.title}</div>
-                <div className="h-sub">
-                  {h.channel} · {h.len}
+          {hits.map((h) => {
+            const add = () => {
+              if (added.has(h.id)) return;
+              game.karaAdd(h.id, h.title, parseLen(h.len));
+              setAdded(new Set(added).add(h.id));
+            };
+            // the whole row adds the song (the + used to slide out of view on narrow panels)
+            return (
+              <li key={h.id} className={added.has(h.id) ? 'added' : ''} role="button" tabIndex={0} onClick={add} onKeyDown={(e) => e.key === 'Enter' && add()}>
+                <img src={`https://i.ytimg.com/vi/${h.id}/mqdefault.jpg`} alt="" loading="lazy" />
+                <div className="h-info">
+                  <div className="h-title">{h.title}</div>
+                  <div className="h-sub">
+                    {h.channel} · {h.len}
+                  </div>
                 </div>
-              </div>
-              <button
-                className={`btn${added.has(h.id) ? '' : ' primary'}`}
-                onClick={() => {
-                  game.karaAdd(h.id, h.title, parseLen(h.len));
-                  setAdded(new Set(added).add(h.id));
-                }}
-              >
-                {added.has(h.id) ? '✓' : '+'}
-              </button>
-            </li>
-          ))}
+                <span className={`h-add${added.has(h.id) ? '' : ' primary'}`}>{added.has(h.id) ? '✓' : '+'}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
       <form

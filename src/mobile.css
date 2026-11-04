@@ -339,3 +339,21 @@
     max-width: calc(100vw - 24px);
   }
 }
+
+/* karaoke: the panel itself never scrolls — only its tab body does (no nested scrollbars) */
+.office .kara-panel,
+.office.touch .kara-panel {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+@media (max-width: 600px) {
+  .office .kara-panel,
+  .office.touch .kara-panel {
+    max-height: 62dvh;
+  }
+  .kp-hits img {
+    width: 64px;
+    height: 36px;
+  }
+}

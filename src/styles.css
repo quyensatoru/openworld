@@ -2018,8 +2018,15 @@ input[type='range'] {
   color: #d9ccf5;
   flex: none;
 }
+/* one scroll area only: the tab body (the now-playing card and the tabs stay put) */
 .kara-panel > :not(.kp-head) {
+  flex: none;
+}
+.kara-panel > .kp-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 .kp-now {
   padding: 12px;
@@ -2228,6 +2235,7 @@ input[type='range'] {
   margin: 0;
   padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 .kp-hits li {
@@ -2237,6 +2245,31 @@ input[type='range'] {
   padding: 5px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
+  min-width: 0;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.kp-hits li:hover,
+.kp-hits li:active {
+  background: rgba(255, 62, 165, 0.16);
+}
+.kp-hits li.added {
+  opacity: 0.7;
+  cursor: default;
+}
+.h-add {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 800;
+  background: rgba(255, 255, 255, 0.1);
+}
+.h-add.primary {
+  background: linear-gradient(135deg, #ff3ea5, #9b5cff);
 }
 .kp-hits img {
   width: 76px;
@@ -5535,4 +5568,25 @@ body {
   right: -2px;
   top: -4px;
   font-size: 13px;
+}
+
+/* slim scrollbars everywhere (they were eating panel width, especially on phones) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(150, 150, 185, 0.45) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 185, 0.45);
+  border-radius: 6px;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+*::-webkit-scrollbar-button {
+  display: none;
 }
