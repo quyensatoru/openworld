@@ -317,3 +317,25 @@
     top: 50%;
   }
 }
+
+/* "🔊 Đang nghe …" on touch: a one-line chip that never grows, out of the thumbs' way */
+.office.touch .voice-status,
+.office.touch .voice-status.raised {
+  top: auto;
+  bottom: 64px;
+  height: auto;
+  max-width: calc(100vw - 340px);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.office.touch:has(.lift-panel, .side, .mole-meet, .mt-bg) .voice-status {
+  display: none;
+}
+@media (max-width: 600px) {
+  .office.touch .voice-status,
+  .office.touch .voice-status.raised {
+    bottom: auto;
+    top: 100px;
+    max-width: calc(100vw - 24px);
+  }
+}

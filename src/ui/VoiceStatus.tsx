@@ -29,5 +29,5 @@ export function VoiceStatus() {
   else if (around.length) text = `🔊 ${mic ? 'Đang nói/nghe với' : 'Đang nghe'}: ${around.join(', ')}`;
   else text = '🎙️ Mic đang bật — đi vào vòng tròn xanh của ai đó để nói chuyện';
 
-  return <div className="voice-status glass" style={prompt ? { bottom: 128 } : undefined}>{text}</div>;
+  return <div className={`voice-status glass${prompt ? ' raised' : ''}`}>{text}</div>;
 }

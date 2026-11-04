@@ -1398,6 +1398,10 @@ input[type='range'] {
 .voice-status.warn {
   border-left: 4px solid var(--warn);
 }
+/* above the "E · …" prompt when there is one */
+.voice-status.raised {
+  bottom: 128px;
+}
 .cinema-panel {
   position: absolute;
   left: 14px;
@@ -5513,10 +5517,6 @@ body {
   top: 60px;
   z-index: 8;
   max-width: calc(100vw - 24px);
-}
-.office.touch .voice-status {
-  bottom: auto;
-  top: 60px;
 }
 .office.touch:has(.places, .more-menu, .cinema-panel, .kara-panel:not([style*='none']), .wolf-panel, .mole-panel, .pcard) .t-stick {
   display: none;
