@@ -460,7 +460,17 @@ function Settings() {
 
 function Help() {
   const close = () => setState({ helpOpen: false });
-  const rows: [string, string][] = [
+  const touch = useStore((s) => s.touch);
+  const touchRows: [string, string][] = [
+    ['🕹️ Cần gạt (trái)', 'Kéo để đi — kéo hết cỡ để chạy'],
+    ['✋ (phải)', 'Làm việc của phím E: ngồi, mở bảng, làm nhiệm vụ, đóng mở cửa…'],
+    ['⤴', 'Nhảy'],
+    ['Chạm', 'Chạm ghế để ngồi · chạm người để xem thông tin · chạm sàn để đi tới đó'],
+    ['Vuốt / chụm 2 ngón', 'Xoay camera / phóng to thu nhỏ'],
+    ['⋯', 'Góc nhìn thứ nhất, toàn màn hình, chụp ảnh, bảng công việc, cài đặt'],
+    ['😄', 'Biểu cảm: vẫy tay, vỗ tay, ăn mừng, 🥂 cạn ly…'],
+  ];
+  const keyRows: [string, string][] = [
     ['W A S D / ← ↑ → ↓', 'Đi lại (giữ Shift để chạy)'],
     ['Click chuột trái', 'Đi tới chỗ đó · click ghế để ngồi · click người để tương tác'],
     ['Kéo chuột / cuộn', 'Xoay camera / phóng to thu nhỏ'],
@@ -478,6 +488,8 @@ function Help() {
     ['K', 'Mở bảng Kanban'],
     ['Esc', 'Đóng cửa sổ / huỷ đi tới'],
   ];
+  // phones: touch controls instead of the keyboard rows (the rest — floors, rooms — stays)
+  const rows = touch ? [...touchRows, ...keyRows.filter(([k]) => !/^(W A S D|Click|Kéo chuột|V$|Space|E$|1 – 9)/.test(k))] : keyRows;
   return (
     <div className="modal-bg" onClick={close}>
       <div className="modal glass" onClick={(e) => e.stopPropagation()}>

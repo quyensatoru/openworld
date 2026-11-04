@@ -21,6 +21,7 @@ import { game } from "../game";
 import { loadProfile, saveProfile } from "../profile";
 import { avatars, type BodyOption } from "../world/avatar/manifest";
 import type { Avatar } from "../world/avatar/types";
+import { IS_TOUCH } from './touch-detect';
 
 /** Small standalone 3D stage that shows one avatar on a turntable. */
 class Preview {
@@ -296,7 +297,7 @@ export function CharacterCreator({
             </button>
           ))}
         </div>
-        <div className="hint glass">Kéo chuột để xoay nhân vật</div>
+        <div className="hint glass">{IS_TOUCH ? 'Vuốt để xoay nhân vật' : 'Kéo chuột để xoay nhân vật'}</div>
       </div>
       <div className="creator-panel glass">
         <header>

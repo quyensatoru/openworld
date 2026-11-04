@@ -96,7 +96,7 @@ function Lobby({ v }: { v: WolfView }) {
           🐺 Bắt đầu ván ({n} người)
         </button>
       ) : (
-        <div className="wp-hint">🪵 Click một gốc cây quanh đống lửa để ngồi vào bàn. Ngồi khúc gỗ ở mép phòng là xem thôi.</div>
+        <div className="wp-hint">🪵 Chạm / click một gốc cây quanh đống lửa để ngồi vào bàn. Ngồi khúc gỗ ở mép phòng là xem thôi.</div>
       )}
       <div className="wp-roles">
         <span className="wp-dim">Bộ bài{n < WOLF_MIN ? ` (với ${WOLF_MIN} người)` : ''}:</span>

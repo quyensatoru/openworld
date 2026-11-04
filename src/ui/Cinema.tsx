@@ -139,7 +139,7 @@ export function CinemaPanel() {
       playingLabel="Đang chiếu"
       resumeLabel="Chiếu tiếp"
       playLabel="Chiếu"
-      hint="Click một ghế đỏ để ngồi — tự chuyển góc nhìn thứ nhất như ở rạp. Bấm — để thu gọn bảng này."
+      hint="Chạm / click một ghế đỏ để ngồi — tự chuyển góc nhìn thứ nhất như ở rạp. Bấm — để thu gọn bảng này."
       play={(l) => game.cinemaPlay(l)}
       control={(a) => game.cinemaControl(a)}
       seek={(d) => game.cinemaSeek(d)}

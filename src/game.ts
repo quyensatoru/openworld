@@ -225,11 +225,11 @@ class Game {
     // cinema + ambience + live Claude screens
     const cinema = new CinemaPlayer(world, serverNow, { screen: CINEMA_SCREEN, setVideo: (on) => world.office.setCinemaVideo(on) });
     cinema.onTitle = (title) => this.net?.send({ t: 'cinema', action: 'title', title });
-    cinema.onNeedsClick = () => toast('🔇 Trình duyệt chặn tự phát tiếng — bấm chuột một lần để bật âm thanh phim.', 'info', 6000);
+    cinema.onNeedsClick = () => toast(`🔇 Trình duyệt chặn tự phát tiếng — ${getState().touch ? 'chạm màn hình' : 'bấm chuột'} một lần để bật âm thanh phim.`, 'info', 6000);
     this.cinema = cinema;
     const jukebox = new CinemaPlayer(world, serverNow, { screen: BAR_SCREEN, setVideo: (on) => world.office.bar.setVideo(on), loop: true });
     jukebox.onTitle = (title) => this.net?.send({ t: 'jukebox', action: 'title', title });
-    jukebox.onNeedsClick = () => toast('🔇 Trình duyệt chặn tự phát tiếng — bấm chuột một lần để nghe nhạc.', 'info', 6000);
+    jukebox.onNeedsClick = () => toast(`🔇 Trình duyệt chặn tự phát tiếng — ${getState().touch ? 'chạm màn hình' : 'bấm chuột'} một lần để nghe nhạc.`, 'info', 6000);
     jukebox.setVolume(loadPref('jukeboxVolume', 70));
     this.jukebox = jukebox;
     const kara = new CinemaPlayer(world, serverNow, {
@@ -247,7 +247,7 @@ class Game {
       const now = getState().kara.now;
       if (now) this.kara({ a: 'meta', sid: now.song.sid, title, dur });
     };
-    kara.onNeedsClick = () => toast('🔇 Trình duyệt chặn tự phát tiếng — bấm chuột một lần để nghe nhạc karaoke.', 'info', 6000);
+    kara.onNeedsClick = () => toast(`🔇 Trình duyệt chặn tự phát tiếng — ${getState().touch ? 'chạm màn hình' : 'bấm chuột'} một lần để nghe nhạc karaoke.`, 'info', 6000);
     kara.setVolume(loadPref('karaVolume', 80));
     this.karaPlayer = kara;
     const amb = getState().ambience;

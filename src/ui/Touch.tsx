@@ -58,7 +58,9 @@ export function TouchControls() {
   // a full-screen side panel (chat…) on a small screen: the thumbs belong to it
   const sheet = useStore((s) => !!s.panel) && window.innerWidth < 720;
   const busy = useStore((s) => s.kanbanOpen || s.creatorOpen || s.settingsOpen || s.arcadeOpen);
-  if (!touch || task || sheet || busy || cctv) return null;
+  // Nội Gián: the meeting / vote / role screens cover everything and you can't walk anyway
+  const meeting = useStore((s) => !!s.mole?.me.inGame && ['roles', 'meeting', 'vote', 'result'].includes(s.mole.phase));
+  if (!touch || task || sheet || busy || cctv || meeting) return null;
   const sitting = !!prompt?.startsWith('Đang ngồi');
   // the lift panel already shows the choices — no bubble on top of it
   const showLabel = !!prompt && !lift;

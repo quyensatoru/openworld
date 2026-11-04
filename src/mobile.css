@@ -1,0 +1,319 @@
+/* ================================================================== phones
+   Loaded after styles.css. Two shapes:
+   - narrow  (max-width: 600px)  — a phone held upright: panels become bottom sheets
+   - short   (max-height: 500px) — a phone on its side: panels sit on the left, full height
+   `.office.touch` is set when the touch controls are on (thumb stick, ✋ use button). */
+
+/* ------------------------------------------------------------ everywhere on touch */
+.office.touch input,
+.office.touch textarea,
+.office.touch select {
+  font-size: 16px; /* iOS zooms into smaller inputs */
+}
+.office.touch .btn,
+.office.touch .chip {
+  min-height: 36px;
+}
+/* (keyboard hints are hidden on touch — but the help list's labels are real content) */
+.office.touch .help-grid kbd {
+  display: inline-block;
+}
+
+/* ------------------------------------------------------------ phone upright */
+@media (max-width: 600px) {
+  /* room panels → bottom sheets above the toolbar */
+  .office .cinema-panel,
+  .office .kara-panel,
+  .office .wolf-panel,
+  .office .mole-panel,
+  .office.touch .cinema-panel,
+  .office.touch .kara-panel,
+  .office.touch .wolf-panel,
+  .office.touch .mole-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    top: auto;
+    bottom: 64px;
+    max-height: 54dvh;
+    overflow-y: auto;
+    border-radius: 18px;
+  }
+  /* their folded pills sit under the location pill */
+  .office .cinema-pill,
+  .office .kara-pill,
+  .office .wolf-pill,
+  .office .mole-pill,
+  .office.touch .cinema-pill,
+  .office.touch .kara-pill,
+  .office.touch .wolf-pill,
+  .office.touch .mole-pill {
+    top: 58px;
+    bottom: auto;
+    left: 8px;
+    max-width: calc(100vw - 16px);
+  }
+  /* top-centre things move below the location pill */
+  .mole-hud {
+    top: 104px;
+  }
+  .toasts {
+    top: 60px;
+    width: calc(100vw - 16px);
+  }
+  .videos {
+    top: 58px;
+    left: 8px;
+    right: 8px;
+    transform: none;
+    max-width: none;
+    min-width: 0;
+  }
+  .vtile {
+    width: 112px;
+    height: 70px;
+  }
+  .loc-pill {
+    max-width: calc(100vw - 110px);
+  }
+  .loc-zone {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 46vw;
+  }
+  /* chat / people / today: a sheet under the location pill */
+  .side {
+    top: 54px;
+    left: 6px;
+    right: 6px;
+    bottom: 62px;
+    width: auto;
+    border-radius: 18px;
+  }
+  /* modals: edge to edge */
+  .modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 16px;
+  }
+  .help-grid {
+    grid-template-columns: 1fr;
+    gap: 2px 0;
+  }
+  .help-grid kbd,
+  .help-grid > b {
+    margin-top: 8px;
+  }
+  /* kanban: one column at a time, swipe sideways */
+  .kanban {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+  .kb-cols {
+    grid-template-columns: repeat(4, 84vw);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    padding: 4px 10px 12px;
+  }
+  .kb-col {
+    scroll-snap-align: start;
+  }
+  /* arcade */
+  .arcade {
+    width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+    padding: 10px;
+  }
+  /* big moments: smaller type so they fit */
+  .ms-icon,
+  .mr-emoji,
+  .mole-reveal.shh .mr-emoji {
+    font-size: 64px;
+  }
+  .mr-title,
+  .ms-title {
+    font-size: 30px;
+  }
+  .me-drift {
+    font-size: 40px;
+  }
+  .ks-num {
+    font-size: 72px;
+  }
+  .kara-score,
+  .wolf-end {
+    min-width: 0;
+    width: calc(100vw - 24px);
+    padding: 18px 16px;
+  }
+  /* meeting / vote */
+  .mole-meet {
+    padding: 8px;
+  }
+  .mm-card {
+    padding: 12px;
+    max-height: calc(100dvh - 16px);
+  }
+  .mm-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+  /* mini-games: never wider than the card */
+  .mg-bugs .code,
+  .mg-paper .printer {
+    width: 100%;
+    max-width: 380px;
+  }
+  .mg-big {
+    min-width: 0;
+    width: 100%;
+  }
+  .mt-card {
+    padding: 12px;
+  }
+  /* security cameras: 2 × 3 */
+  .cctv {
+    padding: 8px;
+  }
+  .cctv-top {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+/* ------------------------------------------------------------ phone on its side */
+@media (max-height: 500px) {
+  /* room panels: a column on the left, full height (the stick steps aside while one is open) */
+  .office .cinema-panel,
+  .office .kara-panel,
+  .office .wolf-panel,
+  .office .mole-panel,
+  .office.touch .cinema-panel,
+  .office.touch .kara-panel,
+  .office.touch .wolf-panel,
+  .office.touch .mole-panel {
+    left: 8px;
+    top: 54px;
+    bottom: 62px; /* the toolbar (mic!) stays reachable below */
+    width: min(360px, 46vw);
+    max-height: none;
+    overflow-y: auto;
+  }
+  .office .cinema-pill,
+  .office .kara-pill,
+  .office .wolf-pill,
+  .office .mole-pill,
+  .office.touch .cinema-pill,
+  .office.touch .kara-pill,
+  .office.touch .wolf-pill,
+  .office.touch .mole-pill {
+    top: 54px;
+    bottom: auto;
+    left: 8px;
+  }
+  /* chat etc.: a column on the right */
+  .side {
+    top: 8px;
+    bottom: 62px;
+    right: 8px;
+    left: auto;
+    width: min(380px, 50vw);
+  }
+  .office.touch:has(.side) .t-right {
+    display: none;
+  }
+  .toasts {
+    top: 52px;
+  }
+  .mole-hud {
+    top: 8px;
+    transform: translateX(-50%) scale(0.8);
+    transform-origin: top center;
+  }
+  .videos {
+    top: 52px;
+  }
+  .vtile {
+    width: 104px;
+    height: 64px;
+  }
+  .modal {
+    max-height: calc(100dvh - 12px);
+    padding: 14px 16px;
+  }
+  .kanban {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+  }
+  .kb-cols {
+    grid-template-columns: repeat(4, minmax(220px, 1fr));
+    overflow-x: auto;
+  }
+  /* character creator: preview left, options right */
+  .creator {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 100%;
+  }
+  .creator-panel {
+    margin: 8px 8px 8px 0;
+  }
+  .creator-panel header {
+    padding: 10px 14px 4px;
+  }
+  /* arcade: keep the board inside the screen height */
+  .arcade {
+    max-height: 100dvh;
+    width: 100vw;
+    border-radius: 0;
+    padding: 8px 10px;
+  }
+  /* board on the left, buttons / scores on the right (a column pushed "Tham gia" off-screen) */
+  .arcade-body {
+    flex-direction: row !important;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .snake-canvas {
+    width: auto !important;
+    max-width: calc(100vw - 260px);
+    height: calc(100dvh - 72px);
+  }
+  .caro-board {
+    width: min(calc(100vw - 280px), calc(100dvh - 72px)) !important;
+  }
+  .arcade-side {
+    flex: 1;
+    min-width: 0;
+    max-height: calc(100dvh - 72px);
+    overflow-y: auto;
+  }
+  /* big moments */
+  .ms-icon,
+  .mr-emoji,
+  .mole-reveal.shh .mr-emoji {
+    font-size: 56px;
+  }
+  .mr-title,
+  .ms-title {
+    font-size: 28px;
+  }
+  .ks-num {
+    font-size: 64px;
+  }
+  .mm-card {
+    max-height: calc(100dvh - 12px);
+    padding: 10px 14px;
+  }
+  .mole-meet {
+    padding: 6px;
+  }
+  .kara-score,
+  .wolf-end {
+    padding: 14px 22px;
+    top: 50%;
+  }
+}
