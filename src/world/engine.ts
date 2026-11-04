@@ -113,7 +113,7 @@ interface PlayerView {
   lodTick: number;
 }
 
-/** "Đẹp": full resolution; "Nhẹ": 1× resolution, smaller shadow map; "Tiết kiệm pin": no shadow map (a blob under people), 30 fps. */
+/** "Đẹp": full resolution; "Nhẹ": 1× resolution, smaller shadow map; "Tiết kiệm pin": also no shadow map (a blob under people). */
 export type GfxQuality = 'high' | 'low' | 'eco';
 
 /** Room lighting while it is dark: the bar's party lights, karaoke colours, the werewolf village. */
@@ -187,7 +187,7 @@ export class World {
   private warmPending = false;
   private shadowTick = 0;
   private quality: GfxQuality = 'high';
-  /** Frames per second at most (0 = every refresh of the screen); battery saver is always 30. */
+  /** Frames per second at most (0 = every refresh of the screen). */
   private fpsCap = 60;
   /** People drawn into the shadow map — on battery saver there is none, they get a blob at their feet. */
   private charShadows = true;
@@ -1334,11 +1334,11 @@ export class World {
   private frame = () => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.frame);
-    // Frame pacing: 60 fps is plenty (120/144 Hz screens drew twice the frames for nothing),
-    // 30 while the window is in the background (people keep the office open beside their work).
+    // Frame pacing: 60 fps by default (120/144 Hz screens drew twice the frames); "Tối đa" follows the
+    // screen while the window is in front, and drops to 60 in the background. Never below 60.
     const now = performance.now();
     const focused = document.hasFocus();
-    const fps = this.quality === 'eco' ? (focused ? 30 : 20) : focused ? this.fpsCap || 1000 : 30;
+    const fps = focused ? this.fpsCap || 1000 : 60;
     const gapWant = 1000 / fps;
     if (now < this.nextFrameAt - 2) return;
     this.nextFrameAt = Math.max(this.nextFrameAt + gapWant, now + gapWant / 2);

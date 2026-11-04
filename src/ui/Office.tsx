@@ -412,27 +412,25 @@ function Settings() {
               ? 'Nét nhất, bóng đổ thật. Máy giật thì tự hạ độ phân giải một chút, mượt lại thì tự nâng lên.'
               : quality === 'low'
                 ? 'Vẫn có bóng đổ, độ phân giải thường — hợp máy yếu, màn hình 4K.'
-                : 'Không bóng đổ thật (vệt bóng dưới chân), 30 khung hình/giây — đỡ nóng máy, đỡ tốn pin điện thoại.'}
+                : 'Không bóng đổ thật (vệt bóng mềm dưới chân), độ phân giải thường — đỡ nóng máy, đỡ tốn pin điện thoại.'}
           </p>
         </div>
-        {quality !== 'eco' && (
-          <div className="field">
-            <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Khung hình / giây</label>
-            <div className="chips">
-              <button className={`chip${fpsCap === 60 ? ' on' : ''}`} onClick={() => game.setFpsCap(60)}>
-                60
-              </button>
-              <button className={`chip${fpsCap === 0 ? ' on' : ''}`} onClick={() => game.setFpsCap(0)}>
-                🚀 Tối đa
-              </button>
-            </div>
-            <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-              {fpsCap === 60
-                ? 'Đủ mượt cho mọi màn hình, máy mát hơn.'
-                : 'Theo tần số màn hình (120/144 Hz): xoay camera mượt hơn, nhưng máy làm gấp đôi — nóng và tốn pin hơn. Màn 60 Hz thì không khác gì.'}
-            </p>
+        <div className="field">
+          <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Khung hình / giây</label>
+          <div className="chips">
+            <button className={`chip${fpsCap === 60 ? ' on' : ''}`} onClick={() => game.setFpsCap(60)}>
+              60
+            </button>
+            <button className={`chip${fpsCap === 0 ? ' on' : ''}`} onClick={() => game.setFpsCap(0)}>
+              🚀 Tối đa
+            </button>
           </div>
-        )}
+          <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+            {fpsCap === 60
+              ? 'Đủ mượt cho mọi màn hình, máy mát hơn.'
+              : 'Theo tần số màn hình (120/144 Hz): xoay camera mượt hơn, nhưng máy làm gấp đôi — nóng và tốn pin hơn. Màn 60 Hz thì không khác gì.'}
+          </p>
+        </div>
         <div className="field">
           <label style={{ fontWeight: 600, display: 'block', margin: '18px 0 8px' }}>Nút điều khiển cảm ứng (điện thoại, máy tính bảng)</label>
           <div className="chips">
