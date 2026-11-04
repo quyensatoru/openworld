@@ -152,7 +152,7 @@ function Settings({ v }: { v: MoleView }) {
         <input type="checkbox" checked={s.reveal} onChange={(e) => set({ reveal: e.target.checked })} /> Cho biết người bị trục xuất có phải nội gián không
       </label>
       <label className="wp-row check" title="Tắt: người đã chết và người đứng xem chỉ biết vai của chính mình (và người bị trục xuất nếu bật ô trên) cho tới hết ván">
-        <input type="checkbox" checked={s.ghostsSee} onChange={(e) => set({ ghostsSee: e.target.checked })} /> 👻 Người chết & người xem biết vai mọi người
+        <input type="checkbox" checked={s.ghostsSee} onChange={(e) => set({ ghostsSee: e.target.checked })} /> 👻 Người chết & người xem thấy ai là nội gián (cả lúc họp, bỏ phiếu)
       </label>
     </div>
   );
