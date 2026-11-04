@@ -250,6 +250,7 @@ export class OfficeScene {
     for (const w of WALLS) this.buildWall(w, layer(w.x0).root, layer(w.x0).stat);
     rbox(staticOut, OFFICE_W + 0.6, 0.12, OFFICE_D + 0.6, '#d9cfc2', OFFICE_W / 2, -0.07, OFFICE_D / 2, 0.04);
     STAIRWAYS.forEach((st, i) => this.buildStairs(st, i, st.lower === 0 ? staticOut : statics[st.lower]));
+    this.buildWells();
     for (const l of LIFTS) this.buildLift(l, layer(l.x0).root, layer(l.x0).stat);
     this.rideCar = liftCar();
     this.rideCar.visible = false;
@@ -373,6 +374,8 @@ export class OfficeScene {
   /** Which floors are drawn; only the floor you are on casts shadows (upper ones would darken it). */
   setFloorView(visible: boolean[], shadowFloor: number) {
     this.levels.forEach((g, f) => (g.visible = visible[f]));
+    // a stairwell's lining only matters while the floor it leads down to isn't drawn
+    for (const w of this.wells) w.g.visible = !!visible[w.lower + 1] && !visible[w.lower];
     if (shadowFloor === this.shadowFloor) return;
     this.shadowFloor = shadowFloor;
     this.levels.forEach((g, f) => {
@@ -438,6 +441,62 @@ export class OfficeScene {
   }
 
   /** One flight: solid steps, a sloped glass balustrade on the open (north) side, click targets. */
+  /**
+   * Looking down a stairwell from upstairs, the floor below isn't drawn — you'd see straight through
+   * to the lawn under the building. Each opening gets a lining (side walls, the wall under the
+   * landing, a floor, and the steps themselves) that is shown only while that lower floor is hidden.
+   */
+  private wells: { lower: number; g: THREE.Group }[] = [];
+  private buildWells() {
+    const wallMat = new THREE.MeshStandardMaterial({ color: '#ddd5c9', roughness: 0.95, side: THREE.DoubleSide });
+    const floorMat = new THREE.MeshStandardMaterial({ color: '#dcd4c8', roughness: 1 });
+    const tread = mat('#c9a27a', { rough: 0.7 });
+    const body = mat('#e8e1d6', { rough: 0.9 });
+    for (const st of STAIRWAYS) {
+      const g = new THREE.Group();
+      g.position.y = st.lower * FLOOR_H; // drawn coords of the storey below
+      g.visible = false;
+      const h = FLOOR_H - 0.01; // all the way up through the cut slab (else a thin strip of lawn shows)
+      const depth = st.z1 - st.z0;
+      const cz = (st.z0 + st.z1) / 2;
+      const len = st.x1 - st.x0;
+      const cx = (st.x0 + st.x1) / 2;
+      const high = st.dir > 0 ? st.x1 : st.x0;
+      // the floor of the storey below, around the flight and out past its foot
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(OFFICE_W, 14), floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set(OFFICE_W / 2, 0.004, OFFICE_D - 7);
+      g.add(floor);
+      const wall = (w: number, d: number, x: number, z: number) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+        m.position.set(x, h / 2, z);
+        g.add(m);
+      };
+      wall(len, 0.06, cx, st.z0 - 0.03); // inner side (toward the hall)
+      wall(0.06, depth + 0.1, high, cz); // under the landing at the top
+      // past the open foot of the flight you can see under the slab: close that part of the
+      // storey below too (its outer walls are not drawn either), or the lawn shows again
+      wall(OFFICE_W, 0.06, OFFICE_W / 2, OFFICE_D - 0.08); // south (outer)
+      wall(OFFICE_W, 0.06, OFFICE_W / 2, OFFICE_D - 14); // north edge of the floor patch
+      wall(0.06, 14, 0.08, OFFICE_D - 7); // west (outer)
+      wall(0.06, 14, OFFICE_W - 0.08, OFFICE_D - 7); // east (outer)
+      // the steps (the real ones belong to the lower floor, hidden from up here — except floor 1's)
+      if (st.lower > 0) {
+        const n = STAIR_STEPS;
+        const run = len / n;
+        const rise = FLOOR_H / n;
+        for (let i = 0; i < n; i++) {
+          const sh = (i + 1) * rise;
+          const x = st.dir < 0 ? st.x1 - (i + 0.5) * run : st.x0 + (i + 0.5) * run;
+          rbox(g, run + 0.002, sh - 0.04, depth, body, x, (sh - 0.04) / 2, cz, 0.005);
+          rbox(g, run + 0.02, 0.04, depth, tread, x, sh - 0.02, cz, 0.008);
+        }
+      }
+      this.group.add(g);
+      this.wells.push({ lower: st.lower, g });
+    }
+  }
+
   private buildStairs(st: Stairway, index: number, stat: THREE.Group) {
     const n = STAIR_STEPS;
     const dx = st.lower * UP_DX; // logical x offset of the floor it starts on
