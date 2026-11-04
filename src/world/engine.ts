@@ -187,6 +187,8 @@ export class World {
   private warmPending = false;
   private shadowTick = 0;
   private quality: GfxQuality = 'high';
+  /** Frames per second at most (0 = every refresh of the screen); battery saver is always 30. */
+  private fpsCap = 60;
   /** People drawn into the shadow map — on battery saver there is none, they get a blob at their feet. */
   private charShadows = true;
   /** Frame pacing: next frame due (ms), and when the last one was drawn. */
@@ -363,6 +365,12 @@ export class World {
     this.setCharShadows(q !== 'eco');
     this.renderer.shadowMap.needsUpdate = true;
     this.resize();
+  }
+
+  /** 60, or 0 for as many frames as the screen shows (120/144 Hz). */
+  setFpsCap(cap: number) {
+    this.fpsCap = cap;
+    this.nextFrameAt = 0;
   }
 
   /** Sets the drawing resolution; false when it was already that. */
@@ -1330,10 +1338,12 @@ export class World {
     // 30 while the window is in the background (people keep the office open beside their work).
     const now = performance.now();
     const focused = document.hasFocus();
-    const gapWant = 1000 / (this.quality === 'eco' ? (focused ? 30 : 20) : focused ? 60 : 30);
+    const fps = this.quality === 'eco' ? (focused ? 30 : 20) : focused ? this.fpsCap || 1000 : 30;
+    const gapWant = 1000 / fps;
     if (now < this.nextFrameAt - 2) return;
     this.nextFrameAt = Math.max(this.nextFrameAt + gapWant, now + gapWant / 2);
-    if (this.lastFrameAt) this.adaptResolution(now - this.lastFrameAt, gapWant, focused);
+    // (uncapped on a 144 Hz screen: only step the resolution down when it can't even hold ~60)
+    if (this.lastFrameAt) this.adaptResolution(now - this.lastFrameAt, Math.max(gapWant, 1000 / 60), focused);
     this.lastFrameAt = now;
     const dt = Math.min(0.1, this.clock.getDelta());
 

@@ -22,6 +22,8 @@ export const FP_LOOK_DEFAULT: FpLook = { sens: 0.6, smooth: true, bob: false };
 export type Phase = 'loading' | 'login' | 'creator' | 'office';
 export type SidePanel = 'chat' | 'people' | 'today' | null;
 export type Quality = 'high' | 'low' | 'eco';
+/** Frame cap: 60, or 0 = as fast as the screen refreshes (120/144 Hz). */
+export type FpsCap = 60 | 0;
 
 export interface Toast {
   id: number;
@@ -64,6 +66,7 @@ export interface OfficeStore {
   unread: number;
   toasts: Toast[];
   quality: Quality;
+  fpsCap: FpsCap;
   /** show the phone controls (thumb stick, use / jump buttons) */
   touch: boolean;
   /** first-person view: look sensitivity (×), smoothing, head bob */
@@ -158,6 +161,7 @@ export const useStore = create<OfficeStore>(() => ({
   unread: 0,
   toasts: [],
   quality: loadPref<Quality>('quality', IS_TOUCH ? 'low' : 'high'),
+  fpsCap: loadPref<FpsCap>('fpsCap', 60),
   touch: (() => {
     try {
       const v = localStorage.getItem('bss-touch-ui');

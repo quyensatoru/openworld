@@ -28,7 +28,7 @@ import {
 import { Net, wsUrl } from './net/socket';
 import { loadPref, loadProfile, saveProfile, savePref } from './profile';
 import { RelayMedia } from './rtc/relay';
-import { getState, nameOf, playerById, serverNow, setState, toast, type FpLook, type Quality } from './store';
+import { getState, nameOf, playerById, serverNow, setState, toast, type FpLook, type FpsCap, type Quality } from './store';
 import { askNotificationPermission, chime, flashTitle, notify } from './ui/notify';
 import { World } from './world/engine';
 
@@ -170,6 +170,7 @@ class Game {
     this.world = world;
     world.interactLabel = (id) => this.moleLabel(id);
     world.setFpLook(getState().fpLook);
+    world.setFpsCap(getState().fpsCap);
     world.serverClock = () => serverNow() / 1000;
     world.beatClock = () => (serverNow() / 1000) * (MUSIC_BPM / 60);
 
@@ -1803,6 +1804,12 @@ class Game {
     savePref('quality', q);
     setState({ quality: q });
     this.world?.setQuality(q);
+  }
+
+  setFpsCap(cap: FpsCap) {
+    savePref('fpsCap', cap);
+    setState({ fpsCap: cap });
+    this.world?.setFpsCap(cap);
   }
 }
 
