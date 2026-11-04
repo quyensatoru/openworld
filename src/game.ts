@@ -114,6 +114,8 @@ class Game {
         },
         onZoneChange: (zone) => {
           this.zoneId = zone;
+          // the werewolf night hush only applies to players — never carry it out of the village
+          if (zone !== 'wolfroom' && !getState().wolf?.me.inGame) this.micHold(false);
           this.patchMe({ zone });
           this.syncAutoStatus();
           this.rtc?.evaluate();
@@ -559,6 +561,8 @@ class Game {
   }
 
   private onWelcome(m: Extract<ServerMsg, { t: 'welcome' }>) {
+    // a (re)connect: drop any night hush from before; the fresh game view right after re-applies it
+    this.micHold(false);
     const players: Record<string, PlayerState> = {};
     for (const p of m.players) players[p.id] = p;
     const team = Object.fromEntries(m.team.map((t) => [t.id, t]));
@@ -1310,7 +1314,7 @@ class Game {
     this.wolfBadges = new Set(badges.keys());
     w.office.updateWolfBoard(v, serverNow());
     // asleep at night: nobody alive can hear you, so don't even send
-    this.rtc?.setHold(!!v && v.me.inGame && v.me.voice === 'listen');
+    this.micHold(!!v && v.me.inGame && v.me.voice === 'listen');
     const night = !!v && (v.phase === 'night' || v.phase === 'witch' || v.phase === 'reveal');
     w.office.wolfFx.setNight(night ? 1 : 0);
     if (this.zoneId === 'wolfroom') this.onCinemaZone();
@@ -1767,6 +1771,12 @@ class Game {
     startOfDay.setHours(0, 0, 0, 0);
     const done = Object.values(s.tasks).filter((t) => t.doneAt && t.doneAt >= startOfDay.getTime()).length;
     this.world?.office.updateWhiteboard({ online: Object.keys(s.players).length + (s.me ? 1 : 0), doneToday: done, officeName: s.officeName });
+  }
+
+  /** Ma Sói at night: a sleeping villager's mic sends nothing (shown on the mic button). */
+  private micHold(on: boolean) {
+    this.rtc?.setHold(on);
+    if (getState().micHeld !== on) setState({ micHeld: on });
   }
 
   // ------------------------------------------------------------------ phone controls

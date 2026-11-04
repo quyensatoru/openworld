@@ -300,7 +300,8 @@ export class MoleGame {
     const old = this.gone.get(id);
     if (old) clearTimeout(old);
     this.gone.delete(id);
-    if (this.get(id)) this.sendTo(id);
+    // always: after a server restart the page may still show a game that no longer exists
+    this.sendTo(id);
   }
 
   // ------------------------------------------------------------------ actions

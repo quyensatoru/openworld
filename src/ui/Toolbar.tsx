@@ -28,6 +28,7 @@ export function Toolbar() {
   const unread = useStore((s) => s.unread);
   const viewMode = useStore((s) => s.viewMode);
   const touch = useStore((s) => s.touch);
+  const micHeld = useStore((s) => s.micHeld);
   const ambience = useStore((s) => s.ambience);
   const [pop, setPop] = useState<Pop>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -164,7 +165,11 @@ export function Toolbar() {
       )}
 
       <div className="toolbar glass">
-        <button className={`tb ${media.mic ? 'media-on' : 'media-off'}${meSpeaking ? ' speaking' : ''}`} title={media.mic ? 'Tắt mic' : 'Bật mic'} onClick={() => game.toggleMic()}>
+        <button
+          className={`tb ${media.mic ? 'media-on' : 'media-off'}${meSpeaking ? ' speaking' : ''}${media.mic && micHeld ? ' held' : ''}`}
+          title={media.mic ? (micHeld ? 'Mic tạm ngắt — đang là ban đêm trong Ma Sói, không ai nghe được bạn' : 'Tắt mic') : 'Bật mic'}
+          onClick={() => game.toggleMic()}
+        >
           {Icon.mic(media.mic)}
         </button>
         <button className={`tb opt ${media.cam ? 'media-on' : 'media-off'}`} title={media.cam ? 'Tắt camera' : 'Bật camera'} onClick={() => game.toggleCam()}>

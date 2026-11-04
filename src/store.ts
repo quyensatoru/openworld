@@ -119,6 +119,8 @@ export interface OfficeStore {
   moleFakeDone: string[];
   /** watching the security cameras (Phòng An Ninh) */
   cctv: boolean;
+  /** the mic is on but held (Ma Sói night: villagers sleep) */
+  micHeld: boolean;
   /** A big dramatic moment on screen (meeting called, you got laid off…). */
   moleSplash: { kind: 'report' | 'bell' | 'killed' | 'kill'; by?: string; body?: string | null; at: number } | null;
   wolfSpeech: boolean;
@@ -206,6 +208,7 @@ export const useStore = create<OfficeStore>(() => ({
   moleTask: null,
   moleFakeDone: [],
   cctv: false,
+  micHeld: false,
   moleSplash: null,
   wolfSpeech: loadPref('wolfSpeech', true),
   activity: {},

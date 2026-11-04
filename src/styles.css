@@ -5524,3 +5524,15 @@ body {
 .office.touch:has(.places, .more-menu) .t-right {
   display: none;
 }
+
+/* mic on but held (Ma Sói night): a sleepy badge so it's obvious nobody hears you */
+.tb.held {
+  opacity: 0.6;
+}
+.tb.held::after {
+  content: '😴';
+  position: absolute;
+  right: -2px;
+  top: -4px;
+  font-size: 13px;
+}

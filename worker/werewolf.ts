@@ -326,7 +326,8 @@ export class Werewolf {
     const old = this.gone.get(id);
     if (old) clearTimeout(old);
     this.gone.delete(id);
-    if (this.get(id) || this.phase !== 'lobby') this.sendTo(id);
+    // always: after a server restart the page may still hold an old game (and a muted night mic)
+    this.sendTo(id);
   }
 
   // ------------------------------------------------------------------ actions
