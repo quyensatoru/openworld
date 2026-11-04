@@ -97,8 +97,11 @@ export class BarFx {
   private flicker = 0;
   private tmp = new THREE.Color();
 
+  /** everything here (hidden while the camera is in the cinema, behind the wall) */
+  readonly root: THREE.Group;
+
   constructor(up: THREE.Group) {
-    const root = new THREE.Group();
+    const root = (this.root = new THREE.Group());
     root.name = 'bar-fx';
     up.add(root);
 

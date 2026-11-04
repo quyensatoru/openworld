@@ -1,10 +1,11 @@
 // The 3D world: renderer, camera rig, input, local + remote players, avatars and name tags.
 import * as THREE from 'three';
-import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { CSS2DRenderer, type CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { CSS3DRenderer } from 'three/addons/renderers/CSS3DRenderer.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { AvatarConfig } from '../../shared/avatar';
 import {
+  CINEMA,
   CINEMA_SCREEN,
   FLOOR_H,
   FURNITURE,
@@ -81,6 +82,10 @@ interface Sample {
   anim: AnimState;
 }
 
+/** The cinema on the drawn (visual) x axis. */
+const CINEMA_VX0 = visualX(CINEMA.x0 + 0.5) - 0.5;
+const CINEMA_VX1 = visualX(CINEMA.x1 - 0.5) + 0.5;
+
 interface PlayerView {
   id: string;
   isMe: boolean;
@@ -111,6 +116,8 @@ interface PlayerView {
   /** Animation time not yet given to the avatar (skipped frames: off screen / far away). */
   animAcc: number;
   lodTick: number;
+  /** outside the camera's view last frame (not drawn, not animated) */
+  offscreen: boolean;
 }
 
 /** "Đẹp": full resolution; "Nhẹ": 1× resolution, smaller shadow map; "Tiết kiệm pin": also no shadow map (a blob under people). */
@@ -157,6 +164,14 @@ function isTyping(e: KeyboardEvent): boolean {
 export class World {
   readonly renderer: THREE.WebGLRenderer;
   private labels: CSS2DRenderer;
+  private labelSize = { w: 1, h: 1 };
+  private tagObjs: CSS2DObject[] = [];
+  private tagShown: { el: HTMLElement; d: number }[] = [];
+  private tagPos = new THREE.Vector3();
+  /** what the camera sees this frame (people are culled by hand, see cullPeople) */
+  private frustum = new THREE.Frustum();
+  private viewProj = new THREE.Matrix4();
+  private viewSphere = new THREE.Sphere();
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(45, 1, 0.1, 320);
   readonly office: OfficeScene;
@@ -429,6 +444,7 @@ export class World {
     const h = this.container.clientHeight || window.innerHeight;
     this.renderer.setSize(w, h);
     this.labels.setSize(w, h);
+    this.labelSize = { w, h };
     this.css3d.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -869,6 +885,7 @@ export class World {
       blob,
       animAcc: 0,
       lodTick: Math.random() < 0.5 ? 0 : 1,
+      offscreen: false,
     };
     this.players.set(p.id, v);
     this.loadAvatar(v, p.avatar);
@@ -1499,7 +1516,7 @@ export class World {
       // physics); people far away move every other frame — at that size nobody can tell
       v.animAcc = Math.min(0.1, v.animAcc + dt);
       if (!v.isMe) {
-        if (!v.holder.visible) continue;
+        if (!v.holder.visible || v.offscreen) continue;
         v.lodTick ^= 1;
         if (v.lodTick && this.camera.position.distanceToSquared(v.holder.position) > 26 * 26) continue;
       }
@@ -1556,6 +1573,7 @@ export class World {
       this.me.blob.visible = !this.charShadows && !!this.me.avatar && !fp && !ducked;
       this.me.tag.object.visible = !fp && !ducked;
     }
+    const hideBar = this.cullPeople();
 
     // lighting: time of day + cinema darkness for whoever sits in the dark
     this.todTimer -= dt;
@@ -1647,7 +1665,7 @@ export class World {
     if (this.myFloor === 4 && this.me) this.office.f5.setViewer(this.me.x, this.me.z, !!this.vision?.seeAll);
     else this.office.f5.setViewer(null, 0, true);
     this.office.tick(dt, this.beatClock(), this.myFloor);
-    this.staff.update(dt, this.serverClock(), this.myFloor === 1);
+    this.staff.update(dt, this.serverClock(), this.myFloor === 1, { inView: this.inView, cam: this.camera.position, hideBar });
 
     if (this.warmPending) {
       this.warmPending = false;
@@ -1663,8 +1681,80 @@ export class World {
     this.renderer.shadowMap.needsUpdate = this.shadowTick === 0 && this.dim < 0.9 && this.dark < 0.9;
     if (this.cssScene.children.length) this.css3d.render(this.cssScene, this.camera);
     this.renderer.render(this.scene, this.camera);
-    this.labels.render(this.scene, this.camera);
+    this.renderTags();
   };
+
+  /** Where the camera looks this frame (after it moved). */
+  private updateFrustum() {
+    this.camera.updateMatrixWorld();
+    this.viewProj.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.viewProj);
+  }
+
+  /** Someone standing at `p` (feet), `h` tall, is on screen. Generous — a ball round the whole body
+   *  plus a metre — so nobody pops in at the edges and the shadow of someone just off screen falls. */
+  private inView = (p: THREE.Vector3, h: number): boolean => {
+    this.viewSphere.center.set(p.x, p.y + h * 0.5, p.z);
+    this.viewSphere.radius = h * 0.6 + 1;
+    return this.frustum.intersectsSphere(this.viewSphere);
+  };
+
+  /**
+   * three.js never frustum-culls the characters (skinned bounds are unreliable while they animate),
+   * so everyone on the floor was drawn and animated every frame — even behind the camera, or the
+   * bar's eight staff from inside the cinema. Cull whole people here instead.
+   * Returns true when the camera is in the cinema (the bar behind its wall is hidden).
+   */
+  private cullPeople(): boolean {
+    this.updateFrustum();
+    const all = !!this.cctv; // the security cameras look elsewhere
+    for (const v of this.players.values()) {
+      if (v.isMe || !v.avatar) continue;
+      const seen = all || this.inView(v.holder.position, v.avatar.height || 1.8);
+      v.offscreen = !seen;
+      v.avatar.root.visible = seen;
+    }
+    const c = this.camera.position;
+    const inCinema = this.myFloor === 1 && c.x > CINEMA_VX0 && c.x < CINEMA_VX1 && c.z > CINEMA.z0 && c.z < CINEMA.z1;
+    this.office.bar.root.visible = !inCinema;
+    return inCinema;
+  }
+
+  /**
+   * Name tags, placed here. CSS2DRenderer walked the whole building (4000+ objects on every floor)
+   * three times a frame to find these few dozen labels.
+   */
+  private renderTags() {
+    const objs = this.tagObjs;
+    objs.length = 0;
+    for (const v of this.players.values()) objs.push(v.tag.object);
+    this.staff.tagObjects(objs);
+    const hw = this.labelSize.w / 2;
+    const hh = this.labelSize.h / 2;
+    const dom = this.labels.domElement;
+    const shown = this.tagShown;
+    shown.length = 0;
+    const p = this.tagPos;
+    for (const o of objs) {
+      const el = o.element;
+      let vis = true;
+      for (let a: THREE.Object3D | null = o; a && vis; a = a.parent) vis = a.visible;
+      if (vis) {
+        p.setFromMatrixPosition(o.matrixWorld).applyMatrix4(this.viewProj);
+        vis = p.z >= -1 && p.z <= 1;
+      }
+      el.style.display = vis ? '' : 'none';
+      if (!vis) continue;
+      const cx = 100 * o.center.x;
+      const cy = 100 * o.center.y;
+      el.style.transform = `translate(${-cx}%, ${-cy}%) translate(${p.x * hw + hw}px, ${-p.y * hh + hh}px)`;
+      if (el.parentNode !== dom) dom.appendChild(el);
+      shown.push({ el, d: p.setFromMatrixPosition(o.matrixWorld).distanceToSquared(this.camera.position) });
+    }
+    // nearer tags on top
+    shown.sort((a, b) => a.d - b.d);
+    for (let i = 0; i < shown.length; i++) shown[i].el.style.zIndex = String(shown.length - i);
+  }
 
   /** Glance only at someone who is talking nearby (constant head-turning toward neighbours looked odd). */
   private pickLookTarget(v: PlayerView): THREE.Vector3 | null {
@@ -1784,7 +1874,8 @@ export class World {
    */
   private warmRender() {
     const o = this.office;
-    const holders = this.staff.holders();
+    // everything, culled or not (the point is to get every shader and texture onto the GPU)
+    const holders = [...this.staff.holders(), ...this.staff.roots(), o.bar.root];
     const prevHolders = holders.map((h) => h.visible);
     o.setFloorView([o.downstairs.visible, true, true, true, true], 1);
     holders.forEach((h) => (h.visible = true));

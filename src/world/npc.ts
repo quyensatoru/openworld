@@ -10,6 +10,15 @@ import type { Avatar } from './avatar/types';
 import { VrmAvatar } from './avatar/vrm-avatar';
 import { blobShadow } from './blob';
 import { NameTag } from './overlays';
+import type { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+/** What the camera sees this frame (from the engine). */
+export interface StaffView {
+  inView(p: THREE.Vector3, h: number): boolean;
+  cam: THREE.Vector3;
+  /** the camera is in the cinema: the bar is behind a wall */
+  hideBar: boolean;
+}
 
 interface Pose {
   x: number;
@@ -35,6 +44,9 @@ interface Staff {
   speed: number;
   lastSec: number;
   override: { x: number; until: number; line: string | null } | null;
+  /** animation time not yet given to the avatar (off screen / far away) */
+  animAcc: number;
+  lod: number;
 }
 
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
@@ -173,7 +185,7 @@ export class BarStaff {
     tag.object.position.set(0, vrm ? vrm.height + 0.28 : 1.95 * c.height, 0);
     holder.add(tag.object);
     holder.add(blobShadow()); // shown on battery saver only (no shadow map then)
-    const s: Staff = { name, role, cfg: c, pose, emoteAt, holder, avatar: null, tag, x: 0, z: 0, speed: 0, lastSec: -1, override: null, vrm };
+    const s: Staff = { name, role, cfg: c, pose, emoteAt, holder, avatar: null, tag, x: 0, z: 0, speed: 0, lastSec: -1, override: null, vrm, animAcc: 0, lod: this.staff.length % 2 };
     this.staff.push(s);
     if (!vrm)
       avatars.create(c).then((av) => {
@@ -194,6 +206,16 @@ export class BarStaff {
   /** All character holders (for a one-off warm-up render). */
   holders(): THREE.Group[] {
     return this.staff.map((s) => s.holder);
+  }
+
+  /** The loaded characters (culled one by one while off screen). */
+  roots(): THREE.Object3D[] {
+    return this.staff.flatMap((s) => (s.avatar ? [s.avatar.root] : []));
+  }
+
+  /** Name tags (placed by the engine). */
+  tagObjects(out: CSS2DObject[]) {
+    for (const s of this.staff) out.push(s.tag.object);
   }
 
   private async loadVrms(warm?: (root: THREE.Object3D) => Promise<void>) {
@@ -236,14 +258,22 @@ export class BarStaff {
     b.override = { x: Math.min(96, Math.max(88.4, x)), until: now + 9, line };
   }
 
-  /** `now`: shared clock in seconds. `show`: you are upstairs (otherwise they are hidden and idle). */
-  update(dt: number, now: number, show: boolean) {
-    if (show !== this.visible) {
-      this.visible = show;
-      for (const s of this.staff) s.holder.visible = show;
-      if (show && !this.loading) void this.preload();
+  /**
+   * `now`: shared clock in seconds. `show`: you are upstairs (otherwise they are hidden and idle).
+   * Eight people, six of them detailed VRoid models: only the ones on screen are drawn and animated,
+   * the far ones every other frame, and none while the camera is in the cinema.
+   */
+  update(dt: number, now: number, show: boolean, view?: StaffView) {
+    const on = show && !view?.hideBar;
+    if (on !== this.visible) {
+      this.visible = on;
+      for (const s of this.staff) {
+        s.holder.visible = on;
+        s.lastSec = -1; // back in sight: snap to where the routine is now
+      }
     }
-    if (!show) return;
+    if (show && !this.loading && !this.loadingDone) void this.preload();
+    if (!on) return;
     for (const s of this.staff) {
       let p = s.pose(now);
       const o = s.override;
@@ -284,7 +314,15 @@ export class BarStaff {
         s.lastSec = sec;
       }
       const anim: AnimState = s.speed > 0.15 ? 'walk' : 'idle';
-      s.avatar?.update(dt, { speed: s.speed, anim, seatKind: null, lookAt: null, talking: false });
+      const seen = !view || view.inView(s.holder.position, s.vrm?.height ?? 1.75 * s.cfg.height);
+      if (s.avatar) s.avatar.root.visible = seen;
+      s.animAcc = Math.min(0.1, s.animAcc + dt);
+      if (!seen) continue;
+      s.lod ^= 1;
+      if (s.lod && view && view.cam.distanceToSquared(s.holder.position) > 12 * 12) continue;
+      const adt = s.animAcc;
+      s.animAcc = 0;
+      s.avatar?.update(adt, { speed: s.speed, anim, seatKind: null, lookAt: null, talking: false });
     }
   }
 }
