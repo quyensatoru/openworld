@@ -448,6 +448,11 @@ export class OfficeScene {
    * landing, a floor, and the steps themselves) that is shown only while that lower floor is hidden.
    */
   private wells: { lower: number; g: THREE.Group }[] = [];
+  /** Warm-up: the stairwell linings too (normally shown only while the floor below is hidden — so
+   *  their shader used to compile on the spot, a freeze the moment you reached the next floor). */
+  showWells() {
+    for (const w of this.wells) w.g.visible = true;
+  }
   private buildWells() {
     const wallMat = new THREE.MeshStandardMaterial({ color: '#ddd5c9', roughness: 0.95, side: THREE.DoubleSide });
     const floorMat = new THREE.MeshStandardMaterial({ color: '#dcd4c8', roughness: 1 });

@@ -223,9 +223,11 @@ export class BarStaff {
       if (!s.vrm || s.avatar) continue;
       try {
         const av = await VrmAvatar.load(s.vrm.url, s.vrm.height, this.lookTarget);
+        // shaders and textures first, then into the scene: whoever is in the bar sees her appear
+        // ready, instead of the frame that first draws her compiling and uploading everything
+        await warm?.(av.root);
         s.avatar = av;
         s.holder.add(av.root);
-        await warm?.(av.root);
       } catch (err) {
         // fall back to the built-in body
         console.warn('[staff] VRM failed, using the default body', s.name, err);

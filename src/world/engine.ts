@@ -1863,7 +1863,17 @@ export class World {
     await this.prewarm(this.office.top);
     await this.prewarm(this.office.roof4);
     await this.prewarm(this.office.roof5);
-    await this.staff.preload((root) => this.prewarm(root));
+    // draw the floors once now: the staff take a while to arrive (six VRoid models), and whoever
+    // goes up before that froze for a second on the shaders compiled there and then
+    this.warmPending = !this.disposed;
+    let first = true;
+    await this.staff.preload(async (root) => {
+      await this.prewarm(root);
+      // the shadow shaders of a skinned, morphing character are only made by a shadow pass: draw
+      // one as soon as the first model is in (the others reuse them — same kind of mesh)
+      if (first) this.warmPending = !this.disposed;
+      first = false;
+    });
     this.warmPending = !this.disposed;
   }
 
@@ -1878,6 +1888,7 @@ export class World {
     const holders = [...this.staff.holders(), ...this.staff.roots(), o.bar.root];
     const prevHolders = holders.map((h) => h.visible);
     o.setFloorView([o.downstairs.visible, true, true, true, true], 1);
+    o.showWells();
     holders.forEach((h) => (h.visible = true));
     const cam = new THREE.PerspectiveCamera(70, 1.6, 0.5, 300);
     cam.position.set(OFFICE_W / 2, 36, OFFICE_D + 18);
