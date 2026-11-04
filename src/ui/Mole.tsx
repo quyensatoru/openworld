@@ -102,7 +102,7 @@ function Lobby({ v }: { v: MoleView }) {
         </button>
       </div>
       {cfg && isHost && <Settings v={v} />}
-      {rules && <Rules />}
+      {rules && <Rules s={v.settings} />}
     </div>
   );
 }
@@ -140,6 +140,10 @@ function Settings({ v }: { v: MoleView }) {
         <span>⏰ Deadline</span>
         <Seg value={s.minutes} options={[[0, 'Không'], [7, '7p'], [10, '10p'], [15, '15p']]} onPick={(x) => set({ minutes: x })} />
       </div>
+      <div className="wp-row" title="Giết hết: nội gián phải loại hết nhân viên. Bằng nhau (luật Among Us): thắng ngay khi số nội gián bằng số nhân viên còn sống">
+        <span>🔪 Nội gián thắng</span>
+        <Seg value={s.moleWin} options={[['all', 'Giết hết'], ['parity', 'Bằng nhau']]} onPick={(x) => set({ moleWin: x })} />
+      </div>
       <div className="wp-row">
         <span>📊 Tiến độ</span>
         <Seg value={s.taskBar} options={[['live', 'Liên tục'], ['meetings', 'Chỉ khi họp']]} onPick={(x) => set({ taskBar: x })} />
@@ -147,18 +151,21 @@ function Settings({ v }: { v: MoleView }) {
       <label className="wp-row check">
         <input type="checkbox" checked={s.reveal} onChange={(e) => set({ reveal: e.target.checked })} /> Cho biết người bị trục xuất có phải nội gián không
       </label>
+      <label className="wp-row check" title="Tắt: người đã chết và người đứng xem chỉ biết vai của chính mình (và người bị trục xuất nếu bật ô trên) cho tới hết ván">
+        <input type="checkbox" checked={s.ghostsSee} onChange={(e) => set({ ghostsSee: e.target.checked })} /> 👻 Người chết & người xem biết vai mọi người
+      </label>
     </div>
   );
 }
 
-function Rules() {
+function Rules({ s }: { s: MoleView['settings'] }) {
   return (
     <div className="wp-rules">
       <p>
         <b>👔 Nhân viên</b> chạy giữa các phòng làm nhiệm vụ (vòng vàng trên sàn). Thanh tiến độ đầy, hoặc lôi ra hết nội gián là thắng.
       </p>
       <p>
-        <b>🕵️ Nội gián</b> giả vờ làm việc, lén giết đồng nghiệp khi đứng sát (Q), cúp điện, khoá cửa, gây quá tải server. Thắng khi số nội gián bằng số nhân viên còn lại.
+        <b>🕵️ Nội gián</b> giả vờ làm việc, lén giết đồng nghiệp khi đứng sát (Q), cúp điện, khoá cửa, gây quá tải server. {s.moleWin === 'parity' ? 'Thắng khi số nội gián bằng số nhân viên còn sống.' : 'Thắng khi loại hết nhân viên.'}
       </p>
       <p>
         <b>📣 Họp</b>: thấy xác thì báo cáo (R), hoặc bấm chuông giữa Phòng Họp (mỗi người 1 lần). Cả tầng nghe nhau qua mic, rồi bỏ phiếu — phiếu hoà hoặc bỏ qua nhiều thì không ai bị loại.

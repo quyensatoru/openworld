@@ -223,7 +223,7 @@ const CRIT_B = [272.35, 20.9];
   mole.send({ t: 'mole', m: { a: 'kill', target: victim.cid } });
   const dead = await victim.wait((m) => m.t === 'mole' && !m.v.me.alive, 3000);
   ok(!!dead && dead.v.bodies.some((b) => b.id === victim.cid), 'lay-off → the victim is out and leaves a body');
-  ok(!!dead && dead.v.players.every((p) => p.role), 'ghosts see every role');
+  ok(!!dead && dead.v.players.filter((p) => p.alive).every((p) => !p.role), "ghosts don't see the living players' roles (host setting off by default)");
   // ghosts are not heard by the living
   for (const c of P) c.clear();
   victim.bin([1, 3, 3, 3]);

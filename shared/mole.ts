@@ -375,8 +375,13 @@ export interface MoleSettings {
   reveal: boolean;
   /** the shared progress bar: live, or only refreshed at meetings (harder to tell who really works) */
   taskBar: 'live' | 'meetings';
+  /** the dead and onlookers see everyone's role (off: they could pass it on in chat / out loud) */
+  ghostsSee: boolean;
+  /** moles win once every employee is out ('all'), or as soon as they are as many as the employees
+   *  left ('parity', the Among Us rule) */
+  moleWin: 'all' | 'parity';
 }
-export const MOLE_DEFAULTS: MoleSettings = { moles: 0, minutes: 0, killCd: 30, tasks: 5, reveal: true, taskBar: 'live' };
+export const MOLE_DEFAULTS: MoleSettings = { moles: 0, minutes: 0, killCd: 30, tasks: 5, reveal: true, taskBar: 'live', ghostsSee: false, moleWin: 'all' };
 export const MOLE_MIN = 4;
 export const MOLE_MAX = 12;
 export const MOLE_KILL_RANGE = 2.2;
@@ -398,7 +403,7 @@ export interface MolePlayer {
   id: string;
   name: string;
   alive: boolean;
-  /** known: yourself, fellow moles, everyone once you're out or the game is over (or reveal on vote-out) */
+  /** known: yourself, fellow moles, the voted-out (settings.reveal), everyone once you're out (settings.ghostsSee) or the game is over */
   role: MoleRole | null;
   out?: 'killed' | 'voted' | 'left';
 }

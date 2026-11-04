@@ -191,7 +191,9 @@ export class MoleGame {
   // ------------------------------------------------------------------ views
   private viewFor(id: string): MoleView {
     const me = this.get(id);
-    const knows = (p: P) => p.id === id || this.phase === 'end' || !me || !me.alive || (me.role === 'mole' && p.role === 'mole') || (p.out === 'voted' && this.settings.reveal);
+    // the dead and onlookers only get to see every card when the host allows it
+    const ghost = (!me || !me.alive) && this.settings.ghostsSee;
+    const knows = (p: P) => p.id === id || this.phase === 'end' || ghost || (me?.role === 'mole' && p.role === 'mole') || (p.out === 'voted' && this.settings.reveal);
     const players: MolePlayer[] = this.players.map((p) => ({ id: p.id, name: p.name, alive: p.alive, role: knows(p) ? p.role : null, out: p.out }));
     const crew = me?.role === 'crew';
     return {
@@ -334,6 +336,8 @@ export class MoleGame {
         if (s.tasks != null) n.tasks = Math.max(3, Math.min(7, Math.round(Number(s.tasks)) || 5));
         if (typeof s.reveal === 'boolean') n.reveal = s.reveal;
         if (s.taskBar === 'live' || s.taskBar === 'meetings') n.taskBar = s.taskBar;
+        if (typeof s.ghostsSee === 'boolean') n.ghostsSee = s.ghostsSee;
+        if (s.moleWin === 'all' || s.moleWin === 'parity') n.moleWin = s.moleWin;
         this.settings = n;
         return this.broadcast();
       }
@@ -655,7 +659,8 @@ export class MoleGame {
     const crew = this.aliveCrew().length;
     if (!moles) return this.finish('crew', '🎯 Tất cả nội gián đã bị lộ mặt!');
     if (this.progress() >= 1) return this.finish('crew', '✅ Dự án hoàn thành — mọi nhiệm vụ đã xong!');
-    if (moles >= crew) return this.finish('mole', '🔪 Nội gián đã giết đủ người — công ty thất thủ!');
+    if (!crew) return this.finish('mole', '🔪 Nội gián đã loại hết nhân viên — công ty thất thủ!');
+    if (this.settings.moleWin === 'parity' && moles >= crew) return this.finish('mole', '🔪 Nội gián đã đông bằng nhân viên — công ty thất thủ!');
     return false;
   }
 
