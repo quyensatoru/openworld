@@ -2994,6 +2994,13 @@ input[type='range'] {
   font-weight: 800;
   font-size: 13.5px;
 }
+.wp-novoice {
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+  line-height: 1.45;
+  color: #ffcf8a;
+}
 .wp-foot {
   display: flex;
   align-items: center;
@@ -5158,7 +5165,7 @@ body {
 /* thumb stick */
 .t-stick {
   position: absolute;
-  left: max(18px, env(safe-area-inset-left));
+  left: 18px;
   bottom: 92px;
   z-index: 6;
   width: 128px;
@@ -5187,7 +5194,7 @@ body {
 /* use / jump */
 .t-right {
   position: absolute;
-  right: max(18px, env(safe-area-inset-right));
+  right: 18px;
   bottom: 92px;
   z-index: 6;
   display: grid;
@@ -5268,6 +5275,48 @@ body {
   margin-left: 6px;
   color: var(--muted);
 }
+/* phone on its side in a browser tab: full screen (top right, beside the map button) */
+.t-fs {
+  position: absolute;
+  top: 12px;
+  right: 104px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.t-fs button {
+  padding: 9px 4px 9px 14px;
+}
+.t-fs .x {
+  padding: 9px 12px 9px 8px;
+  color: var(--muted);
+}
+/* full screen / home-screen app: the HUD keeps clear of the notch, the camera hole and the home bar
+   (the 3D view itself still fills the whole screen) */
+.office.touch .hud {
+  top: env(safe-area-inset-top);
+  right: env(safe-area-inset-right);
+  bottom: env(safe-area-inset-bottom);
+  left: env(safe-area-inset-left);
+}
+.install-help ol {
+  margin: 14px 0;
+  padding-left: 22px;
+  line-height: 1.6;
+}
+.install-help li + li {
+  margin-top: 6px;
+}
+.share-ico {
+  width: 15px;
+  height: 18px;
+  vertical-align: -3px;
+  color: var(--accent);
+}
 
 /* HUD pieces that sat where the thumbs go */
 .office.touch .minimap-btn {
@@ -5292,7 +5341,7 @@ body {
 }
 .office.touch .mole-actions {
   bottom: 232px;
-  right: max(18px, env(safe-area-inset-right));
+  right: 18px;
 }
 .office.touch .ma-btn {
   width: 66px;
@@ -5324,7 +5373,7 @@ body {
 /* small screens (phones, either way round) */
 @media (max-width: 720px), (max-height: 500px) {
   .toolbar {
-    bottom: max(10px, env(safe-area-inset-bottom));
+    bottom: 10px;
     padding: 5px;
   }
   .tb {

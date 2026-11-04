@@ -2,7 +2,7 @@
 // night overlay ("you are asleep") and the end banner.
 import { useEffect, useRef, useState } from 'react';
 import { DAY_CHOICES, PHASE_LABEL, ROLE_META, TEAM_LABEL, WOLF_MAX, WOLF_MIN, isWolf, rolesFor, type Special, type WolfMsg, type WolfPlayer, type WolfRole, type WolfView } from '../../shared/werewolf';
-import { game } from '../game';
+import { game, vietnameseVoice } from '../game';
 import { serverNow, setState, useStore } from '../store';
 import { AvatarDot } from './common';
 
@@ -506,27 +506,69 @@ const VOICE: Record<WolfView['me']['voice'], string> = {
   lovers: '💘 Chỉ người yêu của bạn nghe được bạn',
 };
 
+/** The device's Vietnamese voice for the game master (re-checked as the voice list loads). */
+function useViVoice(): SpeechSynthesisVoice | null | undefined {
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    const f = () => redraw((n) => n + 1);
+    window.addEventListener('bss-voices', f);
+    const t = setTimeout(f, 1500); // Chrome's first getVoices() is often empty and no event follows
+    return () => {
+      window.removeEventListener('bss-voices', f);
+      clearTimeout(t);
+    };
+  }, []);
+  return vietnameseVoice();
+}
+
+/** Where to get a Vietnamese voice on this kind of device. */
+function voiceHelp(): string {
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua))
+    return 'Cài thêm: mở Cài đặt, tìm "Chuyển văn bản thành giọng nói" → ⚙️ cạnh "Dịch vụ của Google" → Cài đặt dữ liệu giọng nói → Tiếng Việt, rồi mở lại trang.';
+  if (/iPhone|iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1))
+    return 'Cài thêm: Cài đặt → Trợ năng → Nội dung được đọc → Giọng nói → Tiếng Việt → tải giọng Linh, rồi mở lại trang.';
+  if (/Windows/i.test(ua))
+    return /Edg\//.test(ua)
+      ? 'Cài thêm: Cài đặt Windows → Thời gian và ngôn ngữ → Giọng nói → Thêm giọng nói → Tiếng Việt, rồi mở lại trình duyệt.'
+      : 'Mở bằng Microsoft Edge (có sẵn giọng tiếng Việt tự nhiên), hoặc cài: Cài đặt Windows → Thời gian và ngôn ngữ → Giọng nói → Thêm giọng nói → Tiếng Việt, rồi mở lại trình duyệt.';
+  if (/Macintosh/i.test(ua)) return 'Cài thêm: Cài đặt hệ thống → Trợ năng → Nội dung được đọc → Giọng hệ thống → Quản lý giọng nói → Tiếng Việt (Linh), rồi mở lại trình duyệt.';
+  return 'Cài giọng tiếng Việt cho hệ điều hành (chuyển văn bản thành giọng nói) rồi mở lại trình duyệt.';
+}
+
 function Footer({ v }: { v: WolfView }) {
   const mic = useStore((s) => s.media.mic);
   const speech = useStore((s) => s.wolfSpeech);
   const me = useStore((s) => s.me?.id);
+  const voice = useViVoice();
   return (
-    <div className="wp-foot">
-      <span className={`wp-voice ${v.me.voice}`}>{mic ? VOICE[v.me.voice] : '🔇 Mic đang tắt'}</span>
-      {!mic && (
-        <button className="btn tiny" onClick={() => void game.toggleMic()}>
-          Bật mic
-        </button>
+    <>
+      {speech && voice === null && (
+        <div className="wp-novoice">
+          🔇 Máy này chưa có giọng đọc tiếng Việt nên quản trò đang im lặng (giọng khác đọc tiếng Việt sẽ rất khó nghe). {voiceHelp()}
+        </div>
       )}
-      <button className={`wp-tog${speech ? ' on' : ''}`} onClick={() => game.setWolfSpeech(!speech)} title="Quản trò đọc to diễn biến (cần giọng tiếng Việt trên máy)">
-        {speech ? '🔊' : '🔈'} Quản trò
-      </button>
-      {v.host === me && v.phase !== 'lobby' && v.phase !== 'end' && (
-        <button className="wp-tog danger" onClick={() => confirm('Dừng ván Ma Sói này?') && game.wolf({ a: 'abort' })}>
-          ⛔
+      <div className="wp-foot">
+        <span className={`wp-voice ${v.me.voice}`}>{mic ? VOICE[v.me.voice] : '🔇 Mic đang tắt'}</span>
+        {!mic && (
+          <button className="btn tiny" onClick={() => void game.toggleMic()}>
+            Bật mic
+          </button>
+        )}
+        <button
+          className={`wp-tog${speech ? ' on' : ''}`}
+          onClick={() => game.setWolfSpeech(!speech)}
+          title={voice ? `Quản trò đọc to diễn biến — giọng ${voice.name}` : 'Quản trò đọc to diễn biến (cần giọng tiếng Việt trên máy)'}
+        >
+          {speech ? '🔊' : '🔈'} Quản trò
         </button>
-      )}
-    </div>
+        {v.host === me && v.phase !== 'lobby' && v.phase !== 'end' && (
+          <button className="wp-tog danger" onClick={() => confirm('Dừng ván Ma Sói này?') && game.wolf({ a: 'abort' })}>
+            ⛔
+          </button>
+        )}
+      </div>
+    </>
   );
 }
 

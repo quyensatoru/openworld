@@ -1,8 +1,10 @@
 // Phone / tablet controls: a thumb stick (bottom-left), a "use" button that does whatever E would
-// do (bottom-right, with what it does written above it), jump, and a hint to turn the phone sideways.
+// do (bottom-right, with what it does written above it), jump, a hint to turn the phone sideways and,
+// once it is sideways, full screen (the browser's bars eat half of a landscape phone).
 import { useEffect, useRef, useState } from 'react';
 import { game } from '../game';
 import { setState, useStore } from '../store';
+import { canFullscreen, enterFullscreen, isFullscreen, isInstalled, isIos, isLandscape, onFullscreenChange } from './fullscreen';
 
 
 const R = 52; // how far the knob travels (px)
@@ -60,6 +62,7 @@ export function TouchControls() {
   const busy = useStore((s) => s.kanbanOpen || s.creatorOpen || s.settingsOpen || s.arcadeOpen);
   // Nội Gián: the meeting / vote / role screens cover everything and you can't walk anyway
   const meeting = useStore((s) => !!s.mole?.me.inGame && ['roles', 'meeting', 'vote', 'result'].includes(s.mole.phase));
+  useAutoFullscreen(touch);
   if (!touch || task || sheet || busy || cctv || meeting) return null;
   const sitting = !!prompt?.startsWith('Đang ngồi');
   // the lift panel already shows the choices — no bubble on top of it
@@ -82,29 +85,108 @@ export function TouchControls() {
           </button>
         </div>
       </div>
-      <PortraitHint />
+      <ScreenHint />
     </>
   );
 }
 
-/** Portrait phones: suggest turning sideways (once, dismissible). */
-function PortraitHint() {
-  const [portrait, setPortrait] = useState(() => window.innerHeight > window.innerWidth * 1.15);
-  const [gone, setGone] = useState(() => sessionStorage.getItem('bss-portrait-hint') === '1');
+function readFlag(store: () => Storage, key: string): boolean {
+  try {
+    return store().getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setFlag(store: () => Storage, key: string) {
+  try {
+    store().setItem(key, '1');
+  } catch {
+    /* private mode */
+  }
+}
+
+const session = () => sessionStorage;
+const local = () => localStorage;
+
+/** Android / iPad: the first tap after turning the phone sideways goes full screen (the API only
+ *  works inside a tap). Leave full screen yourself and it stays that way until you turn it again. */
+function useAutoFullscreen(on: boolean) {
   useEffect(() => {
-    const f = () => setPortrait(window.innerHeight > window.innerWidth * 1.15);
+    if (!on || !canFullscreen() || isInstalled()) return;
+    let wasLandscape = isLandscape();
+    let armed = wasLandscape; // already sideways when the office opens
+    const onTurn = () => {
+      const l = isLandscape();
+      if (l !== wasLandscape) armed = l;
+      wasLandscape = l;
+    };
+    const onTap = (e: PointerEvent) => {
+      if (!armed) return;
+      armed = false;
+      // the full-screen button handles itself; its ✕ means "no thanks"
+      if ((e.target as Element | null)?.closest?.('.t-fs')) return;
+      if (isLandscape() && !isFullscreen()) void enterFullscreen();
+    };
+    window.addEventListener('resize', onTurn);
+    screen.orientation?.addEventListener('change', onTurn);
+    window.addEventListener('pointerup', onTap, true);
+    return () => {
+      window.removeEventListener('resize', onTurn);
+      screen.orientation?.removeEventListener('change', onTurn);
+      window.removeEventListener('pointerup', onTap, true);
+    };
+  }, [on]);
+}
+
+/** Upright: suggest turning sideways. Sideways in a browser tab: a "full screen" button (on an iPhone
+ *  it explains adding the office to the home screen — Safari can't hide its bars for a page). */
+function ScreenHint() {
+  const [, redraw] = useState(0);
+  const [portraitGone, setPortraitGone] = useState(() => readFlag(session, 'bss-portrait-hint'));
+  // iPhone: once dismissed it stays dismissed (installing is a bigger ask than a tap)
+  const fsStore = canFullscreen() ? session : local;
+  const [fsGone, setFsGone] = useState(() => readFlag(fsStore, 'bss-fs-hint'));
+  const panel = useStore((s) => !!s.panel);
+  useEffect(() => {
+    const f = () => redraw((n) => n + 1);
     window.addEventListener('resize', f);
-    return () => window.removeEventListener('resize', f);
+    screen.orientation?.addEventListener('change', f);
+    const off = onFullscreenChange(f);
+    return () => {
+      window.removeEventListener('resize', f);
+      screen.orientation?.removeEventListener('change', f);
+      off();
+    };
   }, []);
-  if (!portrait || gone) return null;
-  const close = () => {
-    sessionStorage.setItem('bss-portrait-hint', '1');
-    setGone(true);
-  };
+  if (window.innerHeight > window.innerWidth * 1.15) {
+    if (portraitGone) return null;
+    const close = () => {
+      setFlag(session, 'bss-portrait-hint');
+      setPortraitGone(true);
+    };
+    return (
+      <button className="t-hint glass" onClick={close}>
+        📱↻ Xoay ngang để chơi dễ hơn <b>✕</b>
+      </button>
+    );
+  }
+  const api = canFullscreen();
+  if (fsGone || panel || !isLandscape() || isFullscreen() || isInstalled() || (!api && !isIos())) return null;
   return (
-    <button className="t-hint glass" onClick={close}>
-      📱↻ Xoay ngang để chơi dễ hơn <b>✕</b>
-    </button>
+    <div className="t-fs glass">
+      <button onClick={() => (api ? void enterFullscreen() : setState({ installHelp: true }))}>⛶ Toàn màn hình</button>
+      <button
+        className="x"
+        aria-label="Ẩn"
+        onClick={() => {
+          setFlag(fsStore, 'bss-fs-hint');
+          setFsGone(true);
+        }}
+      >
+        ✕
+      </button>
+    </div>
   );
 }
 

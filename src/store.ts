@@ -59,6 +59,8 @@ export interface OfficeStore {
   creatorOpen: boolean;
   settingsOpen: boolean;
   helpOpen: boolean;
+  /** iPhone: how to get rid of the browser bars (add to home screen) */
+  installHelp: boolean;
   selected: string | null; // clicked player id
   prompt: string | null; // "Nhấn E để …"
   chatTab: 'global' | 'zone';
@@ -154,6 +156,7 @@ export const useStore = create<OfficeStore>(() => ({
   creatorOpen: false,
   settingsOpen: false,
   helpOpen: false,
+  installHelp: false,
   selected: null,
   prompt: null,
   chatTab: 'global',

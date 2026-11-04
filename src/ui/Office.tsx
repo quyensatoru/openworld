@@ -32,6 +32,7 @@ export function Office() {
   const creatorOpen = useStore((s) => s.creatorOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const helpOpen = useStore((s) => s.helpOpen);
+  const installHelp = useStore((s) => s.installHelp);
   const panel = useStore((s) => s.panel);
   // theater mode: seated in the cinema while a film plays → hide almost everything, fade the rest when idle
   const inBar = useStore((s) => s.me?.zone === 'bar');
@@ -55,7 +56,7 @@ export function Office() {
         setState({ panel: 'chat' });
         setTimeout(() => document.querySelector<HTMLInputElement>('.chat-input input')?.focus(), 30);
       } else if (e.key === 'Escape') {
-        setState({ kanbanOpen: false, settingsOpen: false, helpOpen: false, bigScreen: null, screenOf: null, arcadeOpen: false });
+        setState({ kanbanOpen: false, settingsOpen: false, helpOpen: false, installHelp: false, bigScreen: null, screenOf: null, arcadeOpen: false });
         if (getState().karaZoom) game.karaZoom(false);
       } else if (e.key.toLowerCase() === 'k' && !e.ctrlKey && !e.metaKey) {
         setState((s) => ({ kanbanOpen: !s.kanbanOpen }));
@@ -116,6 +117,7 @@ export function Office() {
       {creatorOpen && <CharacterCreator mode="edit" onDone={() => setState({ creatorOpen: false })} />}
       {settingsOpen && <Settings />}
       {helpOpen && <Help />}
+      {installHelp && <InstallHelp />}
     </div>
   );
 }
@@ -480,6 +482,43 @@ function Settings() {
             Đăng xuất khỏi văn phòng
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** iPhone: Safari can't hide its bars for a page, but opened from the home screen the office has none. */
+function InstallHelp() {
+  const close = () => setState({ installHelp: false });
+  return (
+    <div className="modal-bg" onClick={close}>
+      <div className="modal glass install-help" onClick={(e) => e.stopPropagation()}>
+        <button className="close-x" onClick={close}>
+          ✕
+        </button>
+        <h2>Toàn màn hình trên iPhone 📱</h2>
+        <p className="muted">Safari không cho trang web tự ẩn thanh địa chỉ. Thêm văn phòng ra màn hình chính là mở được như một app, không còn thanh nào:</p>
+        <ol>
+          <li>
+            Bấm nút <b>Chia sẻ</b>{' '}
+            <svg className="share-ico" viewBox="0 0 20 24" aria-hidden="true">
+              <path d="M10 15V2M5.5 6.5 10 2l4.5 4.5M6.5 10H4v12h12V10h-2.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>{' '}
+            của Safari (trên thanh địa chỉ, hoặc trong menu <b>⋯</b>)
+          </li>
+          <li>
+            Chọn <b>Thêm vào MH chính</b> → <b>Thêm</b>
+          </li>
+          <li>
+            Mở <b>BSS Office</b> từ biểu tượng mới trên màn hình chính
+          </li>
+        </ol>
+        <p className="muted" style={{ fontSize: 13 }}>
+          Nhân vật của bạn đi theo sang app; lần đầu mở chỉ cần nhập lại mã văn phòng.
+        </p>
+        <button className="btn primary" style={{ width: '100%', marginTop: 6 }} onClick={close}>
+          Đã hiểu
+        </button>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { savePref } from '../profile';
 import { serverNow, setState, useStore, type SidePanel } from '../store';
 import { FpLookControls } from './FpLook';
 import { Icon, fmtClock } from './common';
+import { canFullscreen, enterFullscreen, exitFullscreen, isFullscreen, isInstalled, isIos } from './fullscreen';
 
 type Pop = 'status' | 'pomo' | 'emote' | 'more' | null;
 
@@ -121,16 +122,17 @@ export function Toolbar() {
             🍅 Pomodoro <small>{me?.pomo ? fmtClock(pomoLeft) : 'tập trung 25 phút'} ›</small>
           </button>
           <div className="menu-sep" />
-          {touch && document.fullscreenEnabled && (
+          {touch && !isInstalled() && (canFullscreen() || isIos()) && (
             <button
               className="menu-item"
               onClick={() => {
                 setPop(null);
-                if (document.fullscreenElement) void document.exitFullscreen();
-                else void document.documentElement.requestFullscreen?.().catch(() => {});
+                if (!canFullscreen()) setState({ installHelp: true }); // iPhone: add to the home screen
+                else if (isFullscreen()) exitFullscreen();
+                else void enterFullscreen();
               }}
             >
-              ⛶ {document.fullscreenElement ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
+              ⛶ {isFullscreen() ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
             </button>
           )}
           <button className="menu-item" onClick={() => (setPop(null), void game.takePhoto())}>

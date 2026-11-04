@@ -1850,26 +1850,42 @@ function webglAvailable(): boolean {
 }
 
 let viVoice: SpeechSynthesisVoice | null | undefined;
-/** Read a game-master line in Vietnamese (if the browser has a Vietnamese voice). */
+let voicesHooked = false;
+
+/** The best Vietnamese voice on this device — natural / online ones first (Edge's HoaiMy, Chrome's
+ *  Google voices, Apple's enhanced Linh), then any. undefined = the list hasn't loaded yet. */
+export function vietnameseVoice(): SpeechSynthesisVoice | null | undefined {
+  const synth = window.speechSynthesis;
+  if (!synth) return null;
+  if (!voicesHooked) {
+    voicesHooked = true;
+    // the list arrives late (Chrome) and grows (Edge's online voices): choose again each time
+    synth.addEventListener?.('voiceschanged', () => {
+      viVoice = undefined;
+      window.dispatchEvent(new Event('bss-voices'));
+    });
+  }
+  if (viVoice !== undefined) return viVoice;
+  const voices = synth.getVoices();
+  if (!voices.length) return undefined;
+  const score = (v: SpeechSynthesisVoice) =>
+    (/natural|neural|online|premium|enhanced/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 2 : 0) + (v.localService ? 0 : 1);
+  viVoice = voices.filter((v) => /^vi([-_]|$)/i.test(v.lang)).sort((a, b) => score(b) - score(a))[0] ?? null;
+  return viVoice;
+}
+
+/** Read a game-master line in Vietnamese — only with a Vietnamese voice: any other voice reading
+ *  Vietnamese text sounds like gibberish, so without one the game master stays quiet. */
 function speak(text: string) {
   const synth = window.speechSynthesis;
-  if (!synth) return;
-  if (viVoice === undefined) {
-    const voices = synth.getVoices();
-    if (!voices.length) {
-      synth.onvoiceschanged = () => {
-        viVoice = undefined;
-      };
-      return;
-    }
-    viVoice = voices.find((v) => v.lang.toLowerCase().startsWith('vi')) ?? null;
-  }
-  if (!viVoice) return;
+  const voice = vietnameseVoice();
+  if (!synth || !voice) return;
   const clean = text.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '').replace(/\s+/g, ' ').trim();
   if (!clean) return;
   const u = new SpeechSynthesisUtterance(clean);
-  u.voice = viVoice;
-  u.lang = viVoice.lang;
+  u.voice = voice;
+  // Android's engine may ignore `voice` and go by `lang` alone — and wants "vi-VN", not "vi_VN"
+  u.lang = 'vi-VN';
   u.rate = 1.02;
   u.pitch = 0.9;
   synth.speak(u);
