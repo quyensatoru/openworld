@@ -167,12 +167,11 @@ export class BarStaff {
       () => ({ x: 99.45, z: 10.5, ry: -Math.PI / 2, moving: false }),
       (sec) => (sec % 6 === 0 ? (hash(sec) < 0.25 ? 'cheer' : 'dance') : null),
     );
-    // dance crew: party outfits, one on each corner of the LED floor
+    // dance crew: party outfits, on opposite corners of the LED floor (the two male dancers were
+    // dropped — the bar was the heaviest room in the office)
     this.add('Hà', '💃 Vũ công', cfg({ hair: 'long', hairColor: '#d9b26f', top: '#e8c547', bottom: '#e8c547', shoes: '#e8c547', outfit: 'swim' }), dancerPose(89.7, 8.2, 0), dancerMoves(0));
-    this.add('Khoa', '🕺 Vũ công', cfg({ body: 'male', hair: 'buzzed', hairColor: '#1f1a17', skin: '#d59a6f', top: '#2de2e6', bottom: '#2d3142', shoes: '#ffffff', build: 'regular', height: 1.02 }), dancerPose(94.3, 8.2, 1.7), dancerMoves(2));
     this.add('Trang', '💃 Vũ công', cfg({ hair: 'buns', hairColor: '#a23b3b', top: '#ff3ea5', bottom: '#ff3ea5', shoes: '#ff3ea5', outfit: 'swim' }), dancerPose(94.3, 12.8, 3.1), dancerMoves(1));
     this.add('Ngân', '🌸 Lễ tân', cfg({}), () => ({ x: 93.4, z: 18.4, ry: -0.97, moving: false }), (sec) => (sec % 9 === 0 ? (hash(sec) < 0.5 ? 'wave' : 'heart') : null));
-    this.add('Bảo', '🕺 Vũ công', cfg({ body: 'male', hair: 'parted', hairColor: '#3b2a20', top: '#ff3ea5', bottom: '#1d1b22', shoes: '#1d1b22', build: 'slim', height: 1.0 }), dancerPose(89.7, 12.8, 4.6), dancerMoves(3));
   }
 
   private add(name: string, role: string, c: AvatarConfig, pose: (t: number) => Pose, emoteAt?: (sec: number) => Emote | null) {
