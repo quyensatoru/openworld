@@ -43,6 +43,8 @@ import {
   type Seat,
 } from '../../shared/map';
 import type { AnimState, Emote, PlayerState, Task } from '../../shared/protocol';
+import { fallbackWeather, localHour, type Weather } from '../../shared/weather';
+import { WeatherFx, blankLook, computeSky, lerpLook, type SkyLook } from './weather-fx';
 import { avatars } from './avatar/manifest';
 import { blobShadow } from './blob';
 import type { Avatar } from './avatar/types';
@@ -56,6 +58,7 @@ import { VrmAvatar } from './avatar/vrm-avatar';
 import { party } from './bar';
 import { MOLE_CAMS } from '../../shared/mole';
 import { PH_GRAB_RANGE, PH_SHOT_RANGE, isPhProp } from '../../shared/prophunt';
+import { IS_TOUCH } from '../ui/touch-detect';
 
 export interface WorldCallbacks {
   onLocalMove(x: number, z: number, ry: number, anim: AnimState): void;
@@ -79,6 +82,8 @@ export interface WorldCallbacks {
   inputBlocked?(): boolean;
   /** The WebGL context was lost (true) / restored (false). */
   onGraphicsLost?(lost: boolean): void;
+  /** A shader failed to build on this device: part of the scene will not be drawn. */
+  onShaderError?(): void;
   taskTitle(taskId: string | null): string | null;
 }
 
@@ -167,18 +172,26 @@ interface Lod {
   shadow: number;
 }
 const LOD_BY_QUALITY: Record<GfxQuality, Lod> = {
-  high: { mid: 7, half: 12, third: 24, far: 15, shadow: Infinity },
+  // "Đẹp" on a phone keeps a shadow limit, but a generous one — far enough that everyone you are
+  // actually looking at still casts a real shadow
+  high: { mid: 7, half: 12, third: 24, far: 15, shadow: IS_TOUCH ? 14 : Infinity },
   low: { mid: 4, half: 7, third: 14, far: 9, shadow: 8 },
   eco: { mid: 3, half: 5, third: 10, far: 7, shadow: 0 },
 };
-/** "Nhẹ" / "Tiết kiệm pin": at most this many people drawn in full (the nearest; the rest are a
- *  name tag and a shadow). Lowered further while the device can't keep up (see adaptResolution). */
-const BUDGET_BY_QUALITY: Record<GfxQuality, number> = { high: Infinity, low: 10, eco: 6 };
-const BUDGET_MIN = 4;
+/** At most this many people drawn in full (the nearest; the rest are a name tag and a shadow).
+ *  Lowered further while the device can't keep up (see adaptResolution). "Đẹp" on a phone needs a
+ *  limit too — without one, a slow frame has nothing to give back except sharpness. */
+const BUDGET_BY_QUALITY: Record<GfxQuality, number> = { high: IS_TOUCH ? 10 : Infinity, low: 8, eco: 6 };
+/** How far the automatic quality may wind each preset down. Picking "Đẹp" is a choice to accept
+ *  the odd slow frame, so it is allowed to give up very little — it must never end up looking
+ *  like "Nhẹ" behind the player's back. */
+const BUDGET_MIN_BY_QUALITY: Record<GfxQuality, number> = { high: 6, low: 4, eco: 3 };
 /** Game rooms: nobody is left out of the budget there (who is where is the game). */
 const GAME_KINDS = new Set<string | undefined>(['wolf', 'mole', 'prop']);
-/** Someone off your floor this long gives their model back (rebuilt when you meet again). */
-const AWAY_UNLOAD_MS = 180_000;
+/** Someone off your floor this long gives their model back (rebuilt when you meet again).
+ *  Much sooner on phones: a VRoid character is tens of MB of texture on the GPU, and iOS throws
+ *  resources away (or the whole context) when a page asks for too much. */
+const AWAY_UNLOAD_MS = IS_TOUCH ? 45_000 : 180_000;
 const damp = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
@@ -202,8 +215,12 @@ export class WebGLUnavailable extends Error {}
 
 /** Best renderer this machine allows: full quality, then a plain one (no MSAA, any GPU). */
 function createRenderer(): THREE.WebGLRenderer {
+  // A retina screen is already drawn above 1×, which does the same job as MSAA — and MSAA buffers
+  // are the biggest single thing a phone has to find room for. Asking for both is what tipped
+  // iPhones into "A problem repeatedly occurred".
+  const aa = (window.devicePixelRatio || 1) < 2;
   const attempts: THREE.WebGLRendererParameters[] = [
-    { antialias: true, alpha: true, powerPreference: 'high-performance' },
+    { antialias: aa, alpha: true, powerPreference: 'high-performance' },
     { antialias: false, alpha: true, powerPreference: 'default', failIfMajorPerformanceCaveat: false },
   ];
   let last: unknown = null;
@@ -283,7 +300,6 @@ export class World {
   }
   private slowFor = 0;
   private quickFor = 0;
-  private hemiBase = new THREE.Color('#f4f7ff');
   private static readonly WHITE = new THREE.Color('#ffffff');
   /** Floor you are on (0 = office, 1 = cinema & bar). */
   myFloor: Floor = 0;
@@ -295,7 +311,14 @@ export class World {
   beatClock: () => number = () => this.serverClock() * (124 / 60);
   /** Bartender, waitress and DJ upstairs. */
   readonly staff: BarStaff;
-  private tod = { exposure: 0.95, hemi: 0.6, key: 1.7, win: 0.6 };
+  /** The sky right now, and the one we are easing towards (recomputed once a minute). */
+  private look: SkyLook = blankLook();
+  private lookTo: SkyLook = blankLook();
+  private lookEase = 1; // 1 = settled
+  private weather: Weather = fallbackWeather();
+  /** Minutes east of UTC for the office (Hanoi = +420), from the server's welcome. */
+  private tzOffset = 420;
+  private weatherFx!: WeatherFx;
   private todTimer = 0;
   private baseFov = 45;
   private players = new Map<string, PlayerView>();
@@ -356,8 +379,21 @@ export class World {
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
     r.shadowMap.autoUpdate = false; // refreshed every other frame (see frame())
-    // reading shader logs forces a sync with the GPU driver the first time each program is used
-    if (import.meta.env.PROD) r.debug.checkShaderErrors = false;
+    // Reading shader logs forces a sync with the GPU driver the first time each program is used —
+    // but only where linking is asynchronous to begin with. Safari has no parallel shader compile,
+    // so the check is free there, and that is exactly where a program that fails to link shows up
+    // as a character silently missing its body. Keep it on, and say so out loud.
+    const parallelCompile = !!r.getContext().getExtension('KHR_parallel_shader_compile');
+    if (import.meta.env.PROD && parallelCompile) r.debug.checkShaderErrors = false;
+    r.debug.onShaderError = (gl, program, vs, fs) => {
+      const log = (sh: WebGLShader) => (gl.getShaderInfoLog(sh) || '').trim().split('\n')[0];
+      console.error('[gfx] a shader did not build — something will be missing from the picture:', {
+        program: (gl.getProgramInfoLog(program) || '').trim(),
+        vertex: log(vs),
+        fragment: log(fs),
+      });
+      this.cb.onShaderError?.();
+    };
     r.domElement.className = 'world-canvas';
     // the GPU process can crash / reset (driver, sleep, too many tabs): three.js restores the context
     // by itself; tell the player meanwhile instead of showing a frozen picture
@@ -407,10 +443,11 @@ export class World {
     this.windowLight.position.set(OFFICE_W / 2, 9, -22);
     this.windowLight.target.position.set(OFFICE_W / 2, 0, OFFICE_D / 3);
     this.scene.add(this.windowLight, this.windowLight.target);
-    this.applyTimeOfDay();
+    this.weatherFx = new WeatherFx(this.scene);
 
     this.office = new OfficeScene();
     this.scene.add(this.office.group);
+    this.applySky(true); // after the office exists: it darkens its own lawn and trees at night
     this.staff = new BarStaff(this.scene, this.camera); // their eyes follow you
     // get the upper floor ready in the background, so the first trip upstairs doesn't stall
     window.setTimeout(() => void this.warmUpstairs(), 2000);
@@ -434,18 +471,26 @@ export class World {
   }
 
   // ------------------------------------------------------------------ setup
-  setQuality(q: GfxQuality) {
+  /**
+   * `picked` = the player just chose this in the settings, rather than it being restored at
+   * start-up. They have said what they want, so start at the top of the preset instead of where
+   * this device drifted to last time — otherwise choosing "Đẹp" hands back the blurry, thinned-out
+   * picture the adapter settled on, and the setting looks like it does nothing.
+   */
+  setQuality(q: GfxQuality, picked = false) {
     this.quality = q;
+    this.weatherFx?.setQuality(q);
     this.lod = LOD_BY_QUALITY[q];
     this.charBudget = BUDGET_BY_QUALITY[q];
     this.budgetTimer = 0;
     this.pr = this.prRange().start;
     this.prCeil = Infinity;
-    this.loadAdapt();
+    if (picked) this.forgetAdapt();
+    else this.loadAdapt();
     this.slowFor = this.quickFor = 0;
     this.adaptFrom = performance.now() + 6000; // (loading, warming up: not a measure of the device)
     this.applyPixelRatio();
-    const size = q === 'high' ? 2048 : 1024;
+    const size = q === 'high' && !IS_TOUCH ? 2048 : q === 'eco' ? 512 : 1024;
     if (this.sun.shadow.mapSize.x !== size) {
       this.sun.shadow.mapSize.set(size, size);
       this.sun.shadow.map?.dispose();
@@ -465,17 +510,28 @@ export class World {
   }
 
   /**
-   * Drawing resolution bounds (device pixels per CSS pixel). "Đẹp": up to 2×, never below 1×.
-   * "Nhẹ" (the phone default): starts at 1× — every phone copes — and sharpens towards 2× only while
-   * the device keeps up (2× on a 3× phone screen is 4× the pixels: it brought phones to their knees).
-   * Battery saver: 1×, down to 0.75×.
+   * Drawing resolution bounds (device pixels per CSS pixel).
+   *
+   * The floor matters more than it looks. A phone screen is 2.5–3 device pixels per CSS pixel, so
+   * drawing at 1× and letting the browser stretch it is a quarter of the real pixels: edges stop
+   * looking simple and start looking broken — grainy, swimming. Below ~1.25× there is no version
+   * of this scene that reads as "clean", so that is where it stops, and a struggling frame buys
+   * itself back by drawing fewer people instead (see adaptResolution).
    */
   private prRange(): { min: number; max: number; start: number } {
     const dpr = window.devicePixelRatio || 1;
     const one = Math.min(dpr, 1);
-    if (this.quality === 'high') return { min: one, max: Math.min(dpr, 2), start: Math.min(dpr, 2) };
-    if (this.quality === 'low') return { min: 0.75 * one, max: Math.min(dpr, 2), start: one };
-    return { min: 0.75 * one, max: one, start: one };
+    // A hard floor was a mistake: with nowhere left to go the page just died instead. The floor is
+    // 1× again — the order of sacrifice (characters, then shadows, then pixels) is what keeps the
+    // picture sharp in practice, and it can always go further if the device is really struggling.
+    if (this.quality === 'high') return { min: one, max: Math.min(dpr, 2), start: Math.min(dpr, IS_TOUCH ? 1.5 : 2) };
+    if (this.quality === 'low') return { min: one, max: Math.min(dpr, 1.75), start: Math.min(dpr, 1.25) };
+    return { min: 0.75 * one, max: one, start: Math.min(dpr, 0.85) };
+  }
+
+  /** A phone/retina screen, where losing resolution shows far more than losing a few characters. */
+  private get sharpScreen(): boolean {
+    return (window.devicePixelRatio || 1) >= 2;
   }
 
   /** Sets the drawing resolution; false when it was already that. */
@@ -519,16 +575,22 @@ export class World {
     // badly slow (under ~30 fps): step every second instead of every three
     if (this.slowFor > (this.avgGap > target * 2 ? 1000 : 3000)) {
       this.slowFor = 0;
-      // what is short? If the frame's own work fills most of it (the CPU: characters, bones), fewer
-      // people drawn in full first — fewer pixels wouldn't help and only blur. Otherwise the GPU: fewer pixels.
+      // What is short? If the frame's own work fills most of it (the CPU: characters, bones), fewer
+      // people drawn in full — fewer pixels wouldn't help and only blur. On a phone screen go for
+      // people first either way: a character fewer is barely noticed, a blurry screen is all you see.
       const cpuBound = this.avgCpu > target * 0.75;
-      if (cpuBound ? this.fewerPeople() || this.fewerPixels() : this.fewerPixels() || this.fewerPeople()) this.saveAdapt();
-    } else if (this.quickFor > 12000) {
+      const peopleFirst = cpuBound || this.sharpScreen;
+      if (peopleFirst ? this.fewerPeople() || this.fewerPixels() : this.fewerPixels() || this.fewerPeople()) this.saveAdapt();
+    } else if (this.quickFor > 6000) {
       this.quickFor = 0;
-      // quick for a while: give back what has room (people while the CPU is idle enough, else sharpness)
+      // Quick for a while: give something back. Sharpness first on a phone (that is what was taken
+      // first on the way down is not — people were — so this is what is still missing).
       const full = BUDGET_BY_QUALITY[this.quality];
       const cpuRoom = this.avgCpu < target * 0.5;
-      if (cpuRoom && this.charBudget < full) this.charBudget += 2;
+      const sharpFirst = this.sharpScreen && this.pr < this.prRange().max;
+      if (sharpFirst && this.morePixels()) {
+        /* sharper */
+      } else if (cpuRoom && this.charBudget < full) this.charBudget += 2;
       else if (!this.morePixels()) {
         if (this.charBudget < full) this.charBudget += 2;
         else return;
@@ -567,18 +629,33 @@ export class World {
     return true;
   }
 
-  /** Two people fewer drawn in full ("Nhẹ" / "Tiết kiệm pin"); false when at the minimum. */
+  /** Two people fewer drawn in full; false when this preset will not go any lower. */
   private fewerPeople(): boolean {
-    if (!Number.isFinite(this.charBudget) || this.charBudget <= BUDGET_MIN) return false;
-    this.charBudget = Math.max(BUDGET_MIN, this.charBudget - 2);
+    const floor = BUDGET_MIN_BY_QUALITY[this.quality];
+    if (!Number.isFinite(this.charBudget) || this.charBudget <= floor) return false;
+    this.charBudget = Math.max(floor, this.charBudget - 2);
     this.budgetTimer = 0;
     return true;
+  }
+
+  /** v3: v2 was written under looser floors, and reading it back held phones at the old low ones. */
+  private adaptKey() {
+    return `office-adapt3-${this.quality}`;
   }
 
   /** What this device settled on, per quality: the next visit starts there instead of finding it again. */
   private saveAdapt() {
     try {
-      localStorage.setItem(`office-adapt2-${this.quality}`, JSON.stringify({ pr: this.pr, budget: Number.isFinite(this.charBudget) ? this.charBudget : null }));
+      localStorage.setItem(this.adaptKey(), JSON.stringify({ pr: this.pr, budget: Number.isFinite(this.charBudget) ? this.charBudget : null }));
+    } catch {
+      /* private mode */
+    }
+  }
+
+  /** Throw away what this device learned, so the preset starts from the top again. */
+  private forgetAdapt() {
+    try {
+      localStorage.removeItem(this.adaptKey());
     } catch {
       /* private mode */
     }
@@ -586,12 +663,11 @@ export class World {
 
   private loadAdapt() {
     try {
-      // (v2: the first version saved a scale of 2× and phones came back to a crawl)
-      const a = JSON.parse(localStorage.getItem(`office-adapt2-${this.quality}`) || 'null') as { pr?: number; budget?: number | null } | null;
+      const a = JSON.parse(localStorage.getItem(this.adaptKey()) || 'null') as { pr?: number; budget?: number | null } | null;
       if (!a) return;
       if (typeof a.pr === 'number' && Number.isFinite(a.pr)) this.pr = a.pr; // clamped by applyPixelRatio
       const full = BUDGET_BY_QUALITY[this.quality];
-      if (typeof a.budget === 'number' && Number.isFinite(full)) this.charBudget = Math.min(full, Math.max(BUDGET_MIN, a.budget));
+      if (typeof a.budget === 'number' && Number.isFinite(full)) this.charBudget = Math.min(full, Math.max(BUDGET_MIN_BY_QUALITY[this.quality], a.budget));
     } catch {
       /* private mode / bad data */
     }
@@ -2087,18 +2163,24 @@ export class World {
     const hideBar = this.cullPeople();
     this.pumpAvatars(dt);
 
-    // lighting: time of day + cinema darkness for whoever sits in the dark
+    // lighting: Hanoi's clock and weather + cinema darkness for whoever sits in the dark
     this.todTimer -= dt;
     if (this.todTimer <= 0) {
       this.todTimer = 60;
-      this.applyTimeOfDay();
+      this.applySky();
+    }
+    if (this.lookEase < 1) {
+      // ease over ~4 s, so sunset and a passing shower arrive gently instead of snapping
+      this.lookEase = Math.min(1, this.lookEase + dt / 4);
+      lerpLook(this.look, this.lookTo, this.lookEase < 1 ? 1 - Math.exp(-2.5 * dt) : 1);
+      this.pushSky();
     }
     this.dim = damp(this.dim, this.dimTarget, 1.6, dt);
     this.dark = damp(this.dark, this.darkTarget, 2.2, dt);
     const lit = 1 - 0.98 * this.dark;
-    this.renderer.toneMappingExposure = this.tod.exposure * (1 - 0.45 * this.dim) * (1 - 0.15 * this.dark);
-    this.hemi.intensity = this.tod.hemi * (1 - 0.75 * this.dim) * (1 - 0.92 * this.dark);
-    this.hemi.color.copy(this.hemiBase);
+    this.renderer.toneMappingExposure = this.look.exposure * (1 - 0.45 * this.dim) * (1 - 0.15 * this.dark);
+    this.hemi.intensity = this.look.hemiI * (1 - 0.75 * this.dim) * (1 - 0.92 * this.dark);
+    this.hemi.color.copy(this.look.hemiCol);
     if (this.dark > 0.01 && this.mood === 'bar') {
       // the bar: the whole room washes over in the party colour, pumping on the kick, plus strobe hits
       const P = party(this.beatClock());
@@ -2129,9 +2211,9 @@ export class World {
       this.hemi.color.lerp(this.moodCol, 0.9 * this.dark);
       this.hemi.intensity += this.dark * add;
     }
-    this.sun.intensity = this.tod.key * (1 - 0.8 * this.dim) * lit;
-    this.windowLight.intensity = this.tod.win * (1 - 0.85 * this.dim) * lit;
-    this.scene.environmentIntensity = 0.35 * (1 - 0.9 * this.dark);
+    this.sun.intensity = this.look.keyI * (1 - 0.8 * this.dim) * lit;
+    this.windowLight.intensity = this.look.winI * (1 - 0.85 * this.dim) * lit;
+    this.scene.environmentIntensity = this.look.env * (1 - 0.9 * this.dark);
     VrmAvatar.glow = 0.05 + 0.37 * Math.max(this.dark, this.dim * 0.6);
 
     // walls between camera and me fade out
@@ -2192,6 +2274,8 @@ export class World {
     // shadows: every other frame, and not at all in the dark (cinema film / bar)
     this.shadowTick = (this.shadowTick + 1) % 2;
     this.renderer.shadowMap.needsUpdate = this.shadowTick === 0 && this.dim < 0.9 && this.dark < 0.9;
+    // after the camera has settled for this frame, so the horizon never lags behind it
+    this.weatherFx.update(dt, this.camera);
     if (this.cssScene.children.length) this.css3d.render(this.cssScene, this.camera);
     this.renderer.render(this.scene, this.camera);
     this.renderTags();
@@ -2544,22 +2628,46 @@ export class World {
     return FLOOR_H * (r.from + (r.to - r.from) * k);
   }
 
-  private applyTimeOfDay() {
-    const d = new Date();
-    const h = d.getHours() + d.getMinutes() / 60;
-    const ss = (a: number, b: number, x: number) => Math.min(1, Math.max(0, (x - a) / (b - a)));
-    const day = ss(5.5, 7.5, h) * (1 - ss(17.5, 19.5, h));
-    const golden = h > 15.5 && h < 20 ? Math.max(0, 1 - Math.abs(h - 17.8) / 1.4) : 0;
-    const sky = new THREE.Color('#1c2333').lerp(new THREE.Color('#e8eef3'), day).lerp(new THREE.Color('#f2d2b6'), golden * 0.55);
-    this.scene.background = sky;
-    (this.scene.fog as THREE.Fog).color.copy(sky);
-    this.hemiBase.set('#f4f7ff').lerp(new THREE.Color('#c9d2ff'), 1 - day);
-    this.windowLight.color.set('#dbe8ff').lerp(new THREE.Color('#ffc898'), golden).lerp(new THREE.Color('#5a6aa0'), 1 - day);
-    this.tod = { exposure: 0.95 - (1 - day) * 0.06, hemi: 0.38 + 0.24 * day, key: 1.55 + 0.2 * day, win: 0.12 + 0.5 * day };
+  /** Hanoi's real weather, read by the worker every ten minutes. */
+  setWeather(w: Weather) {
+    this.weather = w;
+    this.applySky();
+  }
+
+  /** Minutes east of UTC for the office, so the sky follows its clock and not the player's. */
+  setTimezone(offsetMinutes: number) {
+    if (offsetMinutes === this.tzOffset) return;
+    this.tzOffset = offsetMinutes;
+    this.applySky();
+  }
+
+  /** Work out how the office should look right now; `now` skips the ease (first frame). */
+  private applySky(now = false) {
+    computeSky(this.weather, localHour(Date.now(), this.tzOffset), this.lookTo);
+    if (now) {
+      lerpLook(this.look, this.lookTo, 1);
+      this.lookEase = 1;
+      this.pushSky();
+    } else {
+      this.lookEase = 0;
+    }
+  }
+
+  /** Hand the current look to the renderer: sky dome, rain, fog and the three lights. */
+  private pushSky() {
+    const L = this.look;
+    this.weatherFx.apply(L);
+    (this.scene.background as THREE.Color).copy(L.fog);
+    (this.scene.fog as THREE.Fog).color.copy(L.fog);
+    this.office?.setOutdoorNight(L.night);
+    this.sun.color.copy(L.keyCol);
+    this.sun.position.set(OFFICE_W / 2 + L.keyX, 34, OFFICE_D / 2 + L.keyZ);
+    this.windowLight.color.copy(L.winCol);
   }
 
   dispose() {
     this.disposed = true;
+    this.weatherFx.dispose();
     cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     for (const [t, type, fn, opts] of this.listeners) t.removeEventListener(type, fn, opts);

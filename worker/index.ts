@@ -4,6 +4,7 @@
 import { summarizeHook } from './activity';
 import { userForToken } from './db';
 import { checkPasscode, clearCookie, isAuthed, loginBlocked, passcodeRequired, recordLoginFailure, sessionCookie } from './auth';
+import { hanoiWeather } from './weather';
 
 export { OfficeRoom } from './office-room';
 
@@ -171,6 +172,12 @@ export default {
           console.error('yt search failed', err);
           return json({ hits: [], error: 'search failed' }, { status: 502 });
         }
+      }
+
+      // Hanoi's weather, for the sky and the rain outside the windows.
+      case '/api/weather': {
+        if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
+        return json(await hanoiWeather(), { headers: { 'Cache-Control': 'public, max-age=300' } });
       }
 
       case '/api/ws': {

@@ -4,12 +4,13 @@ import type { Floor } from '../shared/map';
 import type { WolfView } from '../shared/werewolf';
 import type { MoleView } from '../shared/mole';
 import type { PhView } from '../shared/prophunt';
+import { fallbackWeather, type Weather } from '../shared/weather';
 // Global UI state (React reads it through hooks; the 3D world and RTC write to it imperatively).
 // High-frequency data (positions) deliberately lives outside this store, in the World.
 
 import { create } from 'zustand';
 import type { ActivityEvent, ChatMsg, CinemaState, MediaState, PlayerState, Task, TeamMember, WorklogDay } from '../shared/protocol';
-import { loadPref } from './profile';
+import { bootTrouble, loadPref } from './profile';
 import { IS_TOUCH } from './ui/touch-detect';
 
 export interface FpLook {
@@ -43,6 +44,10 @@ export interface PeerView {
 export interface OfficeStore {
   phase: Phase;
   officeName: string;
+  /** Minutes east of UTC the office keeps time in (Hanoi = +420). */
+  tzOffsetMinutes: number;
+  /** Hanoi's weather right now — drives the sky and the chip in the corner. */
+  weather: Weather;
   needPasscode: boolean;
   connected: boolean;
   kicked: string | null;
@@ -146,9 +151,23 @@ export interface OfficeStore {
   voiceFailed: Record<string, number>;
 }
 
+/**
+ * The graphics setting to actually start with. After a start that never settled — on a phone that
+ * means the browser killed the tab for using too much memory — come back a step lower instead of
+ * walking into the same wall again. The player's own choice is kept; only this session is lowered.
+ */
+function safeQuality(saved: Quality): Quality {
+  const t = bootTrouble();
+  if (t >= 2) return 'eco';
+  if (t >= 1) return saved === 'high' ? 'low' : saved === 'low' ? 'eco' : saved;
+  return saved;
+}
+
 export const useStore = create<OfficeStore>(() => ({
   phase: 'loading',
   officeName: 'Office',
+  tzOffsetMinutes: 420,
+  weather: fallbackWeather(),
   needPasscode: true,
   connected: false,
   kicked: null,
@@ -173,7 +192,7 @@ export const useStore = create<OfficeStore>(() => ({
   chatDraft: '',
   unread: 0,
   toasts: [],
-  quality: loadPref<Quality>('quality', IS_TOUCH ? 'low' : 'high'),
+  quality: safeQuality(loadPref<Quality>('quality', IS_TOUCH ? 'low' : 'high')),
   fpsCap: loadPref<FpsCap>('fpsCap', 60),
   touch: (() => {
     try {

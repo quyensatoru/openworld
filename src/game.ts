@@ -5,6 +5,7 @@ import type { ArcadeMsg } from '../shared/arcade';
 import { BAR, BAR_SCREEN, CINEMA_SCREEN, FLOOR_H, KARA_SCREEN, MIC_SPOTS, SEAT_BY_ID, ZONE_BY_ID, floorOf, groundAt, onStairs, type Seat } from '../shared/map';
 import { FX_PRESETS, KARA_SCORE_MS, type KaraMsg, type KaraState, type MicFx } from '../shared/karaoke';
 import { ROLE_META, type WolfMsg, type WolfView } from '../shared/werewolf';
+import { rainLevel, type Weather } from '../shared/weather';
 import type { Furniture } from '../shared/map';
 import { F6, PH_BOARD, PH_FIRE_S, PH_PROPS, type PhFx, type PhMsg, type PhView } from '../shared/prophunt';
 import { DOOR_BY_ID, MOLE_BOARD, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, MOLE_VENTS, MOLE_VENT_RANGE, STATION_BY_ID, VENT_BY_ID, VISION, doorMid, doorRect, meetingSpot, type MoleFx, type MoleMsg, type MoleView } from '../shared/mole';
@@ -29,7 +30,7 @@ import {
   type TaskColumn,
 } from '../shared/protocol';
 import { Net, wsUrl } from './net/socket';
-import { loadPref, loadProfile, saveProfile, savePref } from './profile';
+import { bootTrouble, loadPref, loadProfile, saveProfile, savePref } from './profile';
 import { RelayMedia } from './rtc/relay';
 import { getState, nameOf, playerById, serverNow, setState, toast, type FpLook, type FpsCap, type Quality } from './store';
 import { askNotificationPermission, chime, flashTitle, notify } from './ui/notify';
@@ -54,6 +55,8 @@ class Game {
   private screens = new ClaudeScreens();
   private ambience: Ambience | null = null;
   private fastTimer: number | undefined;
+  private weatherTimer: number | undefined;
+  private shaderWarned = false;
   private autoFirstPerson = false;
   private wasInCinema = false;
   private wasInBar = false;
@@ -148,6 +151,12 @@ class Game {
         },
         inputBlocked: () => getState().arcadeOpen || !!getState().moleTask || getState().cctv,
         onGraphicsLost: (lost) => setState({ glLost: lost }),
+        onShaderError: () => {
+          // say it once: otherwise it is a character quietly missing its body and no explanation
+          if (this.shaderWarned) return;
+          this.shaderWarned = true;
+          toast('⚠️ Máy không dựng được một hiệu ứng đồ hoạ — có thể thiếu một phần hình ảnh. Thử đổi mức đồ hoạ trong ⋯ → Cài đặt nhé.', 'warn', 9000);
+        },
         onLift: (phase, from, to) => {
           this.ambience?.ding();
           if (phase === 'start') toast(`🛗 Thang máy đang ${to > from ? 'lên' : 'xuống'} tầng ${to + 1}…`, 'info', 2200);
@@ -168,6 +177,15 @@ class Game {
       },
       getState().quality,
     );
+    // the browser killed the tab last time (out of memory): say why the picture looks simpler
+    const trouble = bootTrouble();
+    if (trouble) {
+      const name = getState().quality === 'eco' ? 'Tiết kiệm pin' : 'Nhẹ';
+      setTimeout(
+        () => toast(`📉 Lần trước máy bị quá tải nên đã tạm hạ đồ hoạ xuống "${name}". Đổi lại trong ⋯ → Cài đặt bất cứ lúc nào.`, 'info', 9000),
+        2500,
+      );
+    }
   }
 
   private startWith(world: World) {
@@ -270,6 +288,9 @@ class Game {
     this.fastTimer = window.setInterval(() => this.fastTick(), 60);
 
     this.pomoTimer = window.setInterval(() => this.tickPomodoro(), 1000);
+    // Hanoi's weather: the worker caches one reading for everybody, so this is cheap to repeat
+    void this.pullWeather();
+    this.weatherTimer = window.setInterval(() => void this.pullWeather(), 10 * 60_000);
     document.addEventListener('visibilitychange', this.onVisibility);
   }
 
@@ -399,6 +420,10 @@ class Game {
     }
     this.ambience?.setQuietZone(inside || ZONE_BY_ID.get(this.zoneId)?.kind === 'focus' || inKara || this.zoneId === 'wolfroom');
     this.ambience?.setHum(this.zoneId.startsWith('f5-'));
+    // rain on the windows — muffled in the rooms with no outside wall
+    const zk = ZONE_BY_ID.get(this.zoneId)?.kind;
+    const sealed = zk === 'cinema' || zk === 'bar' || zk === 'karaoke' || zk === 'wolf' || zk === 'mole' || zk === 'prop' || zk === 'game';
+    this.ambience?.setRain(rainLevel(getState().weather) * (sealed ? 0.22 : 1));
     if (inside !== this.wasInCinema) {
       this.wasInCinema = inside;
       // entering: show the controls unless a film is already running (then keep them out of the way)
@@ -406,9 +431,25 @@ class Game {
     }
   }
 
+  /** Read the weather over Hanoi and hand it to the renderer + the status chip. */
+  private async pullWeather() {
+    if (document.hidden) return;
+    try {
+      const res = await fetch('/api/weather', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const w = (await res.json()) as Weather;
+      if (!Number.isFinite(w.cloud)) return;
+      this.world?.setWeather(w);
+      setState({ weather: w });
+    } catch {
+      /* offline or the weather service is down: the sky keeps whatever it had */
+    }
+  }
+
   stop() {
     clearInterval(this.pomoTimer);
     clearInterval(this.fastTimer);
+    clearInterval(this.weatherTimer);
     this.cinema?.dispose();
     this.cinema = null;
     this.jukebox?.dispose();
@@ -586,11 +627,13 @@ class Game {
       team,
       today: m.today,
       officeName: m.office.name,
+      tzOffsetMinutes: m.office.tzOffsetMinutes,
       serverOffset: m.serverTime - Date.now(),
       connected: true,
       kicked: null,
     });
     const world = this.world!;
+    world.setTimezone(m.office.tzOffsetMinutes);
     // drop remotes that vanished while we were offline
     for (const id of stale) world.removePlayer(id);
     // build ids are build timestamps: a newer server → reload; an older one → it is still switching over
@@ -1995,7 +2038,7 @@ class Game {
   setQuality(q: Quality) {
     savePref('quality', q);
     setState({ quality: q });
-    this.world?.setQuality(q);
+    this.world?.setQuality(q, true); // chosen by hand: start at the top of the preset
   }
 
   setFpsCap(cap: FpsCap) {

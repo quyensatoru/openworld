@@ -157,3 +157,38 @@ function profileHandoff(): void {
 // At load, before anything reads the profile or the settings (the store reads them as it is created
 // and imports this module first).
 profileHandoff();
+
+// ------------------------------------------------------------------ crash guard
+// iOS Safari kills a tab that asks for too much memory ("A problem repeatedly occurred"), and it
+// kills it again the moment you reload into the same settings. So each start leaves a mark and
+// clears it once the page has been running for a while: finding the mark still there on the next
+// start means the last one never got going, and the graphics come back a step lower.
+const BOOT_KEY = 'office-boot-trouble';
+
+/** How many starts in a row ended without the page ever settling. */
+export function bootTrouble(): number {
+  try {
+    const n = Number(localStorage.getItem(BOOT_KEY));
+    return Number.isFinite(n) && n > 0 ? Math.min(n, 3) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Called as the page starts: raises the count until `bootSettled()` clears it. */
+export function bootStarting(): void {
+  try {
+    localStorage.setItem(BOOT_KEY, String(bootTrouble() + 1));
+  } catch {
+    /* private mode */
+  }
+}
+
+/** The page has been up and drawing for a while (or the player navigated away on purpose). */
+export function bootSettled(): void {
+  try {
+    localStorage.removeItem(BOOT_KEY);
+  } catch {
+    /* private mode */
+  }
+}

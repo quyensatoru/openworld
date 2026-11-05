@@ -166,6 +166,7 @@ export class Ambience {
     src.connect(lp).connect(this.hum).connect(this.master);
     src.start();
     if (this.facilityOn) this.applyHum(); // setHum(true) arrived before the first user gesture
+    if (this.rainLevel > 0.01) this.setRain(this.rainLevel); // same, for rain
     if (document.hidden) ctx.suspend().catch(() => {});
   }
 
@@ -183,6 +184,48 @@ export class Ambience {
   setQuietZone(q: boolean) {
     this.quietZone = q;
     if (this.hum && this.ctx) this.hum.gain.setTargetAtTime(this.roomTone(), this.ctx.currentTime, 0.8);
+  }
+
+  /**
+   * Rain against the windows, 0 (dry) .. 1 (downpour). Filtered noise with a slow swell, built the
+   * first time it is needed and then just rides its gain — safe to call every frame.
+   */
+  setRain(level: number) {
+    this.rainLevel = Math.max(0, Math.min(1, level));
+    const ctx = this.ctx;
+    if (!ctx || !this.master) return;
+    if (!this.rain) {
+      if (this.rainLevel < 0.01) return;
+      this.rain = this.buildRain(ctx, this.master);
+    }
+    this.rain.gain.gain.setTargetAtTime(this.rainLevel * 0.085, ctx.currentTime, 1.5);
+    // heavier rain is brighter: the patter on the glass comes through
+    this.rain.hp.frequency.setTargetAtTime(380 + this.rainLevel * 520, ctx.currentTime, 1.5);
+  }
+
+  private buildRain(ctx: AudioContext, dest: AudioNode): { gain: GainNode; hp: BiquadFilterNode } {
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 400;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 5200;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    // a slow swell so it never sits perfectly still
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.07;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 900;
+    lfo.connect(lfoGain).connect(lp.frequency);
+    lfo.start(t);
+    src.connect(hp).connect(lp).connect(gain).connect(dest);
+    src.start();
+    return { gain, hp };
   }
 
   /** Office HVAC level: quiet zones are hushed, and it ducks under the floor-5 facility hum. */
@@ -1052,6 +1095,8 @@ export class Ambience {
   }
 
   // ------------------------------------------------------------------ floor-5 facility hum (Nội Gián)
+  private rain: { gain: GainNode; hp: BiquadFilterNode } | null = null;
+  private rainLevel = 0;
   private facilityOn = false;
   private facility: FacilityHum | null = null;
   private facilityNoise: AudioBuffer | null = null;

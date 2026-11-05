@@ -127,6 +127,9 @@ export interface Pickable {
   stairs?: number;
 }
 
+/** What the lawn and the trees fade towards after dark. */
+const NIGHT_GROUND = new THREE.Color('#0c1220');
+
 export class OfficeScene {
   readonly group = new THREE.Group();
   /** Floor 2 (hidden while you are downstairs, so the camera can look into the office). */
@@ -177,6 +180,9 @@ export class OfficeScene {
   readonly f5: Floor5Fx;
   readonly f6: Floor6Fx;
   private shadowFloor = -1;
+  /** Lawn, path and trees: they are lit by the sun, so after dark we darken them by hand. */
+  private outdoorMats: { m: THREE.MeshStandardMaterial; base: THREE.Color }[] = [];
+  private nightK = -1;
   private doors: { door: Door; left: THREE.Mesh; right: THREE.Mesh; open: number }[] = [];
 
   constructor() {
@@ -204,11 +210,13 @@ export class OfficeScene {
     ground.position.set(OFFICE_W / 2, -0.02, OFFICE_D / 2);
     ground.receiveShadow = true;
     this.group.add(ground);
+    this.markOutdoor(ground);
     const path = new THREE.Mesh(new THREE.PlaneGeometry(4, 30), mat('#e9e2d6', { rough: 1 }));
     path.rotation.x = -Math.PI / 2;
     path.position.set(20, -0.01, OFFICE_D + 15);
     path.receiveShadow = true;
     this.group.add(path);
+    this.markOutdoor(path);
 
     for (const z of ZONES) {
       const zf = floorOf(z.x0);
@@ -367,6 +375,7 @@ export class OfficeScene {
     trees.forEach(([x, z, s], i) => {
       const t = tree(`tree-${i}`, s);
       t.position.set(x, 0, z);
+      this.markOutdoor(t);
       staticOut.add(t);
     });
 
@@ -384,6 +393,30 @@ export class OfficeScene {
   }
 
   /** Which floors are drawn; only the floor you are on casts shadows (upper ones would darken it). */
+  /** Remember a material that only exists outdoors (its colours are not shared with the interior). */
+  private markOutdoor(root: THREE.Object3D) {
+    root.traverse((n) => {
+      const mesh = n as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[]) {
+        if (!m?.isMeshStandardMaterial) continue;
+        if (this.outdoorMats.some((e) => e.m === m)) continue;
+        this.outdoorMats.push({ m, base: m.color.clone() });
+      }
+    });
+  }
+
+  /**
+   * 0 = daylight, 1 = night. The sun lights the whole world at once, so this is what makes the
+   * lawn and the trees go dark while the rooms stay lit — the point of the whole thing: after
+   * dark, almost all the light you see outside is coming out of the windows.
+   */
+  setOutdoorNight(k: number) {
+    if (Math.abs(k - this.nightK) < 0.004) return;
+    this.nightK = k;
+    for (const e of this.outdoorMats) e.m.color.copy(e.base).lerp(NIGHT_GROUND, k * 0.94);
+  }
+
   setFloorView(visible: boolean[], shadowFloor: number) {
     this.levels.forEach((g, f) => (g.visible = visible[f]));
     // a stairwell's lining only matters while the floor it leads down to isn't drawn

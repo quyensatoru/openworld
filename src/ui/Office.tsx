@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ZONE_BY_ID } from '../../shared/map';
 import { STATUS_META } from '../../shared/protocol';
+import { daylight, localHour, weatherText } from '../../shared/weather';
 import { game } from '../game';
 import { loadPref, savePref } from '../profile';
 import { getState, setState, useStore } from '../store';
@@ -190,6 +191,7 @@ function TopBar() {
   const zoneName = (zone ? ZONE_BY_ID.get(zone)?.name ?? '' : '…').replace(/\s*\(tầng \d\)/, '').replace(/ — .*/, '');
   return (
     <div className="topbar" ref={ref}>
+      <div className="topbar-row">
       <button className={`loc-pill glass${open ? ' on' : ''}`} onClick={() => setOpen(!open)} title="Đi tới nơi khác">
         <span className="loc-floor">T{floor + 1}</span>
         <span className="loc-zone">{zoneName}</span>
@@ -199,10 +201,37 @@ function TopBar() {
         </span>
         <span className="loc-caret">▾</span>
       </button>
+      <Safe><WeatherChip /></Safe>
+      </div>
       {open && <PlacesMenu zone={zone ?? ''} onPick={() => setOpen(false)} />}
     </div>
   );
 }
+
+/** Hanoi's weather and local time — the same sky everyone in the office is looking at. */
+function WeatherChip() {
+  const w = useStore((s) => s.weather);
+  const tz = useStore((s) => s.tzOffsetMinutes);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const hour = localHour(Date.now(), tz);
+  const day = daylight(hour, w.sunrise, w.sunset);
+  const { emoji, label } = weatherText(w, day < 0.35);
+  const hh = Math.floor(hour);
+  const mm = Math.floor((hour - hh) * 60);
+  return (
+    <div className="wx-pill glass" title={`${label} ở Hà Nội · ${w.tempC}° · mặt trời mọc ${fmtHour(w.sunrise)}, lặn ${fmtHour(w.sunset)}`}>
+      <span className="wx-emoji">{emoji}</span>
+      <span className="wx-temp">{w.tempC}°</span>
+      <span className="wx-time">{`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`}</span>
+    </div>
+  );
+}
+
+const fmtHour = (h: number) => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
 
 function PlacesMenu({ zone, onPick }: { zone: string; onPick(): void }) {
   const players = useStore((s) => s.players);
