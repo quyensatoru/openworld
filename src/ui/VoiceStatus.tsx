@@ -18,7 +18,11 @@ export function VoiceStatus() {
   }, []);
   if (!me || (!mic && !Object.keys(peers).length)) return null;
 
-  const around = Object.values(peers).map((p) => players[p.id]?.name).filter(Boolean);
+  // (Trốn tìm: you may hear a hider talk, but the list never says one is near — it'd be a radar)
+  const around = Object.values(peers)
+    .filter((p) => !game.phMasked(p.id))
+    .map((p) => players[p.id]?.name)
+    .filter(Boolean);
   const pos = game.world?.positionOf(me.id);
   const zone = pos ? zoneAt(pos.x, pos.z) : null;
   void failed;

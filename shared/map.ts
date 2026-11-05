@@ -1,9 +1,10 @@
 // Office layout shared by the client (3D build, collision, path finding) and the server (zones).
+import { F6, PH_BOARD, PH_ROOMS, PH_ROOM_IDS, PH_WALLS, phZone, type PhRoom } from './prophunt';
 import { BELL, CAM_DESK, CRIT, FUSE, FUSE_SPOT, MOLE_BOARD, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, MOLE_WALLS, ROOM_META, STATIONS, TASK_META, doorMid, type MoleTaskKind } from './mole';
 // Units are metres. x grows to the east, z grows to the south, y is up.
 // Character yaw `ry`: 0 = facing +z (south), PI/2 = facing +x (east).
 
-export type ZoneKind = 'work' | 'meeting' | 'pantry' | 'focus' | 'lounge' | 'lobby' | 'cinema' | 'bar' | 'game' | 'karaoke' | 'wolf' | 'mole';
+export type ZoneKind = 'work' | 'meeting' | 'pantry' | 'focus' | 'lounge' | 'lobby' | 'cinema' | 'bar' | 'game' | 'karaoke' | 'wolf' | 'mole' | 'prop';
 
 export interface Rect {
   x0: number;
@@ -96,7 +97,27 @@ export type FurnitureKind =
   | 'pillar'
   | 'cabinet'
   | 'bed'
-  | 'monitorWall';
+  | 'monitorWall'
+  // floor 6 showroom (prop hunt)
+  | 'armchair'
+  | 'tvStand'
+  | 'carton'
+  | 'teddy'
+  | 'toyBall'
+  | 'bedDouble'
+  | 'nightstand'
+  | 'stool2'
+  | 'trashBin'
+  | 'washer'
+  | 'chairProp'
+  | 'pallet'
+  | 'trolley'
+  | 'cone'
+  | 'fireExt'
+  | 'kidsHouse'
+  | 'phBoard'
+  | 'locker'
+  | 'wardrobe';
 
 export interface Furniture {
   id: string;
@@ -145,8 +166,8 @@ export const GROUND_W = OFFICE_W;
 //   floor 2 (x 120..160) BSS Net game room (above the bar) · hall — an L around the cinema roof
 //   floor 3 (x 180..220) karaoke · werewolf village · hall
 //   floor 4 (x 240..280) "Nội Gián": six rooms round a meeting room · hall
-export type Floor = 0 | 1 | 2 | 3 | 4;
-export const FLOORS = 5;
+export type Floor = 0 | 1 | 2 | 3 | 4 | 5;
+export const FLOORS = 6;
 export const FLOOR_H = 3.4;
 export const UP_DX = 60;
 /** Every room is this tall (the slab between floors is FLOOR_H - WALL_H). */
@@ -182,14 +203,16 @@ export const WOLF_RING = 3.1;
 /** Floor 5: the "Nội Gián" game (layout + rules in shared/mole.ts). */
 export const ROOF5 = { x0: 240, z0: 0, x1: 280, z1: 28 };
 export const HALL5 = { x0: 252, z0: 19, x1: 280, z1: 28 };
-export const WORLD_W = ROOF5.x1;
+/** Floor 6: the prop-hunt furniture showroom (layout + rules in shared/prophunt.ts). */
+export const ROOF6 = { x0: 300, z0: 0, x1: 340, z1: 28 };
+export const WORLD_W = ROOF6.x1;
 export const WORLD_D = OFFICE_D;
 export const WALL_T = 0.2;
 export const PLAYER_RADIUS = 0.28;
 export const SPAWN = { x: 20, z: 25.5, ry: Math.PI };
 
 export function floorOf(x: number): Floor {
-  return x >= 230 ? 4 : x >= 170 ? 3 : x >= 110 ? 2 : x >= 50 ? 1 : 0;
+  return x >= 290 ? 5 : x >= 230 ? 4 : x >= 170 ? 3 : x >= 110 ? 2 : x >= 50 ? 1 : 0;
 }
 /** Where a logical x is drawn. */
 export function visualX(x: number): number {
@@ -203,7 +226,7 @@ export function sameFloorX(x: number, ref: number): number {
 // ---------------------------------------------------------------- stairs
 /** A flight of stairs from floor `lower` to the one above, along the south wall (drawn coords). */
 export interface Stairway {
-  lower: 0 | 1 | 2 | 3;
+  lower: 0 | 1 | 2 | 3 | 4;
   x0: number;
   x1: number;
   z0: number;
@@ -216,6 +239,7 @@ export const STAIRWAYS: Stairway[] = [
   { lower: 1, x0: 26.0, x1: 34.0, z0: 26.0, z1: 27.9, dir: 1 }, // hall 2 → hall 3
   { lower: 2, x0: 10.6, x1: 18.6, z0: 26.0, z1: 27.9, dir: -1 }, // hall 3 → hall 4
   { lower: 3, x0: 26.0, x1: 34.0, z0: 26.0, z1: 27.9, dir: 1 }, // hall 4 → hall 5
+  { lower: 4, x0: 10.6, x1: 18.6, z0: 26.0, z1: 27.9, dir: -1 }, // hall 5 → hall 6
 ];
 export const STAIRS = STAIRWAYS[0];
 export const STAIR_STEPS = 20;
@@ -268,13 +292,13 @@ const liftAt = (floor: Floor): Lift => {
   const x0 = 22.0 + floor * UP_DX;
   return { floor, x0, x1: x0 + 2.4, z0: 25.8, z1: 28, cx: x0 + 1.2, cz: 26.95 };
 };
-export const LIFTS: Lift[] = [liftAt(0), liftAt(1), liftAt(2), liftAt(3), liftAt(4)];
+export const LIFTS: Lift[] = [liftAt(0), liftAt(1), liftAt(2), liftAt(3), liftAt(4), liftAt(5)];
 /** Inside a lift car (standing room). */
 export function liftAtPos(x: number, z: number): Lift | null {
   for (const l of LIFTS) if (x > l.x0 + 0.2 && x < l.x1 - 0.2 && z > l.z0 + 0.3 && z < l.z1) return l;
   return null;
 }
-export const FLOOR_NAMES = ['Tầng 1 · Văn phòng', 'Tầng 2 · Rạp phim & Bar', 'Tầng 3 · Phòng game', 'Tầng 4 · Karaoke & Ma sói', 'Tầng 5 · Nội Gián'];
+export const FLOOR_NAMES = ['Tầng 1 · Văn phòng', 'Tầng 2 · Rạp phim & Bar', 'Tầng 3 · Phòng game', 'Tầng 4 · Karaoke & Ma sói', 'Tầng 5 · Nội Gián', 'Tầng 6 · Trốn tìm'];
 export const DANCE_FLOOR = { x0: 89, z0: 7.5, x1: 95, z1: 13.5 };
 /** Lucky wheel on the bar's south wall (centre height above the upper floor). */
 export const WHEEL_SPOT = { x: 87.0, y: 1.75, z: 19.82 };
@@ -321,6 +345,11 @@ export const ZONES: Zone[] = [
   { id: 'hall4', name: 'Sảnh tầng 4', kind: 'lobby', floor: 'stone', ...HALL4 },
   // floor 5: every room is one zone id, made of one or more rectangles (L-shaped rooms, corridors)
   ...MOLE_ROOMS.flatMap((k) => ROOM_META[k].rects.map((r): Zone => ({ id: `f5-${k}`, name: ROOM_META[k].name, kind: 'mole', floor: ROOM_META[k].floor, ...r }))),
+  // floor 6: the showroom (prop hunt)
+  ...PH_ROOM_IDS.map((k): Zone => {
+    const r = PH_ROOMS[k];
+    return { id: phZone(k), name: r.name, kind: 'prop', floor: r.floor, x0: F6 + r.x0, z0: r.z0, x1: F6 + r.x1, z1: r.z1 };
+  }),
 ];
 
 const PI = Math.PI;
@@ -362,6 +391,13 @@ export const WALLS: Wall[] = [
   { x0: STAIRWAYS[3].x1 + 3 * UP_DX, z0: 26.0, x1: STAIRWAYS[3].x1 + 3 * UP_DX, z1: OFFICE_D, kind: 'hidden' },
   { x0: STAIRWAYS[3].x0 + 4 * UP_DX, z0: 26.0, x1: STAIRWAYS[3].x1 + 4 * UP_DX, z1: 26.0, kind: 'rail' },
   { x0: STAIRWAYS[3].x0 + 4 * UP_DX, z0: 26.0, x1: STAIRWAYS[3].x0 + 4 * UP_DX, z1: OFFICE_D, kind: 'rail' },
+  // fifth flight (hall 5 → hall 6): its sides on floor 5, its stairwell balustrade on floor 6
+  { x0: STAIRWAYS[4].x0 + 4 * UP_DX, z0: 26.0, x1: STAIRWAYS[4].x1 - 1.0 + 4 * UP_DX, z1: 26.0, kind: 'hidden' },
+  { x0: STAIRWAYS[4].x0 + 4 * UP_DX, z0: 26.0, x1: STAIRWAYS[4].x0 + 4 * UP_DX, z1: OFFICE_D, kind: 'hidden' },
+  { x0: STAIRWAYS[4].x0 + 5 * UP_DX, z0: 26.0, x1: STAIRWAYS[4].x1 + 5 * UP_DX, z1: 26.0, kind: 'rail' },
+  { x0: STAIRWAYS[4].x1 + 5 * UP_DX, z0: 26.0, x1: STAIRWAYS[4].x1 + 5 * UP_DX, z1: OFFICE_D, kind: 'rail' },
+  // ---- floor 6 (prop hunt showroom): rooms with wide doorways (shared/prophunt.ts)
+  ...PH_WALLS,
   // ---- floor 5 ("Nội Gián"): generated from the floor plan grid (shared/mole.ts), doorways cut out
   ...MOLE_WALLS.map((w): Wall => ({ ...w, kind: 'up' })),
   // ---- floor 4: karaoke | werewolf village, hall along the south (doors 189..191.4, 209..211.4)
@@ -882,9 +918,10 @@ for (const l of LIFTS) {
   f('waterCooler', 9.5, 27.5, 0.4, 0.4, -PI / 2, 'med');
   f('bigPlant', 6.5, 20.5, 0.7, 0.7, 0, 'med');
   // Sảnh tầng 5 + corridors
-  addF('sofa', X(15.0), 27.45, 2.4, 0.9, PI, true, Z('hall'));
-  addSeat('sofa', X(14.45), 27.35, PI, Z('hall'), 'Ghế chờ', 'hall5-1');
-  addSeat('sofa', X(15.55), 27.35, PI, Z('hall'), 'Ghế chờ', 'hall5-2');
+  // (the stairs up to floor 6 run along the south wall at 10.6..18.6)
+  addF('sofa', X(36.4), 27.45, 2.4, 0.9, PI, true, Z('hall'));
+  addSeat('sofa', X(35.85), 27.35, PI, Z('hall'), 'Ghế chờ', 'hall5-1');
+  addSeat('sofa', X(36.95), 27.35, PI, Z('hall'), 'Ghế chờ', 'hall5-2');
   f('pillar', 19.0, 24.0, 0.6, 0.6, 0, 'hall');
   f('pillar', 31.0, 24.4, 0.6, 0.6, 0, 'hall');
   f('bigPlant', 39.35, 27.35, 0.7, 0.7, 0, 'hall');
@@ -904,6 +941,126 @@ for (const l of LIFTS) {
   f('bigPlant', 10.6, 9.6, 0.7, 0.7, 0, 'hr');
   f('bigPlant', 10.6, 20.4, 0.7, 0.7, 0, 'lounge');
   f('cabinet', 27.6, 12.0, 0.9, 0.5, PI / 2, 'elec');
+}
+
+// ------------------------------------------------------------------ floor 6: prop-hunt showroom
+// Plenty of the same small things in every room (somewhere to blend in), walkways and doorways kept clear.
+{
+  const f = (kind: FurnitureKind, lx: number, z: number, w: number, d: number, ry: number, room: PhRoom) => addF(kind, F6 + lx, z, w, d, ry, true, phZone(room));
+  // Phòng khách mẫu
+  f('sofa', 4.2, 0.75, 2.4, 0.9, 0, 'living');
+  f('sofa', 10.4, 0.75, 2.4, 0.9, 0, 'living');
+  f('coffeeTable', 4.2, 2.3, 1.2, 0.6, 0, 'living');
+  f('coffeeTable', 10.4, 2.3, 1.2, 0.6, 0, 'living');
+  f('armchair', 1.0, 3.6, 0.85, 0.85, PI / 2, 'living');
+  f('armchair', 7.3, 2.6, 0.85, 0.85, 0.15, 'living');
+  f('armchair', 12.9, 7.4, 0.85, 0.85, -PI / 2, 'living');
+  f('tvStand', 2.6, 8.55, 1.6, 0.45, PI, 'living');
+  f('lamp', 0.55, 0.55, 0.4, 0.4, 0, 'living');
+  f('lamp', 13.45, 0.55, 0.4, 0.4, 0, 'living');
+  f('lamp', 7.3, 0.5, 0.4, 0.4, 0, 'living');
+  f('plant', 0.55, 8.45, 0.5, 0.5, 0, 'living');
+  f('plant', 9.2, 8.45, 0.5, 0.5, 0, 'living');
+  f('bigPlant', 4.9, 6.4, 0.7, 0.7, 0, 'living');
+  f('beanbag', 10.2, 5.9, 0.9, 0.9, 0.4, 'living');
+  f('beanbag', 11.0, 7.9, 0.9, 0.9, -0.6, 'living');
+  f('bookshelf', 0.25, 6.0, 1.2, 0.4, PI / 2, 'living');
+  f('carton', 4.4, 8.4, 0.55, 0.45, 0.1, 'living');
+  f('teddy', 12.2, 1.9, 0.4, 0.4, -0.4, 'living');
+  f('toyBall', 8.6, 5.6, 0.45, 0.45, 0, 'living');
+  f('trashBin', 13.5, 2.6, 0.4, 0.4, 0, 'living');
+  // Phòng ngủ mẫu
+  f('bedDouble', 17.2, 1.15, 1.7, 2.1, 0, 'bedroom');
+  f('bedDouble', 23.6, 1.15, 1.7, 2.1, 0, 'bedroom');
+  for (const x of [15.75, 18.65, 22.15, 25.05]) f('nightstand', x, 0.35, 0.5, 0.42, 0, 'bedroom');
+  f('wardrobe', 21.6, 8.6, 1.0, 0.55, PI, 'bedroom');
+  f('wardrobe', 22.65, 8.6, 1.0, 0.55, PI, 'bedroom');
+  f('wardrobe', 25.9, 8.6, 1.0, 0.55, PI, 'bedroom');
+  f('lamp', 26.5, 0.5, 0.4, 0.4, 0, 'bedroom');
+  f('plant', 14.5, 8.5, 0.5, 0.5, 0, 'bedroom');
+  f('armchair', 25.9, 7.1, 0.85, 0.85, -PI / 2 + 0.3, 'bedroom');
+  f('carton', 15.0, 7.4, 0.55, 0.45, -0.2, 'bedroom');
+  f('teddy', 20.4, 0.6, 0.4, 0.4, 0.2, 'bedroom');
+  f('teddy', 19.0, 2.7, 0.4, 0.4, 0.8, 'bedroom');
+  f('toyBall', 20.2, 6.6, 0.45, 0.45, 0, 'bedroom');
+  f('beanbag', 24.2, 6.8, 0.9, 0.9, 0.3, 'bedroom');
+  f('trashBin', 26.6, 2.4, 0.4, 0.4, 0, 'bedroom');
+  // Bếp mẫu
+  for (const x of [28.6, 30.6, 32.6]) f('counter', x, 0.35, 2.0, 0.6, 0, 'kitchen');
+  f('fridge', 34.3, 0.4, 0.8, 0.7, 0, 'kitchen');
+  f('fridge', 35.2, 0.4, 0.8, 0.7, 0, 'kitchen');
+  f('carton', 36.4, 0.45, 0.55, 0.45, 0.15, 'kitchen');
+  f('waterCooler', 39.55, 2.4, 0.4, 0.4, -PI / 2, 'kitchen');
+  f('washer', 39.4, 6.0, 0.65, 0.65, -PI / 2, 'kitchen');
+  f('washer', 39.4, 6.75, 0.65, 0.65, -PI / 2, 'kitchen');
+  f('roundTable', 31.0, 4.6, 1.0, 1.0, 0, 'kitchen');
+  f('roundTable', 35.6, 4.6, 1.0, 1.0, 0, 'kitchen');
+  for (const [x, z] of [[30.1, 4.6], [31.9, 4.6], [31.0, 5.5], [34.7, 4.6], [36.5, 4.6], [35.6, 3.7]]) f('stool2', x, z, 0.4, 0.4, 0, 'kitchen');
+  f('trashBin', 27.6, 8.5, 0.4, 0.4, 0, 'kitchen');
+  f('trashBin', 39.5, 8.5, 0.4, 0.4, 0, 'kitchen');
+  f('carton', 29.0, 8.4, 0.55, 0.45, 0.3, 'kitchen');
+  f('plant', 37.0, 8.5, 0.5, 0.5, 0, 'kitchen');
+  // Văn phòng mẫu
+  f('desk', 1.0, 11.6, 1.4, 0.7, PI / 2, 'office');
+  f('desk', 1.0, 15.6, 1.4, 0.7, PI / 2, 'office');
+  f('chairProp', 2.0, 11.6, 0.6, 0.6, -PI / 2, 'office');
+  f('chairProp', 2.0, 15.6, 0.6, 0.6, -PI / 2, 'office');
+  f('desk', 9.6, 10.2, 1.4, 0.7, PI, 'office');
+  f('chairProp', 9.6, 11.2, 0.6, 0.6, 0, 'office');
+  f('desk', 9.6, 17.5, 1.4, 0.7, 0, 'office');
+  f('chairProp', 9.6, 16.5, 0.6, 0.6, PI, 'office');
+  f('chairProp', 5.6, 14.2, 0.6, 0.6, 0.7, 'office');
+  f('printer', 11.45, 18.45, 0.6, 0.5, -PI / 2, 'office');
+  f('filing', 7.6, 18.65, 1.0, 0.55, PI, 'office');
+  f('waterCooler', 4.4, 9.45, 0.4, 0.4, 0, 'office');
+  f('bookshelf', 0.25, 17.8, 1.2, 0.4, PI / 2, 'office');
+  f('plant', 2.2, 18.5, 0.5, 0.5, 0, 'office');
+  f('plant', 11.5, 9.5, 0.5, 0.5, 0, 'office');
+  f('trashBin', 2.0, 13.6, 0.4, 0.4, 0, 'office');
+  f('trashBin', 8.3, 12.0, 0.4, 0.4, 0, 'office');
+  f('carton', 10.6, 12.2, 0.55, 0.45, 0.5, 'office');
+  // Kho hàng
+  for (const x of [14.0, 22.5, 25.0]) f('shelfRack', x, 9.4, 2.0, 0.6, 0, 'storage');
+  for (const x of [14.0, 23.2, 25.7]) f('shelfRack', x, 18.6, 2.0, 0.6, PI, 'storage');
+  f('crates', 14.6, 12.0, 1.0, 0.9, 0.1, 'storage');
+  f('crates', 15.4, 16.4, 1.0, 0.9, -0.2, 'storage');
+  f('crates', 22.8, 16.0, 1.0, 0.9, 0.3, 'storage');
+  f('crates', 25.3, 12.4, 1.0, 0.9, 0, 'storage');
+  f('pallet', 19.0, 13.8, 1.2, 1.0, 0, 'storage');
+  for (const [x, z, r] of [[16.7, 11.4, 0], [17.4, 12.0, 0.5], [21.0, 12.2, 0.2], [21.6, 12.8, -0.3], [18.6, 16.9, 0.1], [24.4, 16.9, 0.7], [26.8, 15.9, 0], [13.2, 17.2, 0.4], [20.8, 10.4, 0]])
+    f('carton', x, z, 0.55, 0.45, r, 'storage');
+  f('trolley', 20.6, 17.6, 0.6, 1.0, 0.3, 'storage');
+  f('trolley', 26.9, 10.9, 0.6, 1.0, -0.2, 'storage');
+  f('cone', 16.2, 14.0, 0.35, 0.35, 0, 'storage');
+  f('cone', 22.4, 13.6, 0.35, 0.35, 0, 'storage');
+  f('fireExt', 12.35, 10.6, 0.3, 0.3, PI / 2, 'storage');
+  f('fireExt', 27.65, 17.6, 0.3, 0.3, -PI / 2, 'storage');
+  // Khu đồ chơi & thu ngân
+  f('counter', 30.0, 17.9, 2.0, 0.6, 0, 'kids');
+  f('stool2', 30.0, 18.6, 0.4, 0.4, 0, 'kids');
+  f('vending', 39.45, 17.6, 0.9, 0.7, -PI / 2, 'kids');
+  f('kidsHouse', 37.6, 11.0, 1.6, 1.6, 0, 'kids');
+  f('bookshelf', 39.75, 14.6, 1.2, 0.4, -PI / 2, 'kids');
+  for (const [x, z, r] of [[29.0, 10.0, 0.6], [31.3, 11.6, -0.3], [39.2, 9.7, -0.8], [35.6, 16.0, 0.2], [33.0, 14.5, 1.2]]) f('teddy', x, z, 0.4, 0.4, r, 'kids');
+  for (const [x, z] of [[30.6, 13.4], [34.2, 12.2], [38.1, 13.8], [34.0, 17.0]]) f('toyBall', x, z, 0.45, 0.45, 0, 'kids');
+  f('beanbag', 36.2, 13.6, 0.9, 0.9, 0.5, 'kids');
+  f('beanbag', 29.5, 15.9, 0.9, 0.9, -0.4, 'kids');
+  f('plant', 28.6, 18.5, 0.5, 0.5, 0, 'kids');
+  f('plant', 36.2, 18.5, 0.5, 0.5, 0, 'kids');
+  f('carton', 35.8, 9.55, 0.55, 0.45, 0.2, 'kids');
+  f('trashBin', 31.6, 18.5, 0.4, 0.4, 0, 'kids');
+  // Sảnh tầng 6 (the stairs come up at 10.6..18.6 on the south wall, the lift at 22..24.4)
+  f('phBoard', PH_BOARD.x, PH_BOARD.z, 2.2, 0.2, PI, 'hall');
+  f('sofa', 2.2, 27.45, 2.4, 0.9, PI, 'hall');
+  f('bigPlant', 0.6, 19.7, 0.7, 0.7, 0, 'hall');
+  f('bigPlant', 27.3, 19.7, 0.7, 0.7, 0, 'hall');
+  f('plant', 20.6, 27.5, 0.5, 0.5, 0, 'hall');
+  f('lamp', 27.4, 27.5, 0.4, 0.4, 0, 'hall');
+  // Phòng chờ người tìm: lockers and benches
+  for (let i = 0; i < 6; i++) f('locker', 39.65, 20.4 + i * 0.62, 0.6, 0.5, -PI / 2, 'cage');
+  f('sofa', 31.5, 27.45, 2.4, 0.9, PI, 'cage');
+  f('sofa', 35.5, 27.45, 2.4, 0.9, PI, 'cage');
+  f('trashBin', 29.0, 27.5, 0.4, 0.4, 0, 'cage');
 }
 
 /** Furniture tall enough to hide behind on floor 5 (blocks the line of sight). */

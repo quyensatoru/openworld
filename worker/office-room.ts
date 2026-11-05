@@ -9,6 +9,7 @@ import { Arcade } from './arcade';
 import { Karaoke } from './karaoke';
 import { Werewolf } from './werewolf';
 import { MoleGame } from './mole';
+import { PropHuntGame } from './prophunt';
 import type { KaraState } from '../shared/karaoke';
 import { MEDIA_KIND, WORLD_D as OFFICE_D, WORLD_W as OFFICE_W, SEAT_BY_ID, SPAWN, ZONE_BY_ID, inRange, zoneAt, type MediaKind } from '../shared/map';
 import {
@@ -109,6 +110,19 @@ export class OfficeRoom extends DurableObject<Env> {
   });
   /** Nội Gián on floor 5. */
   private mole = new MoleGame({
+    people: () => [...this.conns.values()].map((c) => c.p),
+    send: (id, msg) => {
+      const c = this.conns.get(id);
+      if (c) this.send(c.ws, msg);
+    },
+    chat: (text) => this.systemChat(text),
+    err: (id, text) => {
+      const c = this.conns.get(id);
+      if (c) this.send(c.ws, { t: 'err', msg: text });
+    },
+  });
+  /** Trốn tìm biến hình (prop hunt) on floor 6. */
+  private ph = new PropHuntGame({
     people: () => [...this.conns.values()].map((c) => c.p),
     send: (id, msg) => {
       const c = this.conns.get(id);
@@ -344,6 +358,7 @@ export class OfficeRoom extends DurableObject<Env> {
     this.broadcast({ t: 'leave', id });
     this.wolf.leave(id);
     this.mole.leave(id);
+    this.ph.leave(id);
     const now = Date.now();
     if (c.workSince != null) {
       await db.addWorklog(this.env.DB, this.day(now), id, { workMs: now - c.workSince });
@@ -359,6 +374,8 @@ export class OfficeRoom extends DurableObject<Env> {
     if (prev === 'wolfroom' && zone !== 'wolfroom') this.wolf.broadcast();
     const f5 = (z: string) => z.startsWith('f5-');
     if (f5(zone) && !f5(prev)) this.mole.arrived(c.p.id);
+    const f6 = (z: string) => z.startsWith('f6-');
+    if (f6(zone) && !f6(prev)) this.ph.arrived(c.p.id);
   }
 
   // ------------------------------------------------------------------ voice / camera / screen relay
@@ -383,7 +400,7 @@ export class OfficeRoom extends DurableObject<Env> {
     for (const o of this.conns.values()) {
       if (o === c) continue;
       // Nội Gián (floor 5) may open or close the line regardless of distance
-      const forced = voice ? this.mole.voice(c.p, o.p) : null;
+      const forced = voice ? (this.mole.voice(c.p, o.p) ?? this.ph.voice(c.p, o.p)) : null;
       if (forced === false) continue;
       if (forced !== true && !inRange(c.p, o.p, kind, 1)) continue;
       if (village && !this.wolf.voiceAllowed(c.p.id, o.p.id)) continue;
@@ -528,6 +545,7 @@ export class OfficeRoom extends DurableObject<Env> {
     this.broadcast({ t: 'join', p }, id);
     this.wolf.rejoin(id);
     this.mole.rejoin(id);
+    this.ph.rejoin(id);
   }
 
   // ------------------------------------------------------------------ dispatch
@@ -752,6 +770,10 @@ export class OfficeRoom extends DurableObject<Env> {
 
       case 'mole':
         if (msg.m && typeof msg.m === 'object') this.mole.handle(p, msg.m);
+        return;
+
+      case 'prop':
+        if (msg.m && typeof msg.m === 'object') this.ph.handle(p, msg.m);
         return;
 
       case 'activity:token': {

@@ -43,7 +43,9 @@ interface TypistState {
 export type SfxKind =
   | 'howl' | 'dawn' | 'gavel' | 'death' | 'win' | 'lose' | 'applause' | 'drumroll' | 'flip' | 'tick'
   | 'siren' | 'powerdown' | 'task' | 'meeting' | 'stab' | 'body' | 'report' | 'eject' | 'type' | 'shh' | 'reveal'
-  | 'door' | 'doorLock' | 'vent' | 'ventMove' | 'kill';
+  | 'door' | 'doorLock' | 'vent' | 'ventMove' | 'kill'
+  // prop hunt (floor 6)
+  | 'pop' | 'phHit' | 'poof' | 'phFound' | 'phMiss' | 'shutter' | 'taunt0' | 'taunt1' | 'taunt2' | 'taunt3' | 'taunt4' | 'taunt5';
 
 /** Where every sfx goes: a soft clipper into the master, plus a send into a shared synthetic room reverb. */
 interface SfxBus {
@@ -344,11 +346,20 @@ export class Ambience {
   }
 
   /** Short synthesized effects; all go through the master volume. */
-  sfx(kind: SfxKind) {
+  /** `vol`: 0..1 — quieter for things further away. */
+  sfx(kind: SfxKind, vol = 1) {
     const ctx = this.ctx;
     const master = this.master;
-    if (!ctx || !master || ctx.state !== 'running') return;
-    const { input: out, verb } = this.ensureSfxBus(ctx, master);
+    if (!ctx || !master || ctx.state !== 'running' || vol <= 0.01) return;
+    const bus = this.ensureSfxBus(ctx, master);
+    const verb = bus.verb;
+    let out: AudioNode = bus.input;
+    if (vol < 0.99) {
+      const g = ctx.createGain();
+      g.gain.value = vol;
+      g.connect(bus.input);
+      out = g;
+    }
     const t = ctx.currentTime + 0.01; // a hair of lookahead so the sharp attacks land intact
 
     // ---- building blocks
@@ -529,6 +540,97 @@ export class Ambience {
     };
 
     switch (kind) {
+      // ---------------- prop hunt
+      case 'pop': {
+        // a foam-ball gun: a soft air "thup" and a little spring
+        noise(t, 0.07, 0.35, 'bandpass', 1400, 1.2)?.frequency.exponentialRampToValueAtTime(500, t + 0.06);
+        const o = osc('sine', 520, t, t + 0.09, 0.12);
+        o.frequency.exponentialRampToValueAtTime(180, t + 0.08);
+        return;
+      }
+      case 'phHit': {
+        // the ball bounces off a hider: a bright two-note "ding-dong" of a hit marker + a squeak
+        osc('triangle', 1318.5, t, t + 0.12, 0.09);
+        osc('triangle', 1760, t + 0.06, t + 0.22, 0.08);
+        const sq = osc('square', 900, t, t + 0.1, 0.02);
+        sq.frequency.exponentialRampToValueAtTime(1600, t + 0.09);
+        return;
+      }
+      case 'poof':
+        noise(t, 0.35, 0.3, 'lowpass', 2400, 0.7, out, 0.02)?.frequency.exponentialRampToValueAtTime(400, t + 0.3);
+        osc('sine', 300, t, t + 0.2, 0.05).frequency.exponentialRampToValueAtTime(120, t + 0.18);
+        return;
+      case 'phFound': {
+        // "gotcha!": a rising arpeggio and a cartoon pop
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => osc('triangle', f, t + i * 0.07, t + i * 0.07 + 0.25, 0.07));
+        noise(t, 0.06, 0.3, 'highpass', 2000);
+        return;
+      }
+      case 'phMiss': {
+        // you shot the furniture: a short buzzy "nope"
+        const o = osc('sawtooth', 220, t, t + 0.22, 0.06);
+        o.frequency.exponentialRampToValueAtTime(140, t + 0.2);
+        osc('square', 110, t, t + 0.22, 0.03);
+        return;
+      }
+      case 'shutter':
+        // the waiting room's roller shutter rattling up
+        for (let i = 0; i < 9; i++) noise(t + i * 0.09, 0.07, 0.12, 'bandpass', 1800 + (i % 3) * 300, 3);
+        osc('sawtooth', 70, t, t + 0.9, 0.03);
+        return;
+      case 'taunt0': {
+        // a wolf whistle
+        const o = osc('sine', 1400, t, t + 0.35, 0.1);
+        o.frequency.exponentialRampToValueAtTime(2600, t + 0.25);
+        const o2 = osc('sine', 1300, t + 0.45, t + 0.95, 0.1);
+        o2.frequency.exponentialRampToValueAtTime(2700, t + 0.6);
+        o2.frequency.exponentialRampToValueAtTime(1100, t + 0.92);
+        return;
+      }
+      case 'taunt1': {
+        // boing!
+        const o = osc('triangle', 180, t, t + 0.7, 0.16);
+        o.frequency.exponentialRampToValueAtTime(520, t + 0.08);
+        o.frequency.exponentialRampToValueAtTime(150, t + 0.65);
+        const lfo = ctx.createOscillator();
+        lfo.frequency.value = 18;
+        const d = ctx.createGain();
+        d.gain.value = 40;
+        lfo.connect(d).connect(o.frequency);
+        lfo.start(t);
+        lfo.stop(t + 0.75);
+        return;
+      }
+      case 'taunt2':
+        // quack quack
+        for (const s of [0, 0.28]) {
+          const o = osc('sawtooth', 520, t + s, t + s + 0.18, 0.07, filter('bandpass', 1100, 2.5, out));
+          o.frequency.exponentialRampToValueAtTime(380, t + s + 0.16);
+        }
+        return;
+      case 'taunt3':
+        // a party horn
+        for (const f of [392, 393.5]) {
+          const o = osc('sawtooth', f, t, t + 0.8, 0.05, filter('lowpass', 2400, 1, out));
+          o.frequency.setValueAtTime(f, t + 0.5);
+          o.frequency.exponentialRampToValueAtTime(f * 1.12, t + 0.75);
+        }
+        return;
+      case 'taunt4':
+        // a cheeky "hee-hee" (two little glides)
+        for (const s of [0, 0.2]) {
+          const o = osc('square', 900, t + s, t + s + 0.15, 0.035, filter('bandpass', 1800, 3, out));
+          o.frequency.exponentialRampToValueAtTime(1300, t + s + 0.06);
+          o.frequency.exponentialRampToValueAtTime(950, t + s + 0.14);
+        }
+        return;
+      case 'taunt5':
+        // a bicycle bell: ring-ring
+        for (const s of [0, 0.22]) {
+          osc('sine', 2093, t + s, t + s + 0.5, 0.05);
+          osc('sine', 2637, t + s, t + s + 0.4, 0.035);
+        }
+        return;
       case 'howl': {
         // a distant wolf: gliding, vibrato'd voice through a formant band, with an echo
         const bus = ctx.createGain();

@@ -3,6 +3,7 @@ import type { KaraState, MicFx } from '../shared/karaoke';
 import type { Floor } from '../shared/map';
 import type { WolfView } from '../shared/werewolf';
 import type { MoleView } from '../shared/mole';
+import type { PhView } from '../shared/prophunt';
 // Global UI state (React reads it through hooks; the 3D world and RTC write to it imperatively).
 // High-frequency data (positions) deliberately lives outside this store, in the World.
 
@@ -129,6 +130,15 @@ export interface OfficeStore {
   /** A big dramatic moment on screen (meeting called, you got laid off…). */
   moleSplash: { kind: 'report' | 'bell' | 'killed' | 'kill'; by?: string; body?: string | null; at: number } | null;
   wolfSpeech: boolean;
+  /** Trốn tìm biến hình (floor 6) */
+  ph: PhView | null;
+  phPanel: boolean;
+  /** the piece a hider would turn into right now */
+  phCand: { fid: string; name: string } | null;
+  /** your health as the last shot left it (the view only refreshes on bigger moments) */
+  phHp: number | null;
+  /** last time your shot hit a hider / you hit furniture / you got hit (for the crosshair + screen flashes) */
+  phMark: { kind: 'hit' | 'miss' | 'hurt'; at: number } | null;
   activity: Record<string, ActivityEvent[]>;
   activityToken: string | null | undefined; // undefined = not requested yet
   screenOf: string | null; // player whose Claude screen is open
@@ -218,6 +228,11 @@ export const useStore = create<OfficeStore>(() => ({
   micHeld: false,
   moleSplash: null,
   wolfSpeech: loadPref('wolfSpeech', true),
+  ph: null,
+  phPanel: !IS_TOUCH,
+  phCand: null,
+  phHp: null,
+  phMark: null,
   activity: {},
   activityToken: undefined,
   screenOf: null,

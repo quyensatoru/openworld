@@ -39,6 +39,7 @@ import {
   type MoleSettings,
   type MoleView,
 } from '../shared/mole';
+import { floorOf } from '../shared/map';
 import type { ServerMsg } from '../shared/protocol';
 
 export interface MoleHost {
@@ -62,6 +63,8 @@ interface P {
 const T = { starting: 5000, roles: 8000, meeting: 48_000, vote: 30_000, result: 9000, end: 18_000 };
 const BELLS = 1;
 
+/** On floor 5 (not just "at or above it": floor 6 is further along x). */
+const onMoleFloor = (x: number) => x >= MOLE_FLOOR_X0 && floorOf(x) === 4;
 const dist = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
 
 export class MoleGame {
@@ -176,7 +179,7 @@ export class MoleGame {
    */
   voice(from: { id: string; x: number }, to: { id: string; x: number }): boolean | null {
     if (!this.playing || this.phase === 'end') return null;
-    if (from.x < MOLE_FLOOR_X0 || to.x < MOLE_FLOOR_X0) return null;
+    if (!onMoleFloor(from.x) || !onMoleFloor(to.x)) return null;
     const a = this.get(from.id);
     const b = this.get(to.id);
     const aLive = !!a?.alive;
@@ -255,7 +258,7 @@ export class MoleGame {
   broadcast() {
     this.keepAlive();
     const ids = new Set<string>([...this.joined.keys(), ...this.players.map((p) => p.id)]);
-    for (const p of this.host.people()) if (p.x >= MOLE_FLOOR_X0) ids.add(p.id);
+    for (const p of this.host.people()) if (onMoleFloor(p.x)) ids.add(p.id);
     for (const id of ids) this.host.send(id, { t: 'mole', v: this.viewFor(id) });
   }
 
@@ -265,7 +268,7 @@ export class MoleGame {
 
   /** A message for everyone on floor 5. */
   private toFloor(msg: ServerMsg) {
-    for (const p of this.host.people()) if (p.x >= MOLE_FLOOR_X0) this.host.send(p.id, msg);
+    for (const p of this.host.people()) if (onMoleFloor(p.x)) this.host.send(p.id, msg);
   }
 
   /** Arrived on floor 5. */
@@ -313,7 +316,7 @@ export class MoleGame {
     switch (m.a) {
       case 'join': {
         if (this.playing) return this.host.err(pp.id, 'Ván đang diễn ra — chờ ván sau nhé 🕵️');
-        if (pp.x < MOLE_FLOOR_X0) return this.host.err(pp.id, 'Lên tầng 5 để tham gia Nội Gián nhé.');
+        if (!onMoleFloor(pp.x)) return this.host.err(pp.id, 'Lên tầng 5 để tham gia Nội Gián nhé.');
         if (this.joined.size >= MOLE_MAX) return this.host.err(pp.id, `Tối đa ${MOLE_MAX} người một ván.`);
         this.joined.set(pp.id, pp.name);
         return this.broadcast();
@@ -468,7 +471,7 @@ export class MoleGame {
       }
       case 'door': {
         const d = DOOR_BY_ID.get(String(m.door));
-        if (!d || pp.x < MOLE_FLOOR_X0) return;
+        if (!d || !onMoleFloor(pp.x)) return;
         // while a game runs only the living players move the doors (and not from a duct)
         const live = this.playing && this.phase !== 'end';
         if (live && (!me || !me.alive || this.phase !== 'play' || this.inVent.has(me.id))) return;
@@ -504,7 +507,7 @@ export class MoleGame {
       }
       case 'cams': {
         if (m.on) {
-          if (pp.x < MOLE_FLOOR_X0 || dist(pp, CAM_DESK) > MOLE_CAM_RANGE + 0.8) return;
+          if (!onMoleFloor(pp.x) || dist(pp, CAM_DESK) > MOLE_CAM_RANGE + 0.8) return;
           if (this.playing && this.phase !== 'end' && this.phase !== 'play') return;
           if (me && this.inVent.has(me.id)) return;
           if (this.watching.has(pp.id)) return;

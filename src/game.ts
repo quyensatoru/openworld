@@ -5,8 +5,11 @@ import type { ArcadeMsg } from '../shared/arcade';
 import { BAR, BAR_SCREEN, CINEMA_SCREEN, FLOOR_H, KARA_SCREEN, MIC_SPOTS, SEAT_BY_ID, ZONE_BY_ID, floorOf, groundAt, onStairs, type Seat } from '../shared/map';
 import { FX_PRESETS, KARA_SCORE_MS, type KaraMsg, type KaraState, type MicFx } from '../shared/karaoke';
 import { ROLE_META, type WolfMsg, type WolfView } from '../shared/werewolf';
+import type { Furniture } from '../shared/map';
+import { F6, PH_BOARD, PH_FIRE_S, PH_PROPS, type PhFx, type PhMsg, type PhView } from '../shared/prophunt';
 import { DOOR_BY_ID, MOLE_BOARD, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, MOLE_VENTS, MOLE_VENT_RANGE, STATION_BY_ID, VENT_BY_ID, VISION, doorMid, doorRect, meetingSpot, type MoleFx, type MoleMsg, type MoleView } from '../shared/mole';
-import { Ambience, MUSIC_BPM } from './audio/ambience';
+import * as THREE from 'three';
+import { Ambience, MUSIC_BPM, type SfxKind } from './audio/ambience';
 import { CinemaPlayer } from './cinema/player';
 import { ClaudeScreens, isLive } from './world/claude-screen';
 import {
@@ -137,6 +140,7 @@ class Game {
               '🎮 Tầng 3 — phòng game BSS Net bên phải · cầu thang lên tầng 4 ở bên trái',
               '🎤 Tầng 4 — phòng Karaoke bên trái · 🐺 Làng Ma Sói bên phải · cầu thang lên tầng 5 ở góc phải',
               getState().touch ? '🕵️ Tầng 5 — Nội Gián: tới bảng trong sảnh, bấm nút ✋ để tham gia' : '🕵️ Tầng 5 — Nội Gián: bấm E ở bảng trong sảnh để tham gia',
+              '🪑 Tầng 6 — Trốn tìm biến hình: bấm “Tham gia” ở bảng bên trái màn hình',
             ][floor],
             'info',
             3500,
@@ -169,6 +173,7 @@ class Game {
   private startWith(world: World) {
     this.world = world;
     world.interactLabel = (id) => this.moleLabel(id);
+    world.phShoot = () => this.phShoot();
     world.setFpLook(getState().fpLook);
     world.setFpsCap(getState().fpsCap);
     world.serverClock = () => serverNow() / 1000;
@@ -299,6 +304,7 @@ class Game {
     }
     if (floorOf(me.x) === 3) this.karaTick();
     if (floorOf(me.x) === 4 || getState().mole?.me.inGame) this.moleTick();
+    if (floorOf(me.x) === 5 || getState().ph?.me.inGame) this.phTick();
     if (this.fastFrame % 16 === 0 && getState().wolf) world.office.updateWolfBoard(getState().wolf, serverNow());
     if (this.fastFrame % 6 === 0) {
       const now = serverNow();
@@ -498,6 +504,8 @@ class Game {
     net.on('wolf', ({ v }) => this.applyWolf(v));
     net.on('mole', ({ v }) => this.applyMole(this.cleanMole(v)));
     net.on('moleFx', ({ fx }) => this.onMoleFx(fx));
+    net.on('prop', ({ v }) => this.applyProp(v));
+    net.on('propFx', ({ fx }) => this.onPropFx(fx));
     net.on('snake', ({ f }) => {
       setState({ snake: f });
       if (this.zoneId === 'netcafe') this.world?.office.updateNetScreen(f, serverNow());
@@ -639,7 +647,7 @@ class Game {
     if (seat?.kind === 'desk') return 'working';
     if (seat?.kind === 'focus' || zone?.kind === 'focus') return 'focus';
     if (zone?.kind === 'meeting') return 'meeting';
-    if (zone?.kind === 'pantry' || zone?.kind === 'lounge' || zone?.kind === 'cinema' || zone?.kind === 'bar' || zone?.kind === 'game' || zone?.kind === 'karaoke' || zone?.kind === 'wolf' || zone?.kind === 'mole') return 'break';
+    if (zone?.kind === 'pantry' || zone?.kind === 'lounge' || zone?.kind === 'cinema' || zone?.kind === 'bar' || zone?.kind === 'game' || zone?.kind === 'karaoke' || zone?.kind === 'wolf' || zone?.kind === 'mole' || zone?.kind === 'prop') return 'break';
     return 'online';
   }
 
@@ -831,6 +839,7 @@ class Game {
   toggleView() {
     const w = this.world;
     if (!w) return;
+    if (this.phAiming()) return toast('🔫 Người tìm luôn ở góc nhìn thứ nhất trong lúc săn', 'info', 2500);
     this.autoFirstPerson = false;
     w.setViewMode(w.viewMode === 'first' ? 'third' : 'first');
   }
@@ -921,7 +930,7 @@ class Game {
   }
 
   /** Walk (running) to the office, the cinema or the bar — taking the stairs if it is on the other floor. */
-  travel(to: 'office' | 'cinema' | 'bar' | 'netcafe' | 'karaoke' | 'wolfroom' | 'mole') {
+  travel(to: 'office' | 'cinema' | 'bar' | 'netcafe' | 'karaoke' | 'wolfroom' | 'mole' | 'prophunt') {
     const w = this.world;
     if (!w?.controller || w.riding) return;
     const target = {
@@ -932,6 +941,7 @@ class Game {
       karaoke: { x: 190.2, z: 17.4 },
       wolfroom: { x: 210.2, z: 16.8 },
       mole: { x: MOLE_BOARD.x, z: MOLE_BOARD.z + 1.6 },
+      prophunt: { x: F6 + PH_BOARD.x, z: PH_BOARD.z - 1.8 },
     }[to];
     if (!w.route(target.x, target.z, undefined, true)) return;
     if (this.autoFirstPerson) {
@@ -948,6 +958,7 @@ class Game {
         karaoke: '🎤 Đang lên phòng Karaoke (tầng 4)',
         wolfroom: '🐺 Đang lên Làng Ma Sói (tầng 4)',
         mole: '🕵️ Đang lên tầng 5 chơi Nội Gián',
+        prophunt: '🪑 Đang lên tầng 6 chơi Trốn tìm biến hình',
       }[to] + (cross ? ' (đi cầu thang)…' : '…'),
       'info',
       2500,
@@ -960,6 +971,7 @@ class Game {
   }
 
   goToPlayer(id: string) {
+    if (this.phMasked(id)) return toast('🙈 Đang có ván Trốn tìm — không chỉ đường tới người trốn được đâu', 'info', 3000);
     this.world?.goToPlayer(id);
   }
 
@@ -1486,6 +1498,194 @@ class Game {
       const pos = me ? this.world?.positionOf(me.id) : null;
       if (pos && Math.hypot(pos.x - fx.x, pos.z - fx.z) < 10) this.ambience?.sfx('task');
     }
+  }
+
+  // ------------------------------------------------------------------ Trốn tìm biến hình (floor 6)
+  prop(m: PhMsg) {
+    this.net?.send({ t: 'prop', m });
+  }
+
+  /** A round is on (or just finished): the game's rules apply on floor 6. */
+  private phLive(v: PhView | null = getState().ph): boolean {
+    return !!v && (v.phase === 'roles' || v.phase === 'hide' || v.phase === 'seek' || v.phase === 'roundEnd');
+  }
+
+  /** You're a seeker with the gun out. */
+  phAiming(): boolean {
+    const v = getState().ph;
+    return !!v && v.phase === 'seek' && v.me.alive && v.me.team === 'seeker';
+  }
+
+  /** Never give a hider away (their room, the way to them) to anyone who isn't hiding with them. */
+  phMasked(id: string): boolean {
+    const v = getState().ph;
+    if (!v || !this.phLive(v) || v.phase === 'roundEnd') return false;
+    if (v.me.inGame && v.me.alive && v.me.team === 'hider') return false;
+    const p = v.players.find((x) => x.id === id);
+    return !!p && p.alive && p.team === 'hider';
+  }
+
+  private phSpawnKey = '';
+  private phCaged = false;
+  private phForcedFirst = false;
+
+  private applyProp(v: PhView) {
+    const prev = getState().ph;
+    setState({ ph: v, phHp: null });
+    const w = this.world;
+    if (!w) return;
+    const f6 = w.office.f6;
+    f6.drawBoard(v);
+    f6.setGate(!(v.phase === 'roles' || v.phase === 'hide'));
+    const live = this.phLive(v);
+    const inRound = live && v.me.inGame;
+    const amHider = inRound && v.me.alive && v.me.team === 'hider';
+    // hiders' name tags are hidden (except among hiders) until the round is over; players still in
+    // the round don't see the people who are out, nor onlookers wandering about
+    w.setPropHunt({
+      props: live ? v.props : {},
+      hideTags: live && v.phase !== 'roundEnd' && !amHider ? v.players.filter((p) => p.alive && p.team === 'hider').map((p) => p.id) : [],
+      aliveOnly: inRound && v.me.alive && v.phase !== 'roundEnd' ? v.players.filter((p) => p.alive).map((p) => p.id) : null,
+    });
+    // a new round: to your spot (seekers into the waiting room)
+    const sp = v.me.spawn;
+    if (inRound && sp && v.phase === 'roles' && sp.key !== this.phSpawnKey) {
+      this.phSpawnKey = sp.key;
+      w.setFrozen(false);
+      w.teleport(sp.x, sp.z, sp.ry);
+    }
+    // seekers wait, frozen and blindfolded, until the shutter goes up
+    const caged = inRound && v.me.team === 'seeker' && (v.phase === 'roles' || v.phase === 'hide');
+    if (caged !== this.phCaged) {
+      this.phCaged = caged;
+      w.setFrozen(caged);
+    }
+    const aim = this.phAiming();
+    w.setPhAim(aim);
+    if (aim && w.viewMode !== 'first') {
+      w.setViewMode('first');
+      this.phForcedFirst = true;
+    } else if (!aim && this.phForcedFirst) {
+      this.phForcedFirst = false;
+      if (w.viewMode === 'first') w.setViewMode('third');
+    }
+    if (v.phase !== prev?.phase && v.me.inGame) {
+      if (v.phase === 'roles') {
+        this.ambience?.sfx('shh');
+        window.setTimeout(() => this.ambience?.sfx('reveal'), 900);
+      }
+      if (v.phase === 'seek') this.ambience?.sfx('shutter');
+      if (v.phase === 'roundEnd') this.ambience?.sfx(v.winner === v.me.team ? 'win' : 'lose');
+      if (v.phase === 'end') this.ambience?.sfx('applause');
+      if (v.phase === 'starting' || v.phase === 'roles') setState({ phPanel: false });
+    }
+    if (prev?.me.alive && !v.me.alive && inRound && v.phase === 'seek') this.ambience?.sfx('death');
+  }
+
+  private onPropFx(fx: PhFx) {
+    const w = this.world;
+    if (!w) return;
+    const f6 = w.office.f6;
+    const meId = getState().me?.id;
+    const at = meId ? w.positionOf(meId) : null;
+    /** quieter further away (nothing beyond `r` metres) */
+    const vol = (x: number, z: number, r: number) => (at ? Math.max(0, 1 - Math.hypot(at.x - x, at.z - z) / r) ** 1.3 : 0);
+    switch (fx.kind) {
+      case 'taunt':
+        f6.note(fx.x, fx.z);
+        this.ambience?.sfx(`taunt${fx.n % 6}` as SfxKind, fx.id === meId ? 0.8 : vol(fx.x, fx.z, 26));
+        return;
+      case 'shot':
+        if (fx.by === meId) return; // already drawn when you pulled the trigger
+        f6.shot(new THREE.Vector3(fx.x, 1.35, fx.z), new THREE.Vector3(fx.tx, fx.ty, fx.tz));
+        this.ambience?.sfx('pop', 0.8 * vol(fx.x, fx.z, 20));
+        return;
+      case 'hit': {
+        const p = w.positionOf(fx.id);
+        if (p) f6.hit(p.x, 0.6, p.z);
+        if (fx.by === meId) {
+          setState({ phMark: { kind: 'hit', at: Date.now() } });
+          this.ambience?.sfx('phHit');
+        }
+        if (fx.id === meId) {
+          setState({ phHp: fx.hp, phMark: { kind: 'hurt', at: Date.now() } });
+          this.ambience?.sfx('phHit', 0.7);
+        }
+        return;
+      }
+      case 'found':
+        f6.poof(fx.x, fx.z);
+        this.ambience?.sfx('phFound', Math.max(0.35, vol(fx.x, fx.z, 40)));
+        return;
+      case 'miss':
+        setState({ phHp: fx.hp, phMark: { kind: 'miss', at: Date.now() } });
+        this.ambience?.sfx('phMiss');
+        return;
+      case 'poof':
+        f6.poof(fx.x, fx.z);
+        this.ambience?.sfx('poof', vol(fx.x, fx.z, 14));
+        return;
+      default:
+    }
+  }
+
+  /** ~16 Hz on floor 6: the piece a hider is looking at lights up. */
+  private phTick() {
+    const v = getState().ph;
+    const w = this.world;
+    if (!w) return;
+    const meId = getState().me?.id ?? '';
+    let cand: Furniture | null = null;
+    if (v && v.me.inGame && v.me.alive && v.me.team === 'hider' && (v.phase === 'hide' || v.phase === 'seek') && w.myFloor === 5) {
+      cand = w.phCandidate();
+      if (cand && v.props[meId]?.fid === cand.id) cand = null;
+    }
+    w.office.f6.highlight(cand);
+    const cur = getState().phCand;
+    if ((cand?.id ?? null) !== (cur?.fid ?? null)) setState({ phCand: cand ? { fid: cand.id, name: PH_PROPS[cand.kind]?.name ?? '' } : null });
+  }
+
+  /** Turn into the piece that's lit up. */
+  phTransform() {
+    const c = getState().phCand;
+    if (!c) return toast('Lại gần một món đồ (nó sáng viền vàng) rồi bấm Biến hình', 'info', 2500);
+    const v = getState().ph;
+    if (v?.phase === 'seek' && serverNow() < v.me.swapAt) return toast(`⏳ ${Math.ceil((v.me.swapAt - serverNow()) / 1000)} giây nữa mới đổi được`, 'info', 2000);
+    this.prop({ a: 'prop', fid: c.fid });
+  }
+
+  /** Back to yourself (only while hiding). */
+  phUnprop() {
+    this.prop({ a: 'prop', fid: null });
+  }
+
+  /** Keep the piece at this angle while you look round it (or let it turn with you again). */
+  phLock() {
+    const v = getState().ph;
+    const id = getState().me?.id;
+    const cur = v && id ? v.props[id] : null;
+    if (!cur) return;
+    this.prop({ a: 'lock', ry: cur.ry == null ? this.world?.myRy ?? 0 : null });
+  }
+
+  phTaunt() {
+    this.prop({ a: 'taunt' });
+  }
+
+  private phLastShot = 0;
+  /** Fire a foam ball at the crosshair. */
+  phShoot() {
+    if (!this.phAiming()) return;
+    const now = performance.now();
+    if (now - this.phLastShot < PH_FIRE_S * 1000) return;
+    this.phLastShot = now;
+    const w = this.world;
+    if (!w) return;
+    this.ambience?.sfx('pop');
+    const a = w.phAimAt();
+    if (!a) return;
+    w.office.f6.shot(a.from, a.point);
+    this.prop({ a: 'shoot', hit: a.hit, fid: a.prop ? a.fid : null, tx: a.point.x, ty: a.point.y, tz: a.point.z });
   }
 
   /** Typewriter tick (the verdict screen). */

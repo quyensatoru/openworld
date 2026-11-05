@@ -28,6 +28,7 @@ import {
   NET,
   ROOF4,
   ROOF5,
+  ROOF6,
   WOLF,
   NET_SCREEN,
   STAIRWAYS,
@@ -46,6 +47,8 @@ import {
 } from '../../shared/map';
 import { COLUMNS, PRIORITY_META, type Task } from '../../shared/protocol';
 import { ROOM_META, type MoleRoom } from '../../shared/mole';
+import { PH_ROOMS, type PhRoom } from '../../shared/prophunt';
+import { Floor6Fx } from './floor6';
 import { BarFx } from './bar';
 import { KaraokeFx, WolfFx } from './floor4';
 import { Floor5Fx } from './floor5';
@@ -73,7 +76,7 @@ const FLOOR_TINT: Record<string, string> = {
 };
 
 /** Openings in each floor's slab (logical coords of that floor): the stairwell below + the lift. */
-const HOLES: Rect[][] = [0, 1, 2, 3, 4].map((f) => [
+const HOLES: Rect[][] = [0, 1, 2, 3, 4, 5].map((f) => [
   ...STAIRWAYS.filter((s) => s.lower === f - 1).map((s) => ({ x0: s.x0 + f * UP_DX, z0: s.z0, x1: s.x1 + f * UP_DX, z1: OFFICE_D })),
   ...LIFTS.filter((l) => f > 0 && l.floor === f).map((l) => ({ x0: l.x0, z0: l.z0, x1: l.x1, z1: l.z1 })),
 ]);
@@ -134,6 +137,8 @@ export class OfficeScene {
   readonly roof4 = new THREE.Group();
   /** Floor 5 (the "Nội Gián" game). */
   readonly roof5 = new THREE.Group();
+  /** Floor 6 (the prop-hunt showroom). */
+  readonly roof6 = new THREE.Group();
   /** Ground-floor interior (hidden while you are upstairs; stairs, floors and the outside stay). */
   readonly downstairs = new THREE.Group();
   /** Per floor: the group holding its interior. */
@@ -160,7 +165,7 @@ export class OfficeScene {
   private cinemaHole = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0, blending: THREE.NoBlending, fog: false, toneMapped: false });
   private marquees: THREE.MeshBasicMaterial[] = [];
   /** Ceiling + light panels only exist for the first-person view (invisible from above anyway). */
-  private ceilings = [new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group()];
+  private ceilings = [new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group()];
   /** Lift cars parked on each floor, and the one that carries you during a ride. */
   private cars: THREE.Group[] = [];
   private rideCar: THREE.Group;
@@ -170,6 +175,7 @@ export class OfficeScene {
   private wolfBoardMesh: THREE.Mesh | null = null;
   private moleBoardMesh: THREE.Mesh | null = null;
   readonly f5: Floor5Fx;
+  readonly f6: Floor6Fx;
   private shadowFloor = -1;
   private doors: { door: Door; left: THREE.Mesh; right: THREE.Mesh; open: number }[] = [];
 
@@ -183,10 +189,12 @@ export class OfficeScene {
     this.roof4.position.set(-3 * UP_DX, 3 * FLOOR_H, 0);
     this.roof5.name = 'floor-5';
     this.roof5.position.set(-4 * UP_DX, 4 * FLOOR_H, 0);
+    this.roof6.name = 'floor-6';
+    this.roof6.position.set(-5 * UP_DX, 5 * FLOOR_H, 0);
     this.downstairs.name = 'floor-1';
-    this.group.add(this.downstairs, this.upstairs, this.top, this.roof4, this.roof5);
-    this.levels = [this.downstairs, this.upstairs, this.top, this.roof4, this.roof5];
-    const statics = [new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group()];
+    this.group.add(this.downstairs, this.upstairs, this.top, this.roof4, this.roof5, this.roof6);
+    this.levels = [this.downstairs, this.upstairs, this.top, this.roof4, this.roof5, this.roof6];
+    const statics = [new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group()];
     const staticOut = new THREE.Group(); // always drawn: trees, skirting, the first staircase
     const layer = (x: number) => ({ root: this.levels[floorOf(x)], stat: statics[floorOf(x)] });
 
@@ -204,7 +212,7 @@ export class OfficeScene {
 
     for (const z of ZONES) {
       const zf = floorOf(z.x0);
-      const tint = z.id.startsWith('f5-') ? ROOM_META[z.id.slice(3) as MoleRoom]?.tint : FLOOR_TINT[z.id];
+      const tint = z.id.startsWith('f5-') ? ROOM_META[z.id.slice(3) as MoleRoom]?.tint : z.id.startsWith('f6-') ? PH_ROOMS[z.id.slice(3) as PhRoom]?.tint : FLOOR_TINT[z.id];
       const base = floorTexture(z.floor as FloorKind, tint ?? '#eeeeee');
       for (const r of subtract(z, HOLES[zf])) {
         const w = r.x1 - r.x0;
@@ -234,11 +242,12 @@ export class OfficeScene {
     for (const part of TOP_PARTS) for (const r of subtract(part, HOLES[2])) addSlab(r, this.top, -slabT / 2 - 0.003, slabMat);
     for (const r of subtract(ROOF4, HOLES[3])) addSlab(r, this.roof4, -slabT / 2 - 0.003, slabMat);
     for (const r of subtract(ROOF5, HOLES[4])) addSlab(r, this.roof5, -slabT / 2 - 0.003, slabMat);
+    for (const r of subtract(ROOF6, HOLES[5])) addSlab(r, this.roof6, -slabT / 2 - 0.003, slabMat);
     // the cinema is two storeys tall: its roof sits level with floor 3's slab above the walls. It
     // belongs to floor 3's view (from floor 2 the camera looks down into the cinema).
     addSlab({ ...CINEMA, x0: CINEMA.x0 + UP_DX, x1: CINEMA.x1 + UP_DX }, this.top, WALL_H + slabT / 2, mat('#4a4152', { rough: 0.9 }));
     // Invisible planes used for click-to-move ray casts.
-    for (const f of [0, 1, 2, 3, 4] as const) {
+    for (const f of [0, 1, 2, 3, 4, 5] as const) {
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(OFFICE_W, OFFICE_D), new THREE.MeshBasicMaterial({ visible: false }));
       plane.rotation.x = -Math.PI / 2;
       plane.position.set(OFFICE_W / 2 + f * UP_DX, 0, OFFICE_D / 2);
@@ -274,7 +283,8 @@ export class OfficeScene {
       const obj = buildFurniture(f, dyn);
       const L = layer(f.x);
       L.stat.add(obj);
-      if (dyn.monitor) {
+      // (floor 6: screens stay as built — a hider copying a desk must look exactly like the real ones)
+      if (dyn.monitor && floorOf(f.x) !== 5) {
         this.monitors.set(f.id, dyn.monitor);
         obj.remove(dyn.monitor);
         this.attachDynamic(obj, dyn.monitor, L.root);
@@ -369,6 +379,7 @@ export class OfficeScene {
     if (this.wolfBoardMesh) this.wolfFx.setupBoard(this.wolfBoardMesh);
     this.f5 = new Floor5Fx(this.roof5);
     if (this.moleBoardMesh) this.f5.setupBoard(this.moleBoardMesh);
+    this.f6 = new Floor6Fx(this.roof6);
     this.setMonitorsFrom(new Set());
   }
 
@@ -800,6 +811,18 @@ export class OfficeScene {
     up5.position.set(STAIRWAYS[3].x0 + 3 * UP_DX + 4.0, 2.5, OFFICE_D - 0.13);
     up5.rotation.y = Math.PI;
     this.roof4.add(up5);
+    const up6Tex = canvasTexture(1024, 192, (g, w) => {
+      g.fillStyle = '#1d1a2a';
+      g.fillRect(0, 0, w, 192);
+      g.textAlign = 'center';
+      g.font = '800 66px "Be Vietnam Pro", sans-serif';
+      g.fillStyle = '#ffd36b';
+      g.fillText('⬆ TẦNG 6 · 🪑 TRỐN TÌM BIẾN HÌNH', w / 2, 120);
+    });
+    const up6 = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 0.64), new THREE.MeshBasicMaterial({ map: up6Tex, toneMapped: false }));
+    up6.position.set(STAIRWAYS[4].x0 + 4 * UP_DX + 4.0, 2.5, OFFICE_D - 0.13);
+    up6.rotation.y = Math.PI;
+    this.roof5.add(up6);
 
     const lobby = new THREE.MeshBasicMaterial({ map: this.marqueeTexture(null, true), toneMapped: false, transparent: true, opacity: 1 });
     const m1 = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 0.75), lobby);
@@ -1242,6 +1265,7 @@ export class OfficeScene {
       this.wolfFx.tick(dt);
     }
     if (floor === 4) this.f5.tick(dt);
+    if (floor === 5) this.f6.tick(dt);
     // attract-mode screens: ~20 redraws a second is smooth for pixel art (each one re-uploads a texture)
     this.arcAcc += dt;
     const arcDt = this.arcAcc;

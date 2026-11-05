@@ -990,6 +990,166 @@ export function buildFurniture(f: Furniture, dyn: Dynamic): THREE.Group {
       dyn.screen = screen;
       break;
     }
+    // ---------------- floor 6 showroom (prop hunt): everything stands on the floor
+    case 'armchair': {
+      const col = C.sofa[hash(f.id) % C.sofa.length];
+      rbox(g, 0.82, 0.22, 0.8, col, 0, 0.2, 0, 0.06);
+      rbox(g, 0.56, 0.13, 0.6, col, 0, 0.36, 0.06, 0.05);
+      rbox(g, 0.82, 0.55, 0.2, col, 0, 0.52, -0.3, 0.08);
+      for (const sx of [-1, 1]) rbox(g, 0.15, 0.4, 0.8, col, sx * 0.335, 0.4, 0, 0.07);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) cyl(g, 0.025, 0.02, 0.1, C.woodDark, sx * 0.33, 0.05, sz * 0.32, 8);
+      break;
+    }
+    case 'tvStand': {
+      rbox(g, f.w, 0.42, f.d, C.wood, 0, 0.25, 0, 0.02);
+      for (const sx of [-1, 1]) rbox(g, f.w / 2 - 0.06, 0.3, 0.01, C.woodDark, sx * (f.w / 4), 0.25, f.d / 2 + 0.002, 0.004);
+      for (const sx of [-1, 1]) cyl(g, 0.02, 0.02, 0.04, C.metal, sx * (f.w / 2 - 0.1), 0.02, 0, 8);
+      rbox(g, 1.2, 0.7, 0.05, C.dark, 0, 0.88, -0.05, 0.02);
+      rbox(g, 1.12, 0.62, 0.01, '#1c2733', 0, 0.88, -0.022, 0.004);
+      rbox(g, 0.3, 0.03, 0.18, C.dark, 0, 0.47, -0.05, 0.01);
+      break;
+    }
+    case 'carton': {
+      const col = ['#c9a477', '#b88f60', '#d2ae80'][hash(f.id) % 3];
+      const h = 0.36 + (hash(f.id) % 3) * 0.06;
+      rbox(g, f.w, h, f.d, col, 0, h / 2, 0, 0.012);
+      rbox(g, 0.08, 0.004, f.d + 0.004, '#e9dcc0', 0, h + 0.002, 0, 0.001);
+      rbox(g, f.w * 0.3, h * 0.2, 0.004, '#f4efe6', -f.w * 0.15, h * 0.6, f.d / 2 + 0.002, 0.001);
+      break;
+    }
+    case 'teddy': {
+      const fur = ['#b07b4f', '#d9b38c', '#f2c6d2'][hash(f.id) % 3];
+      sph(g, 0.15, fur, 0, 0.15, 0, 1, 1.05, 0.9);
+      sph(g, 0.12, fur, 0, 0.36, 0.01);
+      for (const sx of [-1, 1]) {
+        sph(g, 0.045, fur, sx * 0.09, 0.47, 0, 1, 1, 0.6);
+        sph(g, 0.055, fur, sx * 0.14, 0.2, 0.05, 1, 1.4, 1);
+        sph(g, 0.06, fur, sx * 0.08, 0.05, 0.1, 1, 0.8, 1.3);
+      }
+      sph(g, 0.045, '#f4e3cf', 0, 0.34, 0.11, 1, 0.8, 0.7);
+      sph(g, 0.016, C.dark, 0, 0.36, 0.15);
+      for (const sx of [-1, 1]) sph(g, 0.014, C.dark, sx * 0.045, 0.4, 0.11);
+      break;
+    }
+    case 'toyBall': {
+      const [a, b] = [['#e5566b', '#f2c14e'], ['#6fa8dc', '#ffffff'], ['#5fa8a0', '#f08a5d']][hash(f.id) % 3];
+      const top = mesh(new THREE.SphereGeometry(0.2, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), mat(a, { rough: 0.45 }), 0, 0.2, 0);
+      const bottom = mesh(new THREE.SphereGeometry(0.2, 18, 10, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), mat(b, { rough: 0.45 }), 0, 0.2, 0);
+      top.rotation.z = bottom.rotation.z = 0.5;
+      g.add(top, bottom);
+      break;
+    }
+    case 'bedDouble': {
+      const sheet = ['#f3efe8', '#e8eef5', '#f5ece6'][hash(f.id) % 3];
+      const throwCol = C.accents[hash(f.id) % C.accents.length];
+      rbox(g, f.w, 0.3, f.d, C.woodDark, 0, 0.17, 0, 0.03);
+      rbox(g, f.w - 0.06, 0.2, f.d - 0.08, sheet, 0, 0.42, 0.02, 0.06);
+      rbox(g, f.w + 0.04, 0.9, 0.08, C.woodDark, 0, 0.45, -f.d / 2 + 0.02, 0.03);
+      for (const sx of [-1, 1]) rbox(g, f.w / 2 - 0.16, 0.12, 0.34, '#ffffff', sx * (f.w / 4), 0.58, -f.d / 2 + 0.3, 0.05);
+      rbox(g, f.w - 0.02, 0.06, f.d * 0.5, throwCol, 0, 0.53, f.d * 0.22, 0.03);
+      break;
+    }
+    case 'nightstand': {
+      rbox(g, f.w, 0.5, f.d, C.wood, 0, 0.25, 0, 0.02);
+      rbox(g, f.w - 0.06, 0.18, 0.01, '#d6b88d', 0, 0.33, f.d / 2 + 0.003, 0.004);
+      cyl(g, 0.012, 0.012, 0.02, C.metal, 0, 0.33, f.d / 2 + 0.012, 8);
+      cyl(g, 0.07, 0.09, 0.02, C.dark, 0.08, 0.51, -0.02, 12);
+      cyl(g, 0.012, 0.012, 0.22, C.metal, 0.08, 0.62, -0.02, 8);
+      cyl(g, 0.07, 0.11, 0.14, '#f4e9d6', 0.08, 0.76, -0.02, 14);
+      break;
+    }
+    case 'stool2': {
+      const col = C.accents[hash(f.id) % C.accents.length];
+      cyl(g, 0.17, 0.17, 0.05, col, 0, 0.47, 0, 16);
+      for (const [x, z] of [[-0.11, -0.11], [0.11, -0.11], [-0.11, 0.11], [0.11, 0.11]]) cyl(g, 0.016, 0.02, 0.45, C.woodDark, x, 0.225, z, 8);
+      break;
+    }
+    case 'trashBin': {
+      const col = ['#5f6b7a', '#3d8a6a', '#e8b84a'][hash(f.id) % 3];
+      cyl(g, 0.17, 0.14, 0.5, col, 0, 0.25, 0, 18);
+      cyl(g, 0.18, 0.18, 0.04, col, 0, 0.52, 0, 18);
+      rbox(g, 0.1, 0.02, 0.03, C.dark, 0, 0.55, 0, 0.008);
+      break;
+    }
+    case 'washer': {
+      rbox(g, f.w, 0.85, f.d, '#f2f3f4', 0, 0.425, 0, 0.04);
+      rbox(g, f.w - 0.04, 0.1, 0.02, '#d7dbe0', 0, 0.76, f.d / 2, 0.01);
+      const door = mesh(cylGeo(0.2, 0.2, 0.03, 26), mat('#8fa3b8', { rough: 0.2, metal: 0.4 }), 0, 0.4, f.d / 2 + 0.01);
+      door.rotation.x = Math.PI / 2;
+      g.add(door);
+      const glass = mesh(cylGeo(0.15, 0.15, 0.035, 24), mat('#2f3b4a', { rough: 0.1 }), 0, 0.4, f.d / 2 + 0.012);
+      glass.rotation.x = Math.PI / 2;
+      g.add(glass);
+      sph(g, 0.025, '#5fa8a0', f.w / 2 - 0.12, 0.77, f.d / 2 + 0.01);
+      break;
+    }
+    case 'chairProp':
+      g.add(officeChair(C.accents[hash(f.id) % C.accents.length]));
+      break;
+    case 'pallet': {
+      for (const z of [-0.4, 0, 0.4]) rbox(g, f.w, 0.1, 0.1, '#c9a274', 0, 0.05, z * (f.d / 1), 0.01);
+      for (const x of [-0.5, -0.25, 0, 0.25, 0.5]) rbox(g, 0.11, 0.025, f.d, '#d8b685', x * f.w, 0.112, 0, 0.004);
+      const n = 2 + (hash(f.id) % 3);
+      for (let i = 0; i < n; i++) rbox(g, 0.5, 0.36, 0.42, ['#c9a477', '#b88f60', '#d2ae80'][i % 3], (i % 2 ? 0.27 : -0.27) * (f.w / 1.2), 0.125 + 0.18 + Math.floor(i / 2) * 0.36, (i % 2 ? -0.1 : 0.12), 0.01);
+      break;
+    }
+    case 'trolley': {
+      rbox(g, f.w, 0.05, f.d, '#4f6a8a', 0, 0.16, 0, 0.01);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const w = mesh(cylGeo(0.06, 0.06, 0.04, 14), mat(C.dark), sx * (f.w / 2 - 0.08), 0.06, sz * (f.d / 2 - 0.1));
+        w.rotation.z = Math.PI / 2;
+        g.add(w);
+      }
+      for (const sx of [-1, 1]) cyl(g, 0.015, 0.015, 0.9, C.metal, sx * (f.w / 2 - 0.04), 0.6, -f.d / 2 + 0.03, 8);
+      rbox(g, f.w, 0.03, 0.03, C.metal, 0, 1.04, -f.d / 2 + 0.03, 0.01);
+      rbox(g, f.w - 0.1, 0.4, f.d * 0.55, '#c9a477', 0, 0.39, 0.08, 0.01);
+      break;
+    }
+    case 'cone': {
+      cyl(g, 0.04, 0.17, 0.62, '#ff7a29', 0, 0.33, 0, 16);
+      cyl(g, 0.1, 0.135, 0.09, '#ffffff', 0, 0.3, 0, 16);
+      rbox(g, 0.36, 0.03, 0.36, '#ff7a29', 0, 0.015, 0, 0.01);
+      break;
+    }
+    case 'fireExt': {
+      cyl(g, 0.085, 0.085, 0.46, '#d63a3a', 0, 0.25, 0, 14);
+      sph(g, 0.085, '#d63a3a', 0, 0.48, 0, 1, 0.6, 1);
+      cyl(g, 0.02, 0.025, 0.08, C.dark, 0, 0.55, 0, 8);
+      rbox(g, 0.12, 0.02, 0.03, C.dark, 0.05, 0.6, 0, 0.008);
+      rbox(g, 0.1, 0.12, 0.004, '#f4efe6', 0, 0.26, 0.085, 0.002);
+      break;
+    }
+    case 'kidsHouse': {
+      const wall = ['#f6d7a7', '#cfe6d1', '#f3c9d2'][hash(f.id) % 3];
+      rbox(g, f.w, 1.0, f.d, wall, 0, 0.5, 0, 0.03);
+      const roof = mesh(new THREE.CylinderGeometry(0.01, f.w * 0.78, 0.65, 4, 1), mat('#e5566b'), 0, 1.33, 0);
+      roof.rotation.y = Math.PI / 4;
+      g.add(roof);
+      rbox(g, 0.42, 0.66, 0.02, '#8a5a3c', -0.3, 0.33, f.d / 2 + 0.005, 0.02);
+      rbox(g, 0.34, 0.3, 0.02, '#cfe8f3', 0.35, 0.62, f.d / 2 + 0.005, 0.01);
+      break;
+    }
+    case 'phBoard': {
+      // the join board's frame (the screen itself is drawn by Floor6Fx)
+      for (const sx of [-1, 1]) cyl(g, 0.035, 0.035, 2.2, C.metal, sx * (f.w / 2 - 0.08), 1.1, 0, 10);
+      rbox(g, f.w, 1.25, 0.08, '#1d1a2a', 0, 1.55, 0, 0.03);
+      break;
+    }
+    case 'locker': {
+      const col = ['#5f7fa3', '#4f6f93'][hash(f.id) % 2];
+      rbox(g, f.w - 0.02, 1.85, f.d, col, 0, 0.925, 0, 0.02);
+      for (const y of [1.55, 1.5, 1.45]) rbox(g, 0.3, 0.012, 0.004, '#3a4c63', 0, y, f.d / 2 + 0.002, 0.002);
+      rbox(g, 0.03, 0.14, 0.03, '#c9ced6', f.w / 2 - 0.1, 1.0, f.d / 2 + 0.012, 0.008);
+      break;
+    }
+    case 'wardrobe': {
+      const H = 2.0;
+      rbox(g, f.w, H, f.d, '#efe7da', 0, H / 2, 0, 0.02);
+      rbox(g, 0.008, H - 0.16, 0.01, '#d8cbb6', 0, H / 2, f.d / 2 + 0.003, 0.002);
+      for (const sx of [-1, 1]) rbox(g, 0.02, 0.26, 0.03, C.woodDark, sx * 0.05, H * 0.52, f.d / 2 + 0.015, 0.008);
+      rbox(g, f.w + 0.03, 0.05, f.d + 0.03, C.wood, 0, H + 0.02, 0, 0.01);
+      break;
+    }
   }
   g.position.set(f.x, f.y ?? 0, f.z);
   g.rotation.y = f.ry;

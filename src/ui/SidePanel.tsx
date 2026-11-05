@@ -319,7 +319,7 @@ function People() {
                 {p.pomo && <span className="muted" style={{ fontSize: 11.5, fontWeight: 500 }}>🍅 {fmtClock(p.pomo.endsAt - serverNow())}</span>}
               </div>
               <div className="meta">
-                {STATUS_META[p.status].emoji} {p.statusText || STATUS_META[p.status].label} · {ZONE_BY_ID.get(p.zone)?.name}
+                {STATUS_META[p.status].emoji} {p.statusText || STATUS_META[p.status].label} · {game.phMasked(p.id) ? 'Tầng 6 · đang trốn 🙈' : ZONE_BY_ID.get(p.zone)?.name}
               </div>
               {p.taskId && tasks[p.taskId] && <div className="meta">🔨 {tasks[p.taskId].title}</div>}
             </div>

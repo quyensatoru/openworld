@@ -16,6 +16,8 @@ import { WolfEnd, WolfNight, WolfPanel } from './Werewolf';
 import { MOLE_ROOMS } from '../../shared/mole';
 import { MoleActions, MoleCams, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal, MoleSplash, MoleVent } from './Mole';
 import { MoleTaskModal } from './MoleTasks';
+import { PropActions, PropBlind, PropCrosshair, PropHud, PropHurt, PropPanel, PropResult, PropSplash } from './PropHunt';
+import { PH_ROOM_IDS, phZone } from '../../shared/prophunt';
 import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
 import { MeetingTvButton } from './MeetingTv';
 import { VoiceStatus } from './VoiceStatus';
@@ -39,6 +41,7 @@ export function Office() {
   const inKara = useStore((s) => s.me?.zone === 'karaoke');
   const inWolf = useStore((s) => s.me?.zone === 'wolfroom');
   const inMole = useStore((s) => !!s.me?.zone.startsWith('f5-'));
+  const phRound = useStore((s) => !!s.ph?.me.inGame && ['roles', 'hide', 'seek', 'roundEnd'].includes(s.ph.phase));
   const theater = useStore((s) => s.me?.zone === 'cinema' && !!s.me.seat?.startsWith('cine-') && !!s.cinema && s.cinema.pausedAt == null) || inBar || inKara;
   const idle = useIdle(2500, theater);
 
@@ -75,7 +78,7 @@ export function Office() {
   return (
     <div className={`office${touch ? ' touch' : ''}${cctv ? ' cctv-on' : ''}`} ref={ref}>
       {glError && <GraphicsHelp />}
-      <div className={`hud${theater ? ' theater' : ''}${inBar || inKara ? ' bar-mode' : ''}${inKara ? ' kara-mode' : ''}${inWolf ? ' wolf-mode' : ''}${inMole ? ' mole-mode' : ''}${theater && idle ? ' idle' : ''}`}>
+      <div className={`hud${theater ? ' theater' : ''}${inBar || inKara ? ' bar-mode' : ''}${inKara ? ' kara-mode' : ''}${inWolf ? ' wolf-mode' : ''}${inMole ? ' mole-mode' : ''}${phRound ? ' ph-mode' : ''}${theater && idle ? ' idle' : ''}`}>
         <Safe><TopBar /></Safe>
         <Safe><VideoStrip /></Safe>
         <Safe><PlayerCard /></Safe>
@@ -91,6 +94,9 @@ export function Office() {
         <Safe><MoleHud /></Safe>
         <Safe><MoleActions /></Safe>
         <Safe><MoleVent /></Safe>
+        <Safe><PropPanel /></Safe>
+        <Safe><PropHud /></Safe>
+        <Safe><PropActions /></Safe>
         <Safe><LiftPanel /></Safe>
         <Safe><Prompt /></Safe>
         <Safe><VoiceStatus /></Safe>
@@ -108,6 +114,11 @@ export function Office() {
       <Safe><MoleReveal /></Safe>
       <Safe><MoleEnd /></Safe>
       <Safe><MoleTaskModal /></Safe>
+      <Safe><PropBlind /></Safe>
+      <Safe><PropCrosshair /></Safe>
+      <Safe><PropHurt /></Safe>
+      <Safe><PropSplash /></Safe>
+      <Safe><PropResult /></Safe>
       <Safe><KaraScore /></Safe>
       <Safe><KaraPhonesAsk /></Safe>
       <Safe><WolfEnd /></Safe>
@@ -157,6 +168,7 @@ const PLACES = [
   { id: 'karaoke', floor: 3, icon: '🎤', name: 'Karaoke', hint: 'Hát cùng cả team', zones: ['karaoke'] },
   { id: 'wolfroom', floor: 3, icon: '🐺', name: 'Ma Sói', hint: '5–12 người · cần mic', zones: ['wolfroom'] },
   { id: 'mole', floor: 4, icon: '🕵️', name: 'Nội Gián', hint: '4–12 người · làm nhiệm vụ, tìm kẻ phá', zones: MOLE_ROOMS.map((r) => `f5-${r}`) },
+  { id: 'prophunt', floor: 5, icon: '🪑', name: 'Trốn tìm biến hình', hint: '3–16 người · biến thành đồ vật để trốn', zones: PH_ROOM_IDS.map((r) => phZone(r)) },
 ] as const;
 
 /** Top-left: where you are + how many people are online; click to go somewhere else. */
@@ -197,7 +209,7 @@ function PlacesMenu({ zone, onPick }: { zone: string; onPick(): void }) {
   const meZone = useStore((s) => s.me?.zone);
   const kara = useStore((s) => s.kara.now);
   const count = (zones: readonly string[]) => Object.values(players).filter((p) => zones.includes(p.zone)).length + (meZone && zones.includes(meZone) ? 1 : 0);
-  const floors = [0, 1, 2, 3, 4];
+  const floors = [0, 1, 2, 3, 4, 5];
   return (
     <div className="places glass">
       <div className="places-title">Đi tới</div>
@@ -264,7 +276,7 @@ function PlayerCard() {
         <div>
           <div className="nm">{p.name}</div>
           <div className="st">
-            {meta.emoji} {meta.label} · {ZONE_BY_ID.get(p.zone)?.name}
+            {meta.emoji} {meta.label} · {game.phMasked(p.id) ? 'Tầng 6 · đang trốn 🙈' : ZONE_BY_ID.get(p.zone)?.name}
           </div>
         </div>
       </div>
@@ -550,6 +562,7 @@ function Help() {
     ['🎤 Karaoke', 'Tầng 4: tìm bài trên YouTube, cầm mic lên sân khấu, chỉnh echo/vang; cả phòng nghe và thả 👏🌹 — hết bài có chấm điểm'],
     ['🐺 Ma sói', 'Tầng 4: ngồi gốc cây quanh đống lửa (5–12 người), bật mic. Ban đêm chỉ bầy sói nghe được nhau, người chết chỉ nói với người chết'],
     ['🕵️ Nội Gián', 'Tầng 5: tham gia ở bảng trong sảnh (4–12 người). Nhân viên làm nhiệm vụ, nội gián loại người (Q), báo cáo (R), họp và bỏ phiếu'],
+    ['🪑 Trốn tìm biến hình', 'Tầng 6 (3–16 người): người trốn biến thành đồ vật (F), khoá góc (R), trêu (T); người tìm bắn bóng — bắn nhầm đồ thật là mất máu'],
     ['Enter', 'Mở chat'],
     ['K', 'Mở bảng Kanban'],
     ['Esc', 'Đóng cửa sổ / huỷ đi tới'],

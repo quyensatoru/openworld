@@ -26,6 +26,7 @@ const ZONE_COLOR: Record<string, string> = {
   karaoke: '#3a2a52',
   wolf: '#5a4330',
   mole: '#cfd4de',
+  prop: '#eadfce',
 };
 
 /** Small map of your floor; folds into a round button (remembered). */
@@ -137,6 +138,8 @@ function MapCanvas({ onClose }: { onClose(): void }) {
           if (!pos || !onFloor(pos.x, a.floor)) continue;
           // Nội Gián floor: only the people you can actually see (same room, not in a duct…)
           if (a.floor === 4 && !world.isShown(p.id)) continue;
+          // Trốn tìm: no dots for hiders (the map would give them all away)
+          if (a.floor === 5 && game.phMasked(p.id)) continue;
           g.fillStyle = STATUS_META[p.status].color;
           g.beginPath();
           g.arc(pos.x * S, pos.z * S, 3.2, 0, Math.PI * 2);

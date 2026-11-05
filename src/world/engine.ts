@@ -18,6 +18,9 @@ import {
   STAIRWAYS,
   TALL_KINDS,
   WALLS,
+  WALL_H,
+  WALL_T,
+  type Furniture,
   stairAt,
   stairPoints,
   type Floor,
@@ -46,6 +49,7 @@ import { BarStaff } from './npc';
 import { VrmAvatar } from './avatar/vrm-avatar';
 import { party } from './bar';
 import { MOLE_CAMS } from '../../shared/mole';
+import { PH_GRAB_RANGE, PH_SHOT_RANGE, isPhProp } from '../../shared/prophunt';
 
 export interface WorldCallbacks {
   onLocalMove(x: number, z: number, ry: number, anim: AnimState): void;
@@ -81,6 +85,8 @@ interface Sample {
   ry: number;
   anim: AnimState;
 }
+
+const FURN_BY_ID = new Map(FURNITURE.map((f) => [f.id, f]));
 
 /** The cinema on the drawn (visual) x axis. */
 const CINEMA_VX0 = visualX(CINEMA.x0 + 0.5) - 0.5;
@@ -492,6 +498,11 @@ export class World {
     });
     this.on(el, 'contextmenu', (e) => e.preventDefault());
     this.on(el, 'pointerdown', ((e: PointerEvent) => {
+      if (document.pointerLockElement === el) {
+        // the mouse is captured (seeker with the gun): every click is a shot
+        if (e.button === 0) this.phShoot?.();
+        return;
+      }
       this.touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.touchPts.size === 2) {
         // two fingers: pinch to zoom (no drag, no tap)
@@ -505,6 +516,12 @@ export class World {
       el.setPointerCapture(e.pointerId);
     }) as EventListener);
     this.on(el, 'pointermove', ((e: PointerEvent) => {
+      if (document.pointerLockElement === el) {
+        const k = this.fpLook.sens * 0.8;
+        this.camYaw -= e.movementX * 0.0035 * k;
+        this.fpPitch = Math.max(-1.2, Math.min(1.2, this.fpPitch - e.movementY * 0.003 * k));
+        return;
+      }
       if (this.touchPts.has(e.pointerId)) this.touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.pinch && this.touchPts.size >= 2) {
         const [a, b] = [...this.touchPts.values()];
@@ -578,7 +595,8 @@ export class World {
   private pick(e: PointerEvent): { player?: string; seat?: Seat; interact?: string; monitor?: string; tv?: string; stairs?: number; floor?: THREE.Vector3 } {
     this.ray.setFromCamera(this.pointerNdc(e), this.camera);
     const fl = this.myFloor;
-    const proxies = [...this.players.values()].filter((p) => !p.isMe && p.holder.visible).map((p) => p.proxy);
+    // (a hider's furniture never gives away whose it is)
+    const proxies = [...this.players.values()].filter((p) => !p.isMe && p.holder.visible && !this.phHideTags.has(p.id)).map((p) => p.proxy);
     const hitP = this.ray.intersectObjects(proxies, false)[0];
     const mine = this.office.pickables.filter((p) => p.floor === fl);
     const hitO = this.ray.intersectObjects(mine.map((p) => p.object), false)[0];
@@ -606,6 +624,11 @@ export class World {
   private click(e: PointerEvent) {
     const c = this.controller;
     if (!c) return;
+    if (this.phAim) {
+      if (e.pointerType === 'mouse' && document.pointerLockElement !== this.renderer.domElement) this.renderer.domElement.requestPointerLock?.();
+      this.phShoot?.();
+      return;
+    }
     const h = this.pick(e);
     if (h.player) {
       this.select(h.player === this.selected ? null : h.player);
@@ -1069,14 +1092,14 @@ export class World {
   private vision: { radius: number; seeAll: boolean; seeGhosts: boolean; ghosts: Set<string> } | null = null;
   private visCache = new Map<string, { t: number; vis: boolean }>();
   private losRects: { x0: number; z0: number; x1: number; z1: number }[] = [
-    ...WALLS.filter((w) => w.x0 >= 230 && w.kind !== 'hidden' && w.kind !== 'rail').map((w) => ({
+    ...WALLS.filter((w) => floorOf(w.x0) === 4 && w.kind !== 'hidden' && w.kind !== 'rail').map((w) => ({
       x0: Math.min(w.x0, w.x1) - 0.1,
       z0: Math.min(w.z0, w.z1) - 0.1,
       x1: Math.max(w.x0, w.x1) + 0.1,
       z1: Math.max(w.z0, w.z1) + 0.1,
     })),
     // tall furniture (racks, shelves, cabinets, screens) hides whoever stands behind it
-    ...FURNITURE.filter((f) => f.x >= 230 && TALL_KINDS.has(f.kind)).map((f) => {
+    ...FURNITURE.filter((f) => floorOf(f.x) === 4 && TALL_KINDS.has(f.kind)).map((f) => {
       const rot = Math.abs(Math.sin(f.ry)) > 0.7;
       const hw = (rot ? f.d : f.w) / 2 - 0.05;
       const hd = (rot ? f.w : f.d) / 2 - 0.05;
@@ -1255,6 +1278,165 @@ export class World {
 
   /** Dynamic text for an interactable's E prompt (null = no prompt, '' = the static label). */
   interactLabel: ((id: string) => string | null) | null = null;
+
+  // ------------------------------------------------------------------ prop hunt (floor 6)
+  /** who wears which piece: the piece copied, its locked angle (null: turns with you) and the model */
+  private phProps = new Map<string, { fid: string; ry: number | null; model: THREE.Group | null }>();
+  /** name tags not to show (hiders, for anyone who isn't one) */
+  private phHideTags = new Set<string>();
+  /** while you play a round: only the players still in it are drawn on floor 6 (not the found, nor onlookers) */
+  private phAliveOnly: Set<string> | null = null;
+  /** seeker with the gun: clicks / taps shoot at the crosshair (the mouse is captured on a computer) */
+  private phAim = false;
+  phShoot: (() => void) | null = null;
+  private phBoxes: { fid: string; m: THREE.Matrix4; inv: THREE.Matrix4; box: THREE.Box3; prop: boolean }[] | null = null;
+  private phWallBoxes: THREE.Box3[] = [];
+
+  setPropHunt(s: { props: Record<string, { fid: string; ry: number | null }>; hideTags: Iterable<string>; aliveOnly: Iterable<string> | null }) {
+    this.phHideTags = new Set(s.hideTags);
+    this.phAliveOnly = s.aliveOnly ? new Set(s.aliveOnly) : null;
+    for (const [id, p] of [...this.phProps]) {
+      const want = s.props[id];
+      if (want && want.fid === p.fid) p.ry = want.ry;
+      else this.unwearProp(id);
+    }
+    for (const [id, want] of Object.entries(s.props)) {
+      if (this.phProps.has(id)) continue;
+      this.phProps.set(id, { fid: want.fid, ry: want.ry, model: null });
+      this.wearProp(id);
+    }
+  }
+
+  private wearProp(id: string) {
+    const p = this.phProps.get(id);
+    const v = this.players.get(id);
+    if (!p || !v || p.model) return;
+    const model = this.office.f6.propModel(p.fid);
+    if (!model) return;
+    p.model = model;
+    v.holder.add(model);
+    v.blob.visible = false;
+    if (v.avatar) v.avatar.root.visible = false;
+  }
+
+  private unwearProp(id: string) {
+    const p = this.phProps.get(id);
+    this.phProps.delete(id);
+    const v = this.players.get(id);
+    if (!p || !v) return;
+    if (p.model) v.holder.remove(p.model);
+    if (v.avatar) v.avatar.root.visible = true;
+    v.blob.visible = !this.charShadows && !!v.avatar;
+  }
+
+  /** Seeker mode: shots at the crosshair; leaving it gives the mouse back. */
+  setPhAim(on: boolean) {
+    this.phAim = on;
+    if (!on && document.pointerLockElement === this.renderer.domElement) document.exitPointerLock?.();
+  }
+
+  /** Every piece of furniture on floor 6 (as built) and its walls, as boxes to aim at. */
+  private phTargets() {
+    if (this.phBoxes) return;
+    const y0 = 5 * FLOOR_H;
+    this.phBoxes = [];
+    for (const f of FURNITURE) {
+      if (floorOf(f.x) !== 5) continue;
+      const box = this.office.f6.propBox(f.id) ?? new THREE.Box3(new THREE.Vector3(-f.w / 2, 0, -f.d / 2), new THREE.Vector3(f.w / 2, 1.8, f.d / 2));
+      const m = new THREE.Matrix4().makeRotationY(f.ry).setPosition(visualX(f.x), y0, f.z);
+      this.phBoxes.push({ fid: f.id, m, inv: m.clone().invert(), box, prop: isPhProp(f.kind) });
+    }
+    this.phWallBoxes = WALLS.filter((w) => floorOf(w.x0) === 5 && w.kind !== 'hidden').map(
+      (w) =>
+        new THREE.Box3(
+          new THREE.Vector3(visualX(Math.min(w.x0, w.x1)) - WALL_T / 2, y0, Math.min(w.z0, w.z1) - WALL_T / 2),
+          new THREE.Vector3(visualX(Math.max(w.x0, w.x1)) + WALL_T / 2, y0 + WALL_H, Math.max(w.z0, w.z1) + WALL_T / 2),
+        ),
+    );
+  }
+
+  /**
+   * What the crosshair (screen centre) points at on floor 6: a hider, a piece of furniture (`prop`:
+   * one people can turn into) or a wall / the floor. `point` is floor-local (logical x, height above
+   * the floor). null: nothing within reach.
+   */
+  phAimAt(reach = PH_SHOT_RANGE): { hit: string | null; fid: string | null; prop: boolean; point: THREE.Vector3; from: THREE.Vector3 } | null {
+    this.phTargets();
+    this.camera.updateMatrixWorld();
+    this.ray.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    const r = this.ray.ray;
+    const local = new THREE.Ray();
+    const p = new THREE.Vector3();
+    let best = reach;
+    let hit: string | null = null;
+    let fid: string | null = null;
+    let prop = false;
+    const myId = this.me?.id;
+    for (const [id, pr] of this.phProps) {
+      if (id === myId || !pr.model) continue;
+      const v = this.players.get(id);
+      const box = this.office.f6.propBox(pr.fid);
+      if (!v?.holder.visible || !box) continue;
+      pr.model.updateMatrixWorld();
+      local.copy(r).applyMatrix4(pr.model.matrixWorld.clone().invert());
+      if (local.intersectBox(box, p)) {
+        const d = p.distanceTo(local.origin);
+        if (d < best) [best, hit, fid, prop] = [d, id, null, true];
+      }
+    }
+    for (const b of this.phBoxes!) {
+      local.copy(r).applyMatrix4(b.inv);
+      if (local.intersectBox(b.box, p)) {
+        const d = p.distanceTo(local.origin);
+        if (d < best) [best, hit, fid, prop] = [d, null, b.fid, b.prop];
+      }
+    }
+    for (const w of this.phWallBoxes) {
+      if (r.intersectBox(w, p)) {
+        const d = p.distanceTo(r.origin);
+        if (d < best) [best, hit, fid, prop] = [d, null, null, false];
+      }
+    }
+    // the floor and the ceiling stop a shot too
+    const y0 = 5 * FLOOR_H;
+    if (Math.abs(r.direction.y) > 1e-4) {
+      for (const y of [y0, y0 + WALL_H]) {
+        const d = (y - r.origin.y) / r.direction.y;
+        if (d > 0 && d < best) [best, hit, fid, prop] = [d, null, null, false];
+      }
+    }
+    if (best >= reach) return null;
+    const toLocal = (v: THREE.Vector3) => new THREE.Vector3(v.x + 5 * UP_DX, v.y - y0, v.z);
+    return { hit, fid, prop, point: toLocal(r.at(best, new THREE.Vector3())), from: toLocal(r.origin.clone().addScaledVector(r.direction, 0.6).add(new THREE.Vector3(0, -0.18, 0))) };
+  }
+
+  /** The piece you'd turn into: the one at the crosshair if it's close enough, else the nearest one in front of you. */
+  phCandidate(): Furniture | null {
+    const me = this.me;
+    if (!me || this.myFloor !== 5) return null;
+    const near = (f: Furniture) => Math.hypot(f.x - me.x, f.z - me.z) - Math.max(f.w, f.d) / 2;
+    const a = this.phAimAt(12);
+    if (a?.fid && a.prop) {
+      const f = FURN_BY_ID.get(a.fid);
+      if (f && near(f) <= PH_GRAB_RANGE) return f;
+    }
+    let best: Furniture | null = null;
+    let bd = 1.6;
+    const fx = Math.sin(me.ry);
+    const fz = Math.cos(me.ry);
+    for (const f of FURNITURE) {
+      if (floorOf(f.x) !== 5 || !isPhProp(f.kind)) continue;
+      const d = near(f);
+      if (d > bd) continue;
+      const dx = f.x - me.x;
+      const dz = f.z - me.z;
+      const len = Math.hypot(dx, dz) || 1;
+      if ((dx * fx + dz * fz) / len < -0.2) continue; // behind you
+      bd = d;
+      best = f;
+    }
+    return best;
+  }
 
   private canSeeSpot(x: number, z: number): boolean {
     const v = this.vision;
@@ -1460,7 +1642,7 @@ export class World {
       v.holder.position.set(visualX(x), v.groundY + jy, z);
       v.blob.position.y = 0.012 - jy;
       v.holder.rotation.y = ry;
-      v.holder.visible = this.sharesFloor(x, z) && this.canSeePlayer(v, now);
+      v.holder.visible = this.sharesFloor(x, z) && this.canSeePlayer(v, now) && (!this.phAliveOnly || this.phAliveOnly.has(v.id) || floorOf(x) !== 5);
     }
 
     // automatic doors upstairs (cinema, bar) open for anyone close
@@ -1510,11 +1692,12 @@ export class World {
       const h = v.avatar?.height ?? 1.75 * v.state.avatar.height;
       const tagY = v.anim === 'sit' ? h * 0.78 + 0.12 : h + 0.25;
       // during a film, don't let name tags of the audience cover the screen
-      if (!v.isMe) v.tag.object.visible = !(this.dimTarget > 0.9 && v.anim === 'sit' && v.state.zone === 'cinema');
+      if (!v.isMe) v.tag.object.visible = !(this.dimTarget > 0.9 && v.anim === 'sit' && v.state.zone === 'cinema') && !this.phHideTags.has(v.id);
       v.tag.object.position.y += (tagY - v.tag.object.position.y) * (1 - Math.exp(-6 * dt));
       // nobody sees people on other floors / behind closed doors: don't animate them (bones, hair
       // physics); people far away move every other frame — at that size nobody can tell
       v.animAcc = Math.min(0.1, v.animAcc + dt);
+      if (this.phProps.get(v.id)?.model) continue; // a piece of furniture: nothing to animate
       if (!v.isMe) {
         if (!v.holder.visible || v.offscreen) continue;
         v.lodTick ^= 1;
@@ -1569,8 +1752,9 @@ export class World {
     }
     if (this.me) {
       const ducked = this.hiddenIds.has(this.me.id); // in a duct: you're not drawn, even for yourself
-      if (this.me.avatar) this.me.avatar.root.visible = !fp && !ducked;
-      this.me.blob.visible = !this.charShadows && !!this.me.avatar && !fp && !ducked;
+      const prop = !!this.phProps.get(this.me.id)?.model;
+      if (this.me.avatar) this.me.avatar.root.visible = !fp && !ducked && !prop;
+      this.me.blob.visible = !this.charShadows && !!this.me.avatar && !fp && !ducked && !prop;
       this.me.tag.object.visible = !fp && !ducked;
     }
     const hideBar = this.cullPeople();
@@ -1709,10 +1893,16 @@ export class World {
     this.updateFrustum();
     const all = !!this.cctv; // the security cameras look elsewhere
     for (const v of this.players.values()) {
+      const pr = this.phProps.get(v.id);
+      if (pr) {
+        if (!pr.model) this.wearProp(v.id);
+        // a locked prop keeps its angle while you turn the camera round it
+        if (pr.model) pr.model.rotation.y = pr.ry == null ? 0 : pr.ry - v.holder.rotation.y;
+      }
       if (v.isMe || !v.avatar) continue;
       const seen = all || this.inView(v.holder.position, v.avatar.height || 1.8);
       v.offscreen = !seen;
-      v.avatar.root.visible = seen;
+      v.avatar.root.visible = seen && !pr?.model;
     }
     const c = this.camera.position;
     const inCinema = this.myFloor === 1 && c.x > CINEMA_VX0 && c.x < CINEMA_VX1 && c.z > CINEMA.z0 && c.z < CINEMA.z1;
@@ -1775,6 +1965,11 @@ export class World {
 
   get cameraYaw(): number {
     return this.camYaw;
+  }
+
+  /** Which way you face (radians). */
+  get myRy(): number {
+    return this.controller?.ry ?? 0;
   }
 
   setViewMode(mode: ViewMode) {
@@ -1863,6 +2058,7 @@ export class World {
     await this.prewarm(this.office.top);
     await this.prewarm(this.office.roof4);
     await this.prewarm(this.office.roof5);
+    await this.prewarm(this.office.roof6);
     // draw the floors once now: the staff take a while to arrive (six VRoid models), and whoever
     // goes up before that froze for a second on the shaders compiled there and then
     this.warmPending = !this.disposed;
@@ -1887,7 +2083,7 @@ export class World {
     // everything, culled or not (the point is to get every shader and texture onto the GPU)
     const holders = [...this.staff.holders(), ...this.staff.roots(), o.bar.root];
     const prevHolders = holders.map((h) => h.visible);
-    o.setFloorView([o.downstairs.visible, true, true, true, true], 1);
+    o.setFloorView([o.downstairs.visible, true, true, true, true, true], 1);
     o.showWells();
     holders.forEach((h) => (h.visible = true));
     const cam = new THREE.PerspectiveCamera(70, 1.6, 0.5, 300);
@@ -1927,14 +2123,14 @@ export class World {
     const c = this.controller;
     const f = this.myFloor;
     // floor 2 is also drawn from floor 3: the double-height cinema walls belong to it
-    const vis = [f === 0, f === 1 || f === 2, f === 2, f === 3, f === 4];
+    const vis = [f === 0, f === 1 || f === 2, f === 2, f === 3, f === 4, f === 5];
     const vx = c ? visualX(c.x) : 0;
     if (c && this.viewMode === 'first' && c.z > 21 && vx > 8 && vx < 36) {
       if (f > 0) vis[f - 1] = true;
-      if (f < 4) vis[f + 1] = true;
+      if (f < 5) vis[f + 1] = true;
     }
     if (this.ride) vis[this.ride.from] = vis[this.ride.to] = true;
-    const key = vis.reduce((k, v, i) => k | (v ? 1 << i : 0), 0) | (f << 4);
+    const key = vis.reduce((k, v, i) => k | (v ? 1 << i : 0), 0) | (f << 8);
     if (key === this.floorView) return;
     this.floorView = key;
     this.office.setFloorView(vis, f);
