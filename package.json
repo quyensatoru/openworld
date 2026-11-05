@@ -1,5 +1,5 @@
 {
-  "name": "bss-virtual-office",
+  "name": "office",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
     "cf-typegen": "wrangler types worker/worker-configuration.d.ts",
-    "db:migrate:remote": "wrangler d1 migrations apply bss-office --remote",
+    "db:migrate:remote": "wrangler d1 migrations apply office --remote",
     "deploy": "vite build && wrangler deploy",
     "assets:inspect": "node scripts/inspect-assets.mjs",
     "assets:prepare": "node scripts/prepare-assets.mjs",

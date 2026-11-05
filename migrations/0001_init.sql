@@ -1,4 +1,4 @@
--- BSS Virtual Office schema (also applied idempotently by worker/schema.ts)
+-- Office — văn phòng ảo 3D schema (also applied idempotently by worker/schema.ts)
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL, desk TEXT, last_seen INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, descr TEXT NOT NULL DEFAULT '', col TEXT NOT NULL, ord REAL NOT NULL, assignee TEXT, priority TEXT NOT NULL DEFAULT 'normal', created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_tasks_col ON tasks (col, ord);

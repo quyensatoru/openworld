@@ -136,8 +136,8 @@ class Game {
           toast(
             [
               '🏢 Tầng 1 — Văn phòng',
-              '⬆️ Tầng 2 — 🎬 Rạp phim bên trái · 🍸 BSS Bar bên phải · cầu thang lên tầng 3 ở góc phải',
-              '🎮 Tầng 3 — phòng game BSS Net bên phải · cầu thang lên tầng 4 ở bên trái',
+              '⬆️ Tầng 2 — 🎬 Rạp phim bên trái · 🍸 Office Bar bên phải · cầu thang lên tầng 3 ở góc phải',
+              '🎮 Tầng 3 — phòng game Office Net bên phải · cầu thang lên tầng 4 ở bên trái',
               '🎤 Tầng 4 — phòng Karaoke bên trái · 🐺 Làng Ma Sói bên phải · cầu thang lên tầng 5 ở góc phải',
               getState().touch ? '🕵️ Tầng 5 — Nội Gián: tới bảng trong sảnh, bấm nút ✋ để tham gia' : '🕵️ Tầng 5 — Nội Gián: bấm E ở bảng trong sảnh để tham gia',
               '🪑 Tầng 6 — Trốn tìm biến hình: bấm “Tham gia” ở bảng bên trái màn hình',
@@ -295,7 +295,7 @@ class Game {
       if (this.fastFrame % 4 === 0) this.updateMusic(me);
       this.ambience.tickMusic();
     }
-    // the arena screen in BSS Net animates between server frames (countdown, pulsing food)
+    // the arena screen in Office Net animates between server frames (countdown, pulsing food)
     if (this.zoneId === 'netcafe' && this.fastFrame % 3 === 0) world.office.updateNetScreen(s.snake, serverNow());
     if (this.fastFrame % 24 === 0) {
       this.cinema?.sync();
@@ -953,8 +953,8 @@ class Game {
       {
         office: '🏢 Đang về văn phòng',
         cinema: '🎬 Đang đi tới rạp phim',
-        bar: '🍸 Đang đi tới BSS Bar',
-        netcafe: '🎮 Đang lên phòng game BSS Net (tầng 3)',
+        bar: '🍸 Đang đi tới Office Bar',
+        netcafe: '🎮 Đang lên phòng game Office Net (tầng 3)',
         karaoke: '🎤 Đang lên phòng Karaoke (tầng 4)',
         wolfroom: '🐺 Đang lên Làng Ma Sói (tầng 4)',
         mole: '🕵️ Đang lên tầng 5 chơi Nội Gián',
@@ -1037,7 +1037,7 @@ class Game {
     }
   }
 
-  /** BSS Net: send a game action. */
+  /** Office Net: send a game action. */
   arcade(m: ArcadeMsg) {
     this.net?.send({ t: 'arcade', m });
   }
@@ -1079,7 +1079,7 @@ class Game {
     const a = document.createElement('a');
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
-    a.download = `bss-office-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
+    a.download = `office-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
     a.href = URL.createObjectURL(blob);
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -2062,7 +2062,7 @@ export function vietnameseVoice(): SpeechSynthesisVoice | null | undefined {
     // the list arrives late (Chrome) and grows (Edge's online voices): choose again each time
     synth.addEventListener?.('voiceschanged', () => {
       viVoice = undefined;
-      window.dispatchEvent(new Event('bss-voices'));
+      window.dispatchEvent(new Event('office-voices'));
     });
   }
   if (viVoice !== undefined) return viVoice;

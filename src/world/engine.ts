@@ -69,7 +69,7 @@ export interface WorldCallbacks {
   onLift(phase: 'start' | 'arrive', from: Floor, to: Floor): void;
   /** Standing in a lift car (show the floor buttons), or null. */
   onLiftPanel(floor: Floor | null): void;
-  /** true while a game window has the keyboard (BSS Net). */
+  /** true while a game window has the keyboard (Office Net). */
   inputBlocked?(): boolean;
   /** The WebGL context was lost (true) / restored (false). */
   onGraphicsLost?(lost: boolean): void;
@@ -1070,7 +1070,7 @@ export class World {
     g.fillStyle = '#ffffff';
     g.textAlign = 'left';
     g.font = `800 ${Math.round(band * 0.42)}px "Be Vietnam Pro", sans-serif`;
-    g.fillText('🏢 BSS Office', band * 0.4, H + band * 0.64);
+    g.fillText('🏢 Office', band * 0.4, H + band * 0.64);
     g.textAlign = 'right';
     g.font = `500 ${Math.round(band * 0.32)}px "Be Vietnam Pro", sans-serif`;
     g.fillText(caption, W - band * 0.4, H + band * 0.62);

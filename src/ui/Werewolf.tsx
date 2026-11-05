@@ -511,10 +511,10 @@ function useViVoice(): SpeechSynthesisVoice | null | undefined {
   const [, redraw] = useState(0);
   useEffect(() => {
     const f = () => redraw((n) => n + 1);
-    window.addEventListener('bss-voices', f);
+    window.addEventListener('office-voices', f);
     const t = setTimeout(f, 1500); // Chrome's first getVoices() is often empty and no event follows
     return () => {
-      window.removeEventListener('bss-voices', f);
+      window.removeEventListener('office-voices', f);
       clearTimeout(t);
     };
   }, []);

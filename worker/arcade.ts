@@ -1,4 +1,4 @@
-// BSS Net game server, living inside the OfficeRoom Durable Object.
+// Office Net game server, living inside the OfficeRoom Durable Object.
 //  - Snake battle: one shared arena, rounds of up to SNAKE_MAX players, simulated here at 8 Hz.
 //  - Caro (gomoku): 1v1 matches from a queue, or against a simple bot.
 // The interval only runs while somebody is playing, so the DO can still hibernate when idle.
@@ -279,7 +279,7 @@ export class Arcade {
       this.winner = best ? { id: best.id, name: best.name } : null;
       this.phase = 'over';
       this.until = now + OVER_MS;
-      if (best && !solo) void this.host.chat(`🐍 ${best.name} thắng ván Rắn săn mồi ở BSS Net (${best.score} điểm, ${all.length} người chơi)!`);
+      if (best && !solo) void this.host.chat(`🐍 ${best.name} thắng ván Rắn săn mồi ở Office Net (${best.score} điểm, ${all.length} người chơi)!`);
     }
     this.broadcastSnake();
   }
@@ -414,7 +414,7 @@ export class Arcade {
     if (winner === 'draw') return;
     const w = winner === 'x' ? g.xName : g.oName;
     const l = winner === 'x' ? g.oName : g.xName;
-    if (!vsBot) void this.host.chat(`⭕ ${w} thắng ${l} một ván caro ở BSS Net${reason === 'timeout' ? ' (đối thủ hết giờ)' : reason === 'resign' ? ' (đối thủ chịu thua)' : ''}!`);
+    if (!vsBot) void this.host.chat(`⭕ ${w} thắng ${l} một ván caro ở Office Net${reason === 'timeout' ? ' (đối thủ hết giờ)' : reason === 'resign' ? ' (đối thủ chịu thua)' : ''}!`);
     else if ((winner === 'x' ? g.x : g.o) !== BOT) void this.host.chat(`🤖 ${w} vừa đánh bại máy ở cờ caro!`);
   }
 

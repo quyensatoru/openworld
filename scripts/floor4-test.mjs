@@ -1,10 +1,10 @@
 // Floor 4 protocol test: karaoke (queue, mics, effects, reactions, voice relay, score) and a full
 // Ma Sói game with five fake players (roles, night actions, voice rules, votes, the end).
-//   BASE=http://localhost:5173 PASSCODE=bss-dev node scripts/floor4-test.mjs
+//   BASE=http://localhost:5173 PASSCODE=office-dev node scripts/floor4-test.mjs
 import WebSocket from 'ws';
 
 const BASE = (process.env.BASE || 'http://localhost:5173').replace(/\/$/, '');
-const PASSCODE = process.env.PASSCODE || 'bss-dev';
+const PASSCODE = process.env.PASSCODE || 'office-dev';
 const WS_BASE = BASE.replace(/^http/, 'ws');
 let failures = 0;
 const ok = (cond, label) => {

@@ -105,7 +105,7 @@ export function ClaudeConnect() {
   const script = `curl -fsSL ${location.origin}/claude-hook.cjs | node -`;
   const install = token ? `${script} install '${endpoint}' ${token}` : '';
   const uninstall = `${script} uninstall`;
-  const cmd = token ? `curl -s -m 3 -X POST -H 'Authorization: Bearer ${token}' -H 'Content-Type: application/json' --data-binary @- '${endpoint}' >/dev/null 2>&1 || true # bss-office` : '';
+  const cmd = token ? `curl -s -m 3 -X POST -H 'Authorization: Bearer ${token}' -H 'Content-Type: application/json' --data-binary @- '${endpoint}' >/dev/null 2>&1 || true # office` : '';
   const hook = (matcher?: string) => [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command: cmd }] }];
   const snippet = token
     ? JSON.stringify({ hooks: { SessionStart: hook(), UserPromptSubmit: hook(), PostToolUse: hook('*'), Notification: hook(), Stop: hook() } }, null, 2)

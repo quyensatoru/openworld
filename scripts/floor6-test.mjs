@@ -1,12 +1,12 @@
 // Floor 6 protocol test: "Trốn tìm biến hình" with four fake players — joining, settings, teams,
 // starting spots, turning into furniture (range, health by size), locking, taunts, the hunt (hits,
 // shots at real furniture, finding), ghost voice, the round result, teams rotating, abort.
-//   BASE=http://localhost:5173 PASSCODE=bss-dev npx tsx scripts/floor6-test.mjs
+//   BASE=http://localhost:5173 PASSCODE=office-dev npx tsx scripts/floor6-test.mjs
 import WebSocket from 'ws';
 import { FURNITURE } from '../shared/map.ts';
 
 const BASE = (process.env.BASE || 'http://localhost:5173').replace(/\/$/, '');
-const PASSCODE = process.env.PASSCODE || 'bss-dev';
+const PASSCODE = process.env.PASSCODE || 'office-dev';
 const WS_BASE = BASE.replace(/^http/, 'ws');
 let failures = 0;
 const ok = (cond, label) => {

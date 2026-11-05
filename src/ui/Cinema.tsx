@@ -133,7 +133,7 @@ export function CinemaPanel() {
       setOpen={(o) => setState({ cinemaPanel: o })}
       player={game.cinema}
       icon="🎬"
-      title="Rạp BSS"
+      title="Rạp Office"
       pillIdle="Máy chiếu"
       idleText="Máy chiếu đang tắt. Dán link YouTube để cả rạp cùng xem."
       playingLabel="Đang chiếu"
@@ -163,7 +163,7 @@ export function BarPanel() {
       setOpen={(o) => setState({ barPanel: o })}
       player={game.jukebox}
       icon="🎵"
-      title="Jukebox BSS Bar"
+      title="Jukebox Office Bar"
       pillIdle="Nhạc DJ · chọn bài"
       idleText="Đang phát nhạc của DJ. Dán link YouTube để cả bar nghe bài bạn chọn (tự lặp lại)."
       playingLabel="Đang phát"

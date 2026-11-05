@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// BSS Office × Claude Code — adds or removes the office activity hooks in ~/.claude/settings.json.
+// Office × Claude Code — adds or removes the office activity hooks in ~/.claude/settings.json.
 //
 //   curl -fsSL https://<office>/claude-hook.cjs | node - install https://<office>/api/activity <token>
 //   curl -fsSL https://<office>/claude-hook.cjs | node - uninstall
 //
 // Only touches hook entries that post to /api/activity; everything else in settings.json is kept.
-// A backup of the original file is written once to settings.json.bss-backup.
+// A backup of the original file is written once to settings.json.office-backup.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const TAG = '# bss-office';
+const TAG = '# office-activity';
 const EVENTS = { SessionStart: null, UserPromptSubmit: null, PostToolUse: '*', Notification: null, Stop: null };
 const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const file = path.join(dir, 'settings.json');
@@ -41,7 +41,7 @@ function strip(settings) {
 
 function save(settings) {
   fs.mkdirSync(dir, { recursive: true });
-  const backup = `${file}.bss-backup`;
+  const backup = `${file}.office-backup`;
   if (fs.existsSync(file) && !fs.existsSync(backup)) fs.copyFileSync(file, backup);
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n');
@@ -61,13 +61,13 @@ if (action === 'install') {
     (settings.hooks[ev] = settings.hooks[ev] || []).push({ ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command }] });
   }
   save(settings);
-  console.log(`✅ Đã nối Claude Code với BSS Office (${file}).`);
+  console.log(`✅ Đã nối Claude Code với Office (${file}).`);
   console.log('   Mở lại Claude Code là xong. Màn hình chỉ hiện khi bạn đang ngồi ở bàn trong văn phòng ảo.');
 } else if (action === 'uninstall') {
   const settings = load();
   strip(settings);
   save(settings);
-  console.log(`✅ Đã gỡ hook BSS Office khỏi ${file}. Các cài đặt khác giữ nguyên.`);
+  console.log(`✅ Đã gỡ hook Office khỏi ${file}. Các cài đặt khác giữ nguyên.`);
 } else {
   console.error('Cách dùng: node - install <url> <mã>   |   node - uninstall');
   process.exit(1);

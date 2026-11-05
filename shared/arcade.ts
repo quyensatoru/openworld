@@ -1,4 +1,4 @@
-// BSS Net (the game room): multiplayer games run by the server (OfficeRoom → worker/arcade.ts).
+// Office Net (the game room): multiplayer games run by the server (OfficeRoom → worker/arcade.ts).
 // Types + pure rules shared by the worker and the client.
 
 // ------------------------------------------------------------------ snake battle

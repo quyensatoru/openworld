@@ -3,7 +3,7 @@
 // Runtime types generated with workerd@1.20261101.1 2026-10-01
 interface __BaseEnv_Env {
 	DB: D1Database;
-	OFFICE_NAME: "BSS Office";
+	OFFICE_NAME: "Office";
 	TZ_OFFSET_MINUTES: "420";
 	OFFICE_PASSCODE: string;
 	SESSION_SECRET: string;

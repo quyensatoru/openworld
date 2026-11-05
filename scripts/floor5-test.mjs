@@ -1,10 +1,10 @@
 // Floor 5 protocol test: a full "Nội Gián" game with five fake players — roles, tasks, the kill
 // cooldown, bodies, voice rules (ghosts, meetings), the critical sabotage, report, vote, the end.
-//   BASE=http://localhost:5173 PASSCODE=bss-dev node scripts/floor5-test.mjs
+//   BASE=http://localhost:5173 PASSCODE=office-dev node scripts/floor5-test.mjs
 import WebSocket from 'ws';
 
 const BASE = (process.env.BASE || 'http://localhost:5173').replace(/\/$/, '');
-const PASSCODE = process.env.PASSCODE || 'bss-dev';
+const PASSCODE = process.env.PASSCODE || 'office-dev';
 const WS_BASE = BASE.replace(/^http/, 'ws');
 let failures = 0;
 const ok = (cond, label) => {

@@ -1,4 +1,4 @@
-// Canvas drawing for BSS Net: the snake arena (game window + the big screen on the wall) and the
+// Canvas drawing for Office Net: the snake arena (game window + the big screen on the wall) and the
 // "something is running" pictures on occupied PC monitors.
 import * as THREE from 'three';
 import { SNAKE_H, SNAKE_W, type SnakeFrame } from '../../shared/arcade';
@@ -133,7 +133,7 @@ export function drawSnake(g: CanvasRenderingContext2D, f: SnakeFrame | null, now
       g.fillText(small, ox + (cell * SNAKE_W) / 2, oy + cell * SNAKE_H * 0.56);
     }
   };
-  if (phase === 'idle') msg('BSS NET ARENA', 'Ngồi vào một máy → 🐍 Rắn săn mồi → Tham gia');
+  if (phase === 'idle') msg('OFFICE NET ARENA', 'Ngồi vào một máy → 🐍 Rắn săn mồi → Tham gia');
   else if (phase === 'countdown') msg(`${Math.max(1, Math.ceil((f!.until - now) / 1000))}`, `${f!.queue.map((q) => q.name).join(' · ')}`);
   else if (phase === 'over') msg(f!.winner ? `🏆 ${f!.winner.name} thắng!` : 'Hoà!', 'Ván mới bắt đầu ngay sau đây');
   g.textBaseline = 'alphabetic';
@@ -189,7 +189,7 @@ export function gameScreenTexture(seed: number): THREE.CanvasTexture {
       g.textAlign = 'center';
       g.font = 'italic 800 40px sans-serif';
       g.fillStyle = '#7ef6ff';
-      g.fillText('BSS NET', w / 2, h / 2);
+      g.fillText('OFFICE NET', w / 2, h / 2);
       g.font = '500 15px sans-serif';
       g.fillStyle = '#ff7ac4';
       g.fillText('Chọn trò để bắt đầu ▶', w / 2, h / 2 + 30);

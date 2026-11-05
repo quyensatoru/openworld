@@ -1,4 +1,4 @@
-# 🏢 BSS Virtual Office
+# 🏢 Office — văn phòng ảo 3D
 
 Văn phòng ảo 3D cho team: mỗi người mở link, nhập mã văn phòng, tạo nhân vật rồi đi lại, ngồi vào bàn làm việc, nói chuyện khi đứng gần nhau, họp trong phòng họp, kéo task trên Kanban.
 
@@ -34,12 +34,12 @@ migrations/       schema D1
 
 ```bash
 npm install
-npm run dev            # http://localhost:5173 — mã văn phòng mặc định: bss-dev (file .dev.vars)
+npm run dev            # http://localhost:5173 — mã văn phòng mặc định: office-dev (file .dev.vars)
 ```
 
 `localhost` được coi là HTTPS nên mic/cam dùng được khi test local. Mở thêm một cửa sổ ẩn danh để thử 2 người.
 
-**Bản đang chạy:** https://bss-office.quyenpv020803.workers.dev (D1: `bss-office`).
+**Bản đang chạy:** https://office.quyenpv020803.workers.dev (D1: `office`).
 
 ## Nhân vật Quaternius (CC0)
 
@@ -64,11 +64,11 @@ Không có `public/models/manifest.json` thì game tự dùng nhân vật dựng
 
 ```bash
 npx wrangler login                                   # một lần
-npx wrangler d1 create bss-office                    # copy database_id in ra vào wrangler.jsonc
+npx wrangler d1 create office                    # copy database_id in ra vào wrangler.jsonc
 npm run db:migrate:remote                            # tạo bảng (DO cũng tự tạo nếu thiếu)
 npx wrangler secret put OFFICE_PASSCODE              # mã văn phòng cho cả team
 npx wrangler secret put SESSION_SECRET               # chuỗi ngẫu nhiên dài
-npm run deploy                                       # → https://bss-office.<subdomain>.workers.dev
+npm run deploy                                       # → https://office.<subdomain>.workers.dev
 ```
 
 Đổi `OFFICE_PASSCODE` là mọi phiên đăng nhập cũ hết hiệu lực. Tên văn phòng và múi giờ nằm ở `vars` trong `wrangler.jsonc`.
@@ -83,7 +83,7 @@ npm run deploy                                       # → https://bss-office.<s
 npm run typecheck
 npm test               # 25 bước kiểm tra giao thức với 3 client giả (cần npm run dev đang chạy)
 npm run e2e            # Chrome headless, 2 người thật: đi lại, voice WebRTC, camera, chat, Kanban, ngồi bàn
-BASE=https://bss-office.xxx.workers.dev PASSCODE=... npm test   # chạy với bản đã deploy
+BASE=https://office.xxx.workers.dev PASSCODE=... npm test   # chạy với bản đã deploy
 ```
 
 ## Tuỳ biến văn phòng

@@ -143,10 +143,10 @@ function useAutoFullscreen(on: boolean) {
  *  it explains adding the office to the home screen — Safari can't hide its bars for a page). */
 function ScreenHint() {
   const [, redraw] = useState(0);
-  const [portraitGone, setPortraitGone] = useState(() => readFlag(session, 'bss-portrait-hint'));
+  const [portraitGone, setPortraitGone] = useState(() => readFlag(session, 'office-portrait-hint'));
   // iPhone: once dismissed it stays dismissed (installing is a bigger ask than a tap)
   const fsStore = canFullscreen() ? session : local;
-  const [fsGone, setFsGone] = useState(() => readFlag(fsStore, 'bss-fs-hint'));
+  const [fsGone, setFsGone] = useState(() => readFlag(fsStore, 'office-fs-hint'));
   const panel = useStore((s) => !!s.panel);
   useEffect(() => {
     const f = () => redraw((n) => n + 1);
@@ -162,7 +162,7 @@ function ScreenHint() {
   if (window.innerHeight > window.innerWidth * 1.15) {
     if (portraitGone) return null;
     const close = () => {
-      setFlag(session, 'bss-portrait-hint');
+      setFlag(session, 'office-portrait-hint');
       setPortraitGone(true);
     };
     return (
@@ -180,7 +180,7 @@ function ScreenHint() {
         className="x"
         aria-label="Ẩn"
         onClick={() => {
-          setFlag(fsStore, 'bss-fs-hint');
+          setFlag(fsStore, 'office-fs-hint');
           setFsGone(true);
         }}
       >
@@ -193,7 +193,7 @@ function ScreenHint() {
 /** Toggle the touch controls by hand (Settings): a tablet with a keyboard, or a touch laptop. */
 export function setTouchUi(on: boolean) {
   try {
-    localStorage.setItem('bss-touch-ui', on ? '1' : '0');
+    localStorage.setItem('office-touch-ui', on ? '1' : '0');
   } catch {
     /* private mode */
   }

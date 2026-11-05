@@ -75,7 +75,7 @@ export class OfficeRoom extends DurableObject<Env> {
   /** The bar's YouTube jukebox (same shape as the cinema; null = house music). */
   private jukebox: CinemaState | null = null;
   private wheelBusyUntil = 0;
-  /** BSS Net games (snake battle, caro). */
+  /** Office Net games (snake battle, caro). */
   private arcade = new Arcade({
     people: () => [...this.conns.values()].map((c) => c.p),
     send: (id, msg) => {
@@ -752,7 +752,7 @@ export class OfficeRoom extends DurableObject<Env> {
         this.broadcast({ t: 'wheel', by: p.id, name: p.name, prize, at: now });
         // announce once the wheel has stopped (no spoilers in the chat)
         await new Promise((r) => setTimeout(r, WHEEL_SPIN_MS + 300));
-        await this.systemChat(`🎡 ${p.name} quay vòng quay may mắn ở BSS Bar và trúng: ${WHEEL_PRIZES[prize]}`);
+        await this.systemChat(`🎡 ${p.name} quay vòng quay may mắn ở Office Bar và trúng: ${WHEEL_PRIZES[prize]}`);
         return;
       }
 

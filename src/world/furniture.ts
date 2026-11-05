@@ -549,7 +549,7 @@ export function buildFurniture(f: Furniture, dyn: Dynamic): THREE.Group {
         c.fillText(['SPRINT CUỐI', 'BUG HUNTER', 'DEADLINE 2'][n], w / 2, h * 0.76);
         c.font = '500 20px "Be Vietnam Pro", sans-serif';
         c.fillText(['Sắp chiếu', 'Đang hot', 'Suất chiếu 18:00'][n], w / 2, h * 0.84);
-        c.fillText('BSS PICTURES', w / 2, h * 0.94);
+        c.fillText('OFFICE PICTURES', w / 2, h * 0.94);
       });
       rbox(g, 1.2, 1.7, 0.04, '#1d1824', 0, 1.6, 0, 0.01);
       const p = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.6), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));

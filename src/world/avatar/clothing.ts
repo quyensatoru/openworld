@@ -145,7 +145,7 @@ roughnessFactor = mix(roughnessFactor, mix(0.9, 0.55, clothShoes), clothAmt);`,
 normal = normalize(mix(normal, clothGeomNormal, clothAmt));`,
       );
   };
-  material.customProgramCacheKey = () => 'bss-cloth-v1';
+  material.customProgramCacheKey = () => 'office-cloth-v1';
   material.needsUpdate = true;
 }
 

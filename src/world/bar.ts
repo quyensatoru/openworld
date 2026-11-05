@@ -1,4 +1,4 @@
-// Animated bits of the BSS Bar (upper floor): LED dance floor, disco ball with light dots, sweeping
+// Animated bits of the Office Bar (upper floor): LED dance floor, disco ball with light dots, sweeping
 // beams, chase lights along the ceiling, a strobe, spinning records, an equaliser, neon signs and
 // the jukebox LED wall. The room itself is kept dark (see World.setDim): all the "light" here is
 // emissive or additive — no real light sources, which would cost every pixel of the whole scene.
@@ -261,11 +261,11 @@ export class BarFx {
       g.shadowBlur = 38;
       g.strokeStyle = '#ff7ac4';
       g.lineWidth = 10;
-      g.strokeText('BSS BAR', w / 2, 180);
+      g.strokeText('OFFICE BAR', w / 2, 180);
       g.shadowColor = '#2de2e6';
       g.shadowBlur = 22;
       g.fillStyle = '#fff1fa';
-      g.fillText('BSS BAR', w / 2, 180);
+      g.fillText('OFFICE BAR', w / 2, 180);
     });
     for (const [x, y, z, w, ry] of [
       [(BAR.x0 + BAR.x1) / 2, 2.78, 0.2, 3.2, 0],
@@ -354,7 +354,7 @@ export class BarFx {
         g.shadowColor = '#ff3ea5';
         g.shadowBlur = 24;
         g.fillStyle = '#ffd6f0';
-        g.fillText('BSS JUKEBOX', w / 2, h / 2 - 20);
+        g.fillText('OFFICE JUKEBOX', w / 2, h / 2 - 20);
         g.shadowBlur = 0;
         g.font = '500 32px "Be Vietnam Pro", sans-serif';
         g.fillStyle = '#c9d6ff';

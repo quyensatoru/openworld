@@ -148,7 +148,7 @@ export interface OfficeStore {
 
 export const useStore = create<OfficeStore>(() => ({
   phase: 'loading',
-  officeName: 'BSS Office',
+  officeName: 'Office',
   needPasscode: true,
   connected: false,
   kicked: null,
@@ -177,7 +177,7 @@ export const useStore = create<OfficeStore>(() => ({
   fpsCap: loadPref<FpsCap>('fpsCap', 60),
   touch: (() => {
     try {
-      const v = localStorage.getItem('bss-touch-ui');
+      const v = localStorage.getItem('office-touch-ui');
       if (v === '1' || v === '0') return v === '1';
     } catch {
       /* private mode */

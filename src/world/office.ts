@@ -721,9 +721,9 @@ export class OfficeScene {
     for (const c of this.ceilings) c.visible = on;
   }
 
-  /** "BSS CINEMA · BAR" signs: one in the lobby by the stairs, one over the cinema doors upstairs. */
+  /** "OFFICE CINEMA · BAR" signs: one in the lobby by the stairs, one over the cinema doors upstairs. */
   private buildSigns() {
-    // BSS Net neon: over the pantry door (outside) and on the south wall inside
+    // Office Net neon: over the pantry door (outside) and on the south wall inside
     const netTex = canvasTexture(1024, 256, (g, w, h) => {
       g.clearRect(0, 0, w, h);
       g.textAlign = 'center';
@@ -732,11 +732,11 @@ export class OfficeScene {
       g.shadowBlur = 34;
       g.lineWidth = 9;
       g.strokeStyle = '#7ef6ff';
-      g.strokeText('🎮 BSS NET', w / 2, 175);
+      g.strokeText('🎮 OFFICE NET', w / 2, 175);
       g.shadowColor = '#ff3ea5';
       g.shadowBlur = 18;
       g.fillStyle = '#f0fdff';
-      g.fillText('🎮 BSS NET', w / 2, 175);
+      g.fillText('🎮 OFFICE NET', w / 2, 175);
     });
     const netMat = new THREE.MeshBasicMaterial({ map: netTex, transparent: true, depthWrite: false, toneMapped: false });
     // over the game room door (hall 3 side), inside on the south wall, and in hall 2 by the stairs up
@@ -753,7 +753,7 @@ export class OfficeScene {
       g.textAlign = 'center';
       g.font = '800 72px "Be Vietnam Pro", sans-serif';
       g.fillStyle = '#7ef6ff';
-      g.fillText('⬆ TẦNG 3 · 🎮 BSS NET', w / 2, 122);
+      g.fillText('⬆ TẦNG 3 · 🎮 OFFICE NET', w / 2, 122);
     });
     const upSign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.6), new THREE.MeshBasicMaterial({ map: upTex, toneMapped: false }));
     upSign.position.set(STAIRWAYS[1].x0 + UP_DX + 2.2, 2.55, OFFICE_D - 0.13);
@@ -852,7 +852,7 @@ export class OfficeScene {
       g.textAlign = 'center';
       g.font = '800 70px "Be Vietnam Pro", sans-serif';
       g.fillStyle = '#ff6b7f';
-      g.fillText(lobby ? '⬆ 🎬 CINEMA · 🍸 BAR · 🎮 GAME · 🎤' : '🎬 BSS CINEMA', w / 2, 108);
+      g.fillText(lobby ? '⬆ 🎬 CINEMA · 🍸 BAR · 🎮 GAME · 🎤' : '🎬 OFFICE CINEMA', w / 2, 108);
       g.font = '500 34px "Be Vietnam Pro", sans-serif';
       g.fillStyle = '#ffffff';
       const line = title ? `Đang chiếu: ${title}` : lobby ? 'T2: rạp phim, bar · T3: phòng game · T4: karaoke, ma sói — cầu thang bên trái, thang máy bên phải' : 'Mời vào — chọn một ghế đỏ để xem cùng mọi người';
@@ -889,7 +889,7 @@ export class OfficeScene {
       g.textAlign = 'center';
       g.fillStyle = '#ffcf6b';
       g.font = '800 96px "Be Vietnam Pro", sans-serif';
-      g.fillText('BSS CINEMA', w / 2, h / 2 - 40);
+      g.fillText('OFFICE CINEMA', w / 2, h / 2 - 40);
       g.fillStyle = '#e8e4f5';
       g.font = '500 40px "Be Vietnam Pro", sans-serif';
       g.fillText('Ngồi xuống một ghế rồi dán link YouTube để cùng xem', w / 2, h / 2 + 40);
@@ -904,7 +904,7 @@ export class OfficeScene {
 
   private netScreen: { tex: THREE.CanvasTexture; g: CanvasRenderingContext2D } | null = null;
 
-  /** The live arena on BSS Net's north wall. */
+  /** The live arena on Office Net's north wall. */
   private setupNetScreen(mesh: THREE.Mesh) {
     const s = NET_SCREEN;
     mesh.position.set(s.x, s.y, s.z);
@@ -989,7 +989,7 @@ export class OfficeScene {
         g.font = 'italic 800 110px "Be Vietnam Pro", sans-serif';
         g.shadowColor = '#ff3ea5';
         g.shadowBlur = 30;
-        g.fillText('BSS KARAOKE', w / 2, 260);
+        g.fillText('OFFICE KARAOKE', w / 2, 260);
         g.shadowBlur = 0;
         g.fillStyle = '#e8e4f5';
         g.font = '500 38px "Be Vietnam Pro", sans-serif';

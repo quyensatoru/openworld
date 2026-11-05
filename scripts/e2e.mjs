@@ -4,7 +4,7 @@
 import puppeteer from 'puppeteer-core';
 
 const BASE = process.env.BASE || 'http://localhost:5173';
-const PASSCODE = process.env.PASSCODE || 'bss-dev';
+const PASSCODE = process.env.PASSCODE || 'office-dev';
 const CHROME = process.env.CHROME || '/usr/bin/google-chrome';
 const OUT = new URL('./out/', import.meta.url).pathname;
 let failures = 0;
@@ -39,7 +39,7 @@ async function join(name, shot) {
   page.on('error', (e) => console.log(`[${name}] PAGE CRASH:`, String(e)));
   page.on('close', () => console.log(`[${name}] page closed`));
   // Software WebGL is slow: use the light graphics preset so movement runs at a decent frame rate.
-  if (!shot) await page.evaluateOnNewDocument(() => localStorage.setItem('bss-office-quality', '"low"'));
+  if (!shot) await page.evaluateOnNewDocument(() => localStorage.setItem('office-quality', '"low"'));
   await page.goto(BASE, { waitUntil: 'networkidle2' });
   await page.waitForSelector('input[type=password]', { timeout: 45000 });
   if (shot) await page.screenshot({ path: `${OUT}login.png` });

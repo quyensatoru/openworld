@@ -1,9 +1,9 @@
 // Protocol smoke test: two fake clients talk to a running office (vite dev or a deployed URL).
-//   BASE=http://localhost:5173 PASSCODE=bss-dev node scripts/smoke-test.mjs
+//   BASE=http://localhost:5173 PASSCODE=office-dev node scripts/smoke-test.mjs
 import WebSocket from 'ws';
 
 const BASE = (process.env.BASE || 'http://localhost:5173').replace(/\/$/, '');
-const PASSCODE = process.env.PASSCODE || 'bss-dev';
+const PASSCODE = process.env.PASSCODE || 'office-dev';
 const WS_BASE = BASE.replace(/^http/, 'ws');
 const host = new URL(BASE).host;
 
@@ -146,7 +146,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const jb = await B.wait((m) => m.t === 'jukebox' && m.state?.videoId === 'kJQP7kiw5Fk');
   ok(!!jb && jb.state.pausedAt == null, 'jukebox song is broadcast to the bar');
 
-    // BSS Net: snake arena + caro
+    // Office Net: snake arena + caro
   A.send({ t: 'arcade', m: { a: 'snake:join' } });
   B.send({ t: 'arcade', m: { a: 'snake:join' } });
   const cd = await A.wait((m) => m.t === 'snake' && m.f.phase === 'countdown' && m.f.queue.length === 2);

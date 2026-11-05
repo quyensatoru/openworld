@@ -2,7 +2,7 @@
 import { sanitizeAvatar, type AvatarConfig } from '../shared/avatar';
 import { isInstalled, isIos } from './ui/fullscreen';
 
-const KEY = 'bss-office-profile-v1';
+const KEY = 'office-profile-v1';
 const CID_RE = /^[a-zA-Z0-9_-]{8,64}$/;
 
 export interface Profile {
@@ -45,7 +45,7 @@ export function saveProfile(p: Profile): void {
 
 export function loadPref<T>(key: string, fallback: T): T {
   try {
-    const v = localStorage.getItem(`bss-office-${key}`);
+    const v = localStorage.getItem(`office-${key}`);
     return v == null ? fallback : (JSON.parse(v) as T);
   } catch {
     return fallback;
@@ -54,7 +54,7 @@ export function loadPref<T>(key: string, fallback: T): T {
 
 export function savePref(key: string, value: unknown): void {
   try {
-    localStorage.setItem(`bss-office-${key}`, JSON.stringify(value));
+    localStorage.setItem(`office-${key}`, JSON.stringify(value));
   } catch {
     /* ignore */
   }
@@ -99,10 +99,10 @@ function refreshHandoff() {
   const prefs: Record<string, string> = {};
   try {
     for (const k of HANDOFF_PREFS) {
-      const v = localStorage.getItem(`bss-office-${k}`);
+      const v = localStorage.getItem(`office-${k}`);
       if (v != null && v.length < 500) prefs[k] = v;
     }
-    const touch = localStorage.getItem('bss-touch-ui');
+    const touch = localStorage.getItem('office-touch-ui');
     if (touch === '0' || touch === '1') prefs.touchUi = touch;
   } catch {
     /* private mode */
@@ -117,20 +117,35 @@ function refreshHandoffSoon() {
   soon = window.setTimeout(refreshHandoff, 600);
 }
 
+/** The office moved to a new address: the old one sends each visitor on with their profile (#from=…). */
+const FROM_RE = /^#from=([A-Za-z0-9_-]+)$/;
+/** …and only a page of this same Cloudflare account may hand one over (never a pasted link). */
+function fromOldAddress(): boolean {
+  try {
+    const r = new URL(document.referrer);
+    const account = location.hostname.split('.').slice(1).join('.');
+    return !!account.endsWith('workers.dev') && r.hostname !== location.hostname && r.hostname.endsWith('.' + account);
+  } catch {
+    return false;
+  }
+}
+
 function profileHandoff(): void {
-  const m = location.hash.match(ME_RE);
+  const m = location.hash.match(ME_RE) ?? location.hash.match(FROM_RE);
+  const moved = FROM_RE.test(location.hash);
   if (m) {
     setHash('');
     try {
       const p = JSON.parse(unb64url(m[1])) as Record<string, unknown>;
-      if (isInstalled() && !read().cid && typeof p.cid === 'string' && CID_RE.test(p.cid)) {
+      const allowed = moved ? fromOldAddress() : isInstalled();
+      if (allowed && !read().cid && typeof p.cid === 'string' && CID_RE.test(p.cid)) {
         saveProfile({ cid: p.cid, name: typeof p.name === 'string' ? p.name : '', avatar: p.avatar ? sanitizeAvatar(p.avatar) : null });
         const prefs = (p.prefs ?? {}) as Record<string, unknown>;
         for (const k of HANDOFF_PREFS) {
           const v = prefs[k];
-          if (typeof v === 'string' && v.length < 500) localStorage.setItem(`bss-office-${k}`, v);
+          if (typeof v === 'string' && v.length < 500) localStorage.setItem(`office-${k}`, v);
         }
-        if (prefs.touchUi === '0' || prefs.touchUi === '1') localStorage.setItem('bss-touch-ui', prefs.touchUi);
+        if (prefs.touchUi === '0' || prefs.touchUi === '1') localStorage.setItem('office-touch-ui', prefs.touchUi);
       }
     } catch {
       /* not ours */

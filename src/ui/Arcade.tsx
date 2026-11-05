@@ -7,7 +7,7 @@ import { getState, serverNow, setState, useStore } from '../store';
 
 const KEY_DIR: Record<string, number> = { ArrowUp: 0, KeyW: 0, ArrowRight: 1, KeyD: 1, ArrowDown: 2, KeyS: 2, ArrowLeft: 3, KeyA: 3 };
 
-/** The PC screen in BSS Net: pick a game, play with whoever is in the room. */
+/** The PC screen in Office Net: pick a game, play with whoever is in the room. */
 export function ArcadeWindow() {
   const open = useStore((s) => s.arcadeOpen);
   const tab = useStore((s) => s.arcadeTab);
@@ -17,7 +17,7 @@ export function ArcadeWindow() {
     <div className="arcade-bg">
       <div className="arcade">
         <header>
-          <b>🎮 BSS Net</b>
+          <b>🎮 Office Net</b>
           <span className="muted">{seat?.kind === 'pc' ? seat.label : ''}</span>
           <div className="arcade-tabs">
             <button className={tab === 'snake' ? 'on' : ''} onClick={() => setState({ arcadeTab: 'snake' })}>
@@ -44,7 +44,7 @@ export function ArcadePill() {
   if (open || !atPc) return null;
   return (
     <button className="cinema-pill glass arcade-pill" onClick={() => setState({ arcadeOpen: true })}>
-      🎮 Mở game <small>· BSS Net</small>
+      🎮 Mở game <small>· Office Net</small>
     </button>
   );
 }

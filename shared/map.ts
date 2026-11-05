@@ -163,7 +163,7 @@ export const GROUND_W = OFFICE_W;
 // and raised by f·FLOOR_H, i.e. stacked right above the office.
 //   floor 0 (x 0..40)    office
 //   floor 1 (x 60..100)  cinema (double height: it also takes floor 2's space) · bar · hall
-//   floor 2 (x 120..160) BSS Net game room (above the bar) · hall — an L around the cinema roof
+//   floor 2 (x 120..160) Office Net game room (above the bar) · hall — an L around the cinema roof
 //   floor 3 (x 180..220) karaoke · werewolf village · hall
 //   floor 4 (x 240..280) "Nội Gián": six rooms round a meeting room · hall
 export type Floor = 0 | 1 | 2 | 3 | 4 | 5;
@@ -179,7 +179,7 @@ export const TOP = { x0: 120, z0: 0, x1: 160, z1: 28 };
 export const CINEMA = { x0: 60, z0: 0, x1: 84, z1: 20 };
 export const BAR = { x0: 84, z0: 0, x1: 100, z1: 20 };
 export const HALL = { x0: 60, z0: 20, x1: 100, z1: 28 };
-/** BSS Net, the game room on floor 3 (right above the bar). */
+/** Office Net, the game room on floor 3 (right above the bar). */
 export const NET = { x0: 144, z0: 0, x1: 160, z1: 20 };
 export const HALL3 = { x0: 120, z0: 20, x1: 160, z1: 28 };
 /** Live arena screen on the game room's north wall. */
@@ -336,9 +336,9 @@ export const ZONES: Zone[] = [
   { id: 'pantry', name: 'Pantry', kind: 'pantry', floor: 'tile', x0: 30, z0: 18, x1: 40, z1: 28 },
   { id: 'lobby', name: 'Sảnh chính', kind: 'lobby', floor: 'stone', x0: 10, z0: 16, x1: 30, z1: 28 },
   { id: 'cinema', name: 'Rạp chiếu phim (tầng 2)', kind: 'cinema', floor: 'carpet', ...CINEMA },
-  { id: 'bar', name: 'BSS Bar (tầng 2)', kind: 'bar', floor: 'wood', ...BAR },
+  { id: 'bar', name: 'Office Bar (tầng 2)', kind: 'bar', floor: 'wood', ...BAR },
   { id: 'hall2', name: 'Sảnh tầng 2', kind: 'lobby', floor: 'stone', ...HALL },
-  { id: 'netcafe', name: 'BSS Net — phòng game (tầng 3)', kind: 'game', floor: 'carpet', ...NET },
+  { id: 'netcafe', name: 'Office Net — phòng game (tầng 3)', kind: 'game', floor: 'carpet', ...NET },
   { id: 'hall3', name: 'Sảnh tầng 3', kind: 'lobby', floor: 'stone', ...HALL3 },
   { id: 'karaoke', name: 'Phòng Karaoke (tầng 4)', kind: 'karaoke', floor: 'carpet', ...KARA },
   { id: 'wolfroom', name: 'Làng Ma Sói (tầng 4)', kind: 'wolf', floor: 'wood', ...WOLF },
@@ -677,7 +677,7 @@ for (const l of LIFTS) {
   INTERACTABLES.push({ id: `lift-${l.floor}`, kind: 'elevator', x: l.cx, z: l.cz - 0.6, radius: 1.5, label: 'Thang máy 🛗 · chọn tầng' });
 }
 
-// ------------------------------------------------------------------ floor 3: BSS Net (game room) + hall
+// ------------------------------------------------------------------ floor 3: Office Net (game room) + hall
 {
   let n = 1;
   const pc = (x: number, z: number, ry: number) => {

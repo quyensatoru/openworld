@@ -1,4 +1,4 @@
-// Bar staff: three non-player characters in the BSS Bar (a bartender behind the counter, a waitress
+// Bar staff: three non-player characters in the Office Bar (a bartender behind the counter, a waitress
 // doing rounds between the tables, a DJ at the decks). Their routines are pure functions of the
 // shared server clock, so everyone in the bar sees them in the same place doing the same thing.
 import * as THREE from 'three';

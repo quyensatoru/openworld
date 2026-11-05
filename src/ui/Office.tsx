@@ -163,7 +163,7 @@ function useIdle(ms: number, on: boolean): boolean {
 const PLACES = [
   { id: 'office', floor: 0, icon: '🏢', name: 'Văn phòng', hint: 'Bàn làm việc · phòng họp · pantry', zones: ['workspace', 'library', 'lounge', 'meetA', 'meetB', 'pantry', 'lobby'] },
   { id: 'cinema', floor: 1, icon: '🎬', name: 'Rạp phim', hint: 'Xem YouTube cùng nhau', zones: ['cinema'] },
-  { id: 'bar', floor: 1, icon: '🍸', name: 'BSS Bar', hint: 'Nhạc · đồ uống · vòng quay', zones: ['bar'] },
+  { id: 'bar', floor: 1, icon: '🍸', name: 'Office Bar', hint: 'Nhạc · đồ uống · vòng quay', zones: ['bar'] },
   { id: 'netcafe', floor: 2, icon: '🎮', name: 'Phòng game', hint: 'Rắn săn mồi · cờ caro', zones: ['netcafe'] },
   { id: 'karaoke', floor: 3, icon: '🎤', name: 'Karaoke', hint: 'Hát cùng cả team', zones: ['karaoke'] },
   { id: 'wolfroom', floor: 3, icon: '🐺', name: 'Ma Sói', hint: '5–12 người · cần mic', zones: ['wolfroom'] },
@@ -522,7 +522,7 @@ function InstallHelp() {
             Chọn <b>Thêm vào MH chính</b> → <b>Thêm</b>
           </li>
           <li>
-            Mở <b>BSS Office</b> từ biểu tượng mới trên màn hình chính
+            Mở <b>Office</b> từ biểu tượng mới trên màn hình chính
           </li>
         </ol>
         <p className="muted" style={{ fontSize: 13 }}>
@@ -558,7 +558,7 @@ function Help() {
     ['E', 'Tương tác: ngồi xuống, mở Kanban, pha cà phê…'],
     ['1 – 9', 'Biểu cảm: vẫy tay, vỗ tay, ăn mừng, nhảy… · 9 = 🥂 cạn ly (đứng cạnh ai đó cùng bấm)'],
     ['📸', 'Chụp ảnh khung cảnh hiện tại, tải về máy'],
-    ['🎮 BSS Net', 'Phòng game tầng 3: ngồi vào máy để chơi Rắn săn mồi (cả phòng) hoặc Cờ caro với đồng nghiệp'],
+    ['🎮 Office Net', 'Phòng game tầng 3: ngồi vào máy để chơi Rắn săn mồi (cả phòng) hoặc Cờ caro với đồng nghiệp'],
     ['🎤 Karaoke', 'Tầng 4: tìm bài trên YouTube, cầm mic lên sân khấu, chỉnh echo/vang; cả phòng nghe và thả 👏🌹 — hết bài có chấm điểm'],
     ['🐺 Ma sói', 'Tầng 4: ngồi gốc cây quanh đống lửa (5–12 người), bật mic. Ban đêm chỉ bầy sói nghe được nhau, người chết chỉ nói với người chết'],
     ['🕵️ Nội Gián', 'Tầng 5: tham gia ở bảng trong sảnh (4–12 người). Nhân viên làm nhiệm vụ, nội gián loại người (Q), báo cáo (R), họp và bỏ phiếu'],
@@ -587,7 +587,7 @@ function Help() {
           ))}
         </div>
         <p className="muted" style={{ fontSize: 14, lineHeight: 1.5, marginTop: 18 }}>
-          🎙️ Bật mic rồi đi vào vòng tròn xanh của đồng nghiệp là nói chuyện được (càng xa càng nhỏ). Trong phòng họp ai cũng nghe thấy nhau, còn Thư viện là vùng yên tĩnh. Ngồi vào bàn để check-in giờ làm. Tầng 2 có 🎬 rạp phim (ngồi ghế đỏ, dán link YouTube là cả rạp cùng xem) và 🍸 BSS Bar (đứng trên sàn LED là tự nhảy).
+          🎙️ Bật mic rồi đi vào vòng tròn xanh của đồng nghiệp là nói chuyện được (càng xa càng nhỏ). Trong phòng họp ai cũng nghe thấy nhau, còn Thư viện là vùng yên tĩnh. Ngồi vào bàn để check-in giờ làm. Tầng 2 có 🎬 rạp phim (ngồi ghế đỏ, dán link YouTube là cả rạp cùng xem) và 🍸 Office Bar (đứng trên sàn LED là tự nhảy).
         </p>
         <button className="btn primary" style={{ width: '100%', marginTop: 6 }} onClick={close}>
           Bắt đầu thôi!

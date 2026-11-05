@@ -1,2 +1,2 @@
-OFFICE_PASSCODE=bss-dev
+OFFICE_PASSCODE=office-dev
 SESSION_SECRET=dev-only-secret-change-me

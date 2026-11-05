@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "bss-office",
+  "name": "office",
   "main": "./worker/index.ts",
   "compatibility_date": "2026-10-01",
   "assets": {
@@ -17,13 +17,13 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "bss-office",
-      "database_id": "ba59776d-59b5-4130-b8a5-59fa113ee50e",
+      "database_name": "office",
+      "database_id": "3f951135-1c58-4b2b-a67e-cd49cbe14029",
       "migrations_dir": "migrations"
     }
   ],
   "vars": {
-    "OFFICE_NAME": "BSS Office",
+    "OFFICE_NAME": "Office",
     "TZ_OFFSET_MINUTES": "420"
   },
   "observability": { "enabled": true }

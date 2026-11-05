@@ -28,7 +28,7 @@ function safeEqualStr(a: string, b: string): boolean {
 
 // Changing the passcode (or the secret) invalidates every existing session.
 function signingKey(env: Env): string {
-  return `${env.SESSION_SECRET || 'bss-office'}|${env.OFFICE_PASSCODE || ''}`;
+  return `${env.SESSION_SECRET || 'office'}|${env.OFFICE_PASSCODE || ''}`;
 }
 
 // Fail closed: without an OFFICE_PASSCODE secret nobody can get in.

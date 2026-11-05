@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "BSS Virtual Office",
-  "short_name": "BSS Office",
-  "description": "Văn phòng ảo 3D của BSS",
+  "name": "Office — văn phòng ảo 3D",
+  "short_name": "Office",
+  "description": "Văn phòng ảo 3D",
   "lang": "vi",
   "scope": "/",
   "display": "fullscreen",
