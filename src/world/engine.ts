@@ -270,7 +270,6 @@ export class World {
   private nextFrameAt = 0;
   private lastFrameAt = 0;
   /** Resolution that steps down while the machine can't keep up, and back up once it can. */
-  private resScale = 1;
   private avgGap = 16.7;
   /** Time the frame's own work takes (ms, smoothed): tells a busy CPU from a busy GPU. */
   private avgCpu = 0;
@@ -434,9 +433,11 @@ export class World {
     this.lod = LOD_BY_QUALITY[q];
     this.charBudget = BUDGET_BY_QUALITY[q];
     this.budgetTimer = 0;
-    this.resScale = 1;
+    this.pr = this.prRange().start;
+    this.prCeil = Infinity;
     this.loadAdapt();
     this.slowFor = this.quickFor = 0;
+    this.adaptFrom = performance.now() + 6000; // (loading, warming up: not a measure of the device)
     this.applyPixelRatio();
     const size = q === 'high' ? 2048 : 1024;
     if (this.sun.shadow.mapSize.x !== size) {
@@ -457,17 +458,26 @@ export class World {
     this.nextFrameAt = 0;
   }
 
+  /**
+   * Drawing resolution bounds (device pixels per CSS pixel). "Đẹp": up to 2×, never below 1×.
+   * "Nhẹ" (the phone default): starts at 1× — every phone copes — and sharpens towards 2× only while
+   * the device keeps up (2× on a 3× phone screen is 4× the pixels: it brought phones to their knees).
+   * Battery saver: 1×, down to 0.75×.
+   */
+  private prRange(): { min: number; max: number; start: number } {
+    const dpr = window.devicePixelRatio || 1;
+    const one = Math.min(dpr, 1);
+    if (this.quality === 'high') return { min: one, max: Math.min(dpr, 2), start: Math.min(dpr, 2) };
+    if (this.quality === 'low') return { min: 0.75 * one, max: Math.min(dpr, 2), start: one };
+    return { min: 0.75 * one, max: one, start: one };
+  }
+
   /** Sets the drawing resolution; false when it was already that. */
   private applyPixelRatio(): boolean {
-    const dpr = window.devicePixelRatio || 1;
-    // "Đẹp" and "Nhẹ" draw up to 2× (phones are 2–3×: drawn at 1× they looked smeared); "Nhẹ" saves on
-    // shadows and detail instead, and the resolution only steps down while the GPU can't keep up —
-    // never below 1×. Battery saver: 1×, down to 0.75×.
-    const base = this.quality === 'eco' ? Math.min(dpr, 1) : Math.min(dpr, 2);
-    const floor = this.quality === 'eco' ? 0.75 * base : Math.min(base, 1);
-    const r = Math.max(floor, base * this.resScale);
-    if (Math.abs(r - this.renderer.getPixelRatio()) < 0.01) return false;
-    this.renderer.setPixelRatio(r);
+    const { min, max } = this.prRange();
+    this.pr = Math.min(max, Math.max(min, this.pr));
+    if (Math.abs(this.pr - this.renderer.getPixelRatio()) < 0.01) return false;
+    this.renderer.setPixelRatio(this.pr);
     return true;
   }
 
@@ -486,7 +496,10 @@ export class World {
    * good while → back up. Only while the page is in front, and never for one-off hitches.
    */
   private adaptResolution(gap: number, target: number, focused: boolean) {
-    if (!focused || gap > 250) return;
+    if (!focused || performance.now() < this.adaptFrom) return;
+    // a frame of seconds (the tab was away, a model loading) counts as one slow frame, not all that
+    // time — but it does count: very slow devices used to be ignored here and never adapted
+    gap = Math.min(gap, 250);
     this.avgGap += (gap - this.avgGap) * 0.05;
     if (this.avgGap > target * 1.35) {
       this.slowFor += gap;
@@ -497,7 +510,8 @@ export class World {
     } else {
       this.slowFor = this.quickFor = 0;
     }
-    if (this.slowFor > 3000) {
+    // badly slow (under ~30 fps): step every second instead of every three
+    if (this.slowFor > (this.avgGap > target * 2 ? 1000 : 3000)) {
       this.slowFor = 0;
       // what is short? If the frame's own work fills most of it (the CPU: characters, bones), fewer
       // people drawn in full first — fewer pixels wouldn't help and only blur. Otherwise the GPU: fewer pixels.
@@ -505,31 +519,46 @@ export class World {
       if (cpuBound ? this.fewerPeople() || this.fewerPixels() : this.fewerPixels() || this.fewerPeople()) this.saveAdapt();
     } else if (this.quickFor > 12000) {
       this.quickFor = 0;
-      // quick again: give back what has room (people while the CPU is idle enough, else sharpness)
+      // quick for a while: give back what has room (people while the CPU is idle enough, else sharpness)
       const full = BUDGET_BY_QUALITY[this.quality];
       const cpuRoom = this.avgCpu < target * 0.5;
       if (cpuRoom && this.charBudget < full) this.charBudget += 2;
-      else if (this.resScale < 1) {
-        this.resScale = Math.min(1, this.resScale + 0.15);
-        if (this.applyPixelRatio()) this.resize();
-      } else if (this.charBudget < full) this.charBudget += 2;
-      else return;
+      else if (!this.morePixels()) {
+        if (this.charBudget < full) this.charBudget += 2;
+        else return;
+      }
       this.budgetTimer = 0;
       this.saveAdapt();
     }
   }
 
+  /** Drawing resolution the automatic quality settled on (see prRange). */
+  private pr = 1;
+  /** A resolution tried this session that turned out too slow: not tried again (no see-sawing). */
+  private prCeil = Infinity;
+  private adaptFrom = 0;
+
   /** One step down in resolution; false when it is as low as it goes. */
   private fewerPixels(): boolean {
-    if (this.resScale <= 0.5) return false;
-    const was = this.resScale;
-    this.resScale = Math.max(0.5, this.resScale - 0.15);
-    if (this.applyPixelRatio()) {
-      this.resize();
-      return true;
-    }
-    this.resScale = was; // already at the floor (resizing the canvas again would only stutter)
-    return false;
+    const { min } = this.prRange();
+    if (this.pr <= min + 0.01) return false;
+    if (this.prRaised) this.prCeil = Math.min(this.prCeil, this.pr); // a step up that didn't pay off
+    this.prRaised = false;
+    this.pr = Math.max(min, this.pr - 0.25);
+    if (this.applyPixelRatio()) this.resize();
+    return true;
+  }
+
+  private prRaised = false;
+  /** One step up in resolution while there's room; false when at the top (or that was too slow before). */
+  private morePixels(): boolean {
+    const { max } = this.prRange();
+    const next = Math.min(max, this.pr + 0.25);
+    if (next <= this.pr + 0.01 || next >= this.prCeil - 0.01) return false;
+    this.pr = next;
+    this.prRaised = true;
+    if (this.applyPixelRatio()) this.resize();
+    return true;
   }
 
   /** Two people fewer drawn in full ("Nhẹ" / "Tiết kiệm pin"); false when at the minimum. */
@@ -543,7 +572,7 @@ export class World {
   /** What this device settled on, per quality: the next visit starts there instead of finding it again. */
   private saveAdapt() {
     try {
-      localStorage.setItem(`office-adapt-${this.quality}`, JSON.stringify({ res: this.resScale, budget: Number.isFinite(this.charBudget) ? this.charBudget : null }));
+      localStorage.setItem(`office-adapt2-${this.quality}`, JSON.stringify({ pr: this.pr, budget: Number.isFinite(this.charBudget) ? this.charBudget : null }));
     } catch {
       /* private mode */
     }
@@ -551,9 +580,10 @@ export class World {
 
   private loadAdapt() {
     try {
-      const a = JSON.parse(localStorage.getItem(`office-adapt-${this.quality}`) || 'null') as { res?: number; budget?: number | null } | null;
+      // (v2: the first version saved a scale of 2× and phones came back to a crawl)
+      const a = JSON.parse(localStorage.getItem(`office-adapt2-${this.quality}`) || 'null') as { pr?: number; budget?: number | null } | null;
       if (!a) return;
-      if (typeof a.res === 'number') this.resScale = Math.min(1, Math.max(0.5, a.res));
+      if (typeof a.pr === 'number' && Number.isFinite(a.pr)) this.pr = a.pr; // clamped by applyPixelRatio
       const full = BUDGET_BY_QUALITY[this.quality];
       if (typeof a.budget === 'number' && Number.isFinite(full)) this.charBudget = Math.min(full, Math.max(BUDGET_MIN, a.budget));
     } catch {
