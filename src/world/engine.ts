@@ -135,6 +135,8 @@ interface PlayerView {
   awaySince: number;
   /** Their model draws a real shadow (near the camera); far away the blob does. */
   castOn: boolean;
+  /** Among the people drawn in full ("Nhẹ" / "Tiết kiệm pin" draw only the nearest few). */
+  inBudget: boolean;
 }
 
 /** "Đẹp": full resolution; "Nhẹ": 1× resolution, smaller shadow map; "Tiết kiệm pin": also no shadow map (a blob under people). */
@@ -145,14 +147,29 @@ export type Mood = 'bar' | 'kara' | 'night' | 'camp' | 'facility';
 const KARA_HUES = ['#9b5cff', '#ff3ea5', '#2de2e6', '#5d9bff'].map((c) => new THREE.Color(c));
 
 const INTERP_DELAY = 120;
-/** Detail levels by distance to the camera (metres): beyond HALF people animate every other
- *  frame, beyond THIRD every third; beyond FAR no hair/cloth physics or faces; on "Nhẹ" beyond
- *  SHADOW a blob under their feet instead of a real shadow (fewer draws in the shadow map). */
-const LOD_MID = 7; // hair / cloth physics at half rate
-const LOD_HALF = 12;
-const LOD_THIRD = 24;
-const LOD_FAR = 15;
-const LOD_SHADOW = 16;
+/** Detail levels by distance to the camera (metres): beyond `mid` hair/cloth physics at half
+ *  rate; beyond `half` people animate every other frame, beyond `third` every third; beyond `far`
+ *  no hair/cloth physics and no fine face details; beyond `shadow` a blob under their feet instead
+ *  of a real shadow (the shadow map draws every character again). "Đẹp" keeps real shadows for all;
+ *  "Nhẹ" / "Tiết kiệm pin" (phones) come in much closer — on a phone screen it doesn't show. */
+interface Lod {
+  mid: number;
+  half: number;
+  third: number;
+  far: number;
+  shadow: number;
+}
+const LOD_BY_QUALITY: Record<GfxQuality, Lod> = {
+  high: { mid: 7, half: 12, third: 24, far: 15, shadow: Infinity },
+  low: { mid: 4, half: 7, third: 14, far: 9, shadow: 8 },
+  eco: { mid: 3, half: 5, third: 10, far: 7, shadow: 0 },
+};
+/** "Nhẹ" / "Tiết kiệm pin": at most this many people drawn in full (the nearest; the rest are a
+ *  name tag and a shadow). Lowered further while the device can't keep up (see adaptResolution). */
+const BUDGET_BY_QUALITY: Record<GfxQuality, number> = { high: Infinity, low: 10, eco: 6 };
+const BUDGET_MIN = 4;
+/** Game rooms: nobody is left out of the budget there (who is where is the game). */
+const GAME_KINDS = new Set<string | undefined>(['wolf', 'mole', 'prop']);
 /** Someone off your floor this long gives their model back (rebuilt when you meet again). */
 const AWAY_UNLOAD_MS = 180_000;
 const damp = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
@@ -238,6 +255,10 @@ export class World {
   private doorPeople: { x: number; z: number }[] = [];
   private warmPending = false;
   private shadowTick = 0;
+  private lod: Lod = LOD_BY_QUALITY.high;
+  /** How many people are drawn in full right now (see BUDGET_BY_QUALITY). */
+  private charBudget = Infinity;
+  private budgetTimer = 0;
   private quality: GfxQuality = 'high';
   /** Frames per second at most (0 = every refresh of the screen). */
   private fpsCap = 60;
@@ -403,6 +424,9 @@ export class World {
   // ------------------------------------------------------------------ setup
   setQuality(q: GfxQuality) {
     this.quality = q;
+    this.lod = LOD_BY_QUALITY[q];
+    this.charBudget = BUDGET_BY_QUALITY[q];
+    this.budgetTimer = 0;
     this.resScale = 1;
     this.slowFor = this.quickFor = 0;
     this.applyPixelRatio();
@@ -463,16 +487,32 @@ export class World {
     } else {
       this.slowFor = this.quickFor = 0;
     }
-    if (this.slowFor > 3000 && this.resScale > 0.5) {
+    if (this.slowFor > 3000) {
       this.slowFor = 0;
-      const was = this.resScale;
-      this.resScale = Math.max(0.5, this.resScale - 0.15);
-      if (this.applyPixelRatio()) this.resize();
-      else this.resScale = was; // already as low as it goes (resizing the canvas again would only stutter)
-    } else if (this.quickFor > 12000 && this.resScale < 1) {
+      let stepped = false;
+      if (this.resScale > 0.5) {
+        const was = this.resScale;
+        this.resScale = Math.max(0.5, this.resScale - 0.15);
+        if (this.applyPixelRatio()) {
+          this.resize();
+          stepped = true;
+        } else this.resScale = was; // already as low as it goes (resizing the canvas again would only stutter)
+      }
+      // resolution as low as it goes and still slow: fewer people drawn in full ("Nhẹ" / "Tiết kiệm pin")
+      if (!stepped && Number.isFinite(this.charBudget) && this.charBudget > BUDGET_MIN) {
+        this.charBudget = Math.max(BUDGET_MIN, this.charBudget - 2);
+        this.budgetTimer = 0;
+      }
+    } else if (this.quickFor > 12000) {
       this.quickFor = 0;
-      this.resScale = Math.min(1, this.resScale + 0.15);
-      if (this.applyPixelRatio()) this.resize();
+      // quick again: people back first, then sharpness
+      if (this.charBudget < BUDGET_BY_QUALITY[this.quality]) {
+        this.charBudget += 2;
+        this.budgetTimer = 0;
+      } else if (this.resScale < 1) {
+        this.resScale = Math.min(1, this.resScale + 0.15);
+        if (this.applyPixelRatio()) this.resize();
+      }
     }
   }
 
@@ -946,6 +986,7 @@ export class World {
       building: '',
       awaySince: 0,
       castOn: true,
+      inBudget: true,
     };
     this.players.set(p.id, v);
     this.loadAvatar(v, p.avatar);
@@ -1038,20 +1079,46 @@ export class World {
         }
       }
     }
+    this.budgetTimer -= dt;
+    if (this.budgetTimer <= 0) {
+      this.budgetTimer = 0.4;
+      this.rankBudget();
+    }
     if (this.buildingRemote > 0) return;
     let best: PlayerView | null = null;
     let bestScore = Infinity;
-    const cam = this.camera.position;
     for (const v of this.players.values()) {
-      if (v.isMe || !v.want || v.building || !this.sharesFloor(v.x, v.z)) continue;
-      const d2 = v.holder.position.distanceToSquared(cam);
-      const score = this.inView(v.holder.position, 1.8) ? d2 : d2 * 4 + 400;
+      if (v.isMe || !v.want || v.building || !v.inBudget || !this.sharesFloor(v.x, v.z)) continue;
+      const score = this.drawScore(v);
       if (score < bestScore) {
         bestScore = score;
         best = v;
       }
     }
     if (best) this.buildAvatar(best);
+  }
+
+  /** Who comes first for a model / a place in the budget: on screen and near (squared metres). */
+  private drawScore(v: PlayerView): number {
+    const d2 = v.holder.position.distanceToSquared(this.camera.position);
+    return this.inView(v.holder.position, 1.8) ? d2 : d2 * 4 + 400;
+  }
+
+  private ranked: PlayerView[] = [];
+  /** "Nhẹ" / "Tiết kiệm pin": only the `charBudget` people who come first on your floor are drawn in full. */
+  private rankBudget() {
+    const list = this.ranked;
+    list.length = 0;
+    for (const v of this.players.values()) {
+      if (v.isMe) continue;
+      // (other floors aren't drawn anyway; in a game everyone must be seen)
+      if (!Number.isFinite(this.charBudget) || !this.sharesFloor(v.x, v.z) || GAME_KINDS.has(zoneAt(v.x, v.z)?.kind)) v.inBudget = true;
+      else list.push(v);
+    }
+    if (!list.length) return;
+    const score = new Map(list.map((v) => [v, this.drawScore(v)]));
+    list.sort((a, b) => score.get(a)! - score.get(b)!);
+    list.forEach((v, i) => (v.inBudget = i < this.charBudget));
   }
 
   removePlayer(id: string) {
@@ -1837,10 +1904,11 @@ export class World {
       v.animAcc = Math.min(0.1, v.animAcc + dt);
       if (this.phProps.get(v.id)?.model) continue; // a piece of furniture: nothing to animate
       if (!v.isMe) {
-        if (!v.holder.visible || v.offscreen) continue;
+        if (!v.holder.visible || v.offscreen || !v.inBudget) continue;
         v.lodTick++;
         const d2 = v.camD2;
-        if (d2 > LOD_THIRD * LOD_THIRD ? v.lodTick % 3 : d2 > LOD_HALF * LOD_HALF ? v.lodTick % 2 : 0) continue;
+        const L = this.lod;
+        if (d2 > L.third * L.third ? v.lodTick % 3 : d2 > L.half * L.half ? v.lodTick % 2 : 0) continue;
       }
       const adt = v.animAcc;
       v.animAcc = 0;
@@ -1851,8 +1919,8 @@ export class World {
         lookAt: v.lookAt,
         talking: v.speaking,
         hold: v.hold,
-        far: !v.isMe && v.camD2 > LOD_FAR * LOD_FAR,
-        mid: !v.isMe && v.camD2 > LOD_MID * LOD_MID,
+        far: !v.isMe && v.camD2 > this.lod.far * this.lod.far,
+        mid: !v.isMe && v.camD2 > this.lod.mid * this.lod.mid,
       });
     }
 
@@ -2049,19 +2117,23 @@ export class World {
         // a locked prop keeps its angle while you turn the camera round it
         if (pr.model) pr.model.rotation.y = pr.ry == null ? 0 : pr.ry - v.holder.rotation.y;
       }
-      if (v.isMe || !v.avatar) continue;
-      const seen = all || this.inView(v.holder.position, v.avatar.height || 1.8);
+      if (v.isMe) continue;
+      const av = v.avatar;
+      const seen = all || this.inView(v.holder.position, av?.height || 1.8);
       v.offscreen = !seen;
-      attach(v.avatar.root, v.holder, seen && !pr?.model && v.holder.visible);
       v.camD2 = v.holder.position.distanceToSquared(this.camera.position);
-      // "Nhẹ": far away a blob instead of a real shadow (the shadow map draws every character
-      // again); "Đẹp" keeps real shadows for everyone
-      const cast = this.charShadows && (this.quality === 'high' || v.camD2 < LOD_SHADOW * LOD_SHADOW);
-      if (cast !== v.castOn) {
-        v.castOn = cast;
-        setCastShadow(v.avatar.root, cast);
+      // their model is drawn (else: still loading, or beyond the "Nhẹ" budget — a name tag and a shadow)
+      const body = !!av && v.inBudget && !pr?.model;
+      if (av) {
+        attach(av.root, v.holder, body && seen && v.holder.visible);
+        // far away a blob instead of a real shadow ("Nhẹ"; "Đẹp" keeps real shadows for everyone)
+        const cast = body && this.charShadows && v.camD2 < this.lod.shadow * this.lod.shadow;
+        if (cast !== v.castOn) {
+          v.castOn = cast;
+          setCastShadow(av.root, cast);
+        }
       }
-      v.blob.visible = !cast && !pr?.model;
+      v.blob.visible = !pr?.model && !(body && v.castOn);
     }
     const c = this.camera.position;
     const inCinema = this.myFloor === 1 && c.x > CINEMA_VX0 && c.x < CINEMA_VX1 && c.z > CINEMA.z0 && c.z < CINEMA.z1;

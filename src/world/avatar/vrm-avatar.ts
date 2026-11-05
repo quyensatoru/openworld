@@ -11,6 +11,7 @@ import type { Avatar, DriveState } from './types';
 import { makeProp, placeInHand } from './props';
 import { aimBone } from './bone-utils';
 import { mergeSkinnedPieces } from './merge';
+import { attach } from '../attach';
 
 /** UAL (Unreal mannequin names) → VRM humanoid bones. */
 const MAP: Record<string, VRMHumanBoneName> = {
@@ -279,8 +280,10 @@ export class VrmAvatar implements Avatar {
     this.flute = makeProp('flute');
     this.mug = makeProp('mug');
     this.mic = makeProp('mic');
-    this.flute.visible = this.mug.visible = this.mic.visible = false;
-    this.root.add(this.flute, this.mug, this.mic);
+    // (in the scene only while held: see update)
+    // The normalised rig only drives the real bones (humanoid.update reads its local rotations, and
+    // asks for a world position on demand): the renderer needn't recompute its 55 matrices a frame.
+    (vrm.humanoid.normalizedHumanBonesRoot as { updateMatrixWorld: (force?: boolean) => void }).updateMatrixWorld = () => {};
   }
 
   /** Load a VRM, fit it to `height` metres, retarget the shared clips (one model at a time, see oneAtATime). */
@@ -299,8 +302,11 @@ export class VrmAvatar implements Avatar {
       loader.register((parser) => new SharedTextures(parser, sh));
       const gltf = await loader.parseAsync(file, url.slice(0, url.lastIndexOf('/') + 1));
       const vrm = gltf.userData.vrm as VRM;
+      // the steps below take a phone ~150 ms together: a frame between them, so the game doesn't stop
+      await breather();
       VRMUtils.removeUnnecessaryVertices(gltf.scene);
       VRMUtils.combineSkeletons?.(gltf.scene);
+      await breather();
       mergeSkinnedPieces(gltf.scene, true); // ~100 hair / body pieces → one per material
       VRMUtils.rotateVRM0(vrm); // VRM 0.x faces -z; the game expects +z
       const glowMats: GlowMat[] = [];
@@ -341,6 +347,7 @@ export class VrmAvatar implements Avatar {
       // retarget clips once per file (the anims file carries the UAL rig in its rest pose); every
       // copy's rig has the same bone names and proportions
       if (!sh.clips) {
+        await breather();
         const rig = animGltf.scene;
         rig.updateMatrixWorld(true);
         const clips = new Map<Role, THREE.AnimationClip>();
@@ -517,8 +524,9 @@ export class VrmAvatar implements Avatar {
     // a glass for toasts / a mug for coffee / the karaoke mic, held in the right hand
     const want = this.holdW > 0.5 ? this.mic : ew > 0.3 ? (e === 'toast' ? this.flute : e === 'coffee' ? this.mug : null) : null;
     for (const prop of [this.flute, this.mug, this.mic]) {
-      prop.visible = prop === want && !!this.rawHand;
-      if (prop.visible) placeInHand(prop, this.root, this.rawHand!, this.rawFore, this.rawGrip, prop === this.mic ? 0.7 : 0);
+      const held = prop === want && !!this.rawHand;
+      attach(prop, this.root, held);
+      if (held) placeInHand(prop, this.root, this.rawHand!, this.rawFore, this.rawGrip, prop === this.mic ? 0.7 : 0);
     }
   }
 
