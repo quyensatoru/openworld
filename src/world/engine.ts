@@ -146,8 +146,8 @@ const KARA_HUES = ['#9b5cff', '#ff3ea5', '#2de2e6', '#5d9bff'].map((c) => new TH
 
 const INTERP_DELAY = 120;
 /** Detail levels by distance to the camera (metres): beyond HALF people animate every other
- *  frame, beyond THIRD every third; beyond FAR no hair/cloth physics or faces; beyond SHADOW a blob
- *  under their feet instead of a real shadow (fewer draws in the shadow map). */
+ *  frame, beyond THIRD every third; beyond FAR no hair/cloth physics or faces; on "Nhẹ" beyond
+ *  SHADOW a blob under their feet instead of a real shadow (fewer draws in the shadow map). */
 const LOD_MID = 7; // hair / cloth physics at half rate
 const LOD_HALF = 12;
 const LOD_THIRD = 24;
@@ -2054,8 +2054,9 @@ export class World {
       v.offscreen = !seen;
       attach(v.avatar.root, v.holder, seen && !pr?.model && v.holder.visible);
       v.camD2 = v.holder.position.distanceToSquared(this.camera.position);
-      // far away: a blob instead of a real shadow (the shadow map draws every character again)
-      const cast = this.charShadows && v.camD2 < LOD_SHADOW * LOD_SHADOW;
+      // "Nhẹ": far away a blob instead of a real shadow (the shadow map draws every character
+      // again); "Đẹp" keeps real shadows for everyone
+      const cast = this.charShadows && (this.quality === 'high' || v.camD2 < LOD_SHADOW * LOD_SHADOW);
       if (cast !== v.castOn) {
         v.castOn = cast;
         setCastShadow(v.avatar.root, cast);
