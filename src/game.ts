@@ -839,7 +839,6 @@ class Game {
   toggleView() {
     const w = this.world;
     if (!w) return;
-    if (this.phAiming()) return toast('🔫 Người tìm luôn ở góc nhìn thứ nhất trong lúc săn', 'info', 2500);
     this.autoFirstPerson = false;
     w.setViewMode(w.viewMode === 'first' ? 'third' : 'first');
   }
@@ -1527,7 +1526,6 @@ class Game {
 
   private phSpawnKey = '';
   private phCaged = false;
-  private phForcedFirst = false;
 
   private applyProp(v: PhView) {
     const prev = getState().ph;
@@ -1560,15 +1558,8 @@ class Game {
       this.phCaged = caged;
       w.setFrozen(caged);
     }
-    const aim = this.phAiming();
-    w.setPhAim(aim);
-    if (aim && w.viewMode !== 'first') {
-      w.setViewMode('first');
-      this.phForcedFirst = true;
-    } else if (!aim && this.phForcedFirst) {
-      this.phForcedFirst = false;
-      if (w.viewMode === 'first') w.setViewMode('third');
-    }
+    // the gun works in both views: over the shoulder (third person) or first person (V to switch)
+    w.setPhAim(this.phAiming());
     if (v.phase !== prev?.phase && v.me.inGame) {
       if (v.phase === 'roles') {
         this.ambience?.sfx('shh');
@@ -1682,6 +1673,7 @@ class Game {
     const w = this.world;
     if (!w) return;
     this.ambience?.sfx('pop');
+    w.phFaceAim();
     const a = w.phAimAt();
     if (!a) return;
     w.office.f6.shot(a.from, a.point);

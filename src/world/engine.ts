@@ -519,7 +519,8 @@ export class World {
       if (document.pointerLockElement === el) {
         const k = this.fpLook.sens * 0.8;
         this.camYaw -= e.movementX * 0.0035 * k;
-        this.fpPitch = Math.max(-1.2, Math.min(1.2, this.fpPitch - e.movementY * 0.003 * k));
+        if (this.viewMode === 'first') this.fpPitch = Math.max(-1.2, Math.min(1.2, this.fpPitch - e.movementY * 0.003 * k));
+        else this.camPitch = Math.max(this.minPitch(), Math.min(1.3, this.camPitch + e.movementY * 0.003 * k));
         return;
       }
       if (this.touchPts.has(e.pointerId)) this.touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -548,7 +549,7 @@ export class World {
             }
           } else {
             this.camYaw -= dx * 0.006;
-            this.camPitch = Math.max(0.3, Math.min(1.3, this.camPitch + dy * 0.004));
+            this.camPitch = Math.max(this.minPitch(), Math.min(1.3, this.camPitch + dy * 0.004));
           }
           this.drag.x = e.clientX;
           this.drag.y = e.clientY;
@@ -1288,6 +1289,10 @@ export class World {
   private phAliveOnly: Set<string> | null = null;
   /** seeker with the gun: clicks / taps shoot at the crosshair (the mouse is captured on a computer) */
   private phAim = false;
+  private aimTarget = new THREE.Vector3();
+  private camBack = new THREE.Vector3();
+  private camRay = new THREE.Ray();
+  private camHit = new THREE.Vector3();
   phShoot: (() => void) | null = null;
   private phBoxes: { fid: string; m: THREE.Matrix4; inv: THREE.Matrix4; box: THREE.Box3; prop: boolean }[] | null = null;
   private phWallBoxes: THREE.Box3[] = [];
@@ -1329,8 +1334,20 @@ export class World {
     v.blob.visible = !this.charShadows && !!v.avatar;
   }
 
+  /** How low the third-person camera may go (aiming wants to look out over the floor, not down at it). */
+  private minPitch(): number {
+    return this.phAim ? 0.06 : 0.3;
+  }
+
+  /** Third person: turn to face where you shoot. */
+  phFaceAim() {
+    const c = this.controller;
+    if (c && this.viewMode !== 'first' && !c.seat) c.ry = this.camYaw + Math.PI;
+  }
+
   /** Seeker mode: shots at the crosshair; leaving it gives the mouse back. */
   setPhAim(on: boolean) {
+    if (this.phAim && !on) this.camPitch = Math.max(0.3, this.camPitch);
     this.phAim = on;
     if (!on && document.pointerLockElement === this.renderer.domElement) document.exitPointerLock?.();
   }
@@ -1367,6 +1384,11 @@ export class World {
     const r = this.ray.ray;
     const local = new THREE.Ray();
     const p = new THREE.Vector3();
+    // third person: the camera is behind you — only what lies past you counts (and the reach starts there)
+    const third = this.viewMode !== 'first' && !!this.me;
+    const chest = third ? this.me!.holder.position.clone().add(new THREE.Vector3(0, 1.1, 0)) : null;
+    const skip = chest ? Math.max(0, chest.clone().sub(r.origin).dot(r.direction) - 0.4) : 0;
+    reach += skip;
     let best = reach;
     let hit: string | null = null;
     let fid: string | null = null;
@@ -1381,33 +1403,38 @@ export class World {
       local.copy(r).applyMatrix4(pr.model.matrixWorld.clone().invert());
       if (local.intersectBox(box, p)) {
         const d = p.distanceTo(local.origin);
-        if (d < best) [best, hit, fid, prop] = [d, id, null, true];
+        if (d >= skip && d < best) [best, hit, fid, prop] = [d, id, null, true];
       }
     }
     for (const b of this.phBoxes!) {
       local.copy(r).applyMatrix4(b.inv);
       if (local.intersectBox(b.box, p)) {
         const d = p.distanceTo(local.origin);
-        if (d < best) [best, hit, fid, prop] = [d, null, b.fid, b.prop];
+        if (d >= skip && d < best) [best, hit, fid, prop] = [d, null, b.fid, b.prop];
       }
     }
     for (const w of this.phWallBoxes) {
       if (r.intersectBox(w, p)) {
         const d = p.distanceTo(r.origin);
-        if (d < best) [best, hit, fid, prop] = [d, null, null, false];
+        if (d >= skip && d < best) [best, hit, fid, prop] = [d, null, null, false];
       }
     }
-    // the floor and the ceiling stop a shot too
+    // the floor and the ceiling stop a shot too (the ceiling only from below it)
     const y0 = 5 * FLOOR_H;
     if (Math.abs(r.direction.y) > 1e-4) {
       for (const y of [y0, y0 + WALL_H]) {
+        if (y > y0 && r.origin.y > y) continue;
         const d = (y - r.origin.y) / r.direction.y;
-        if (d > 0 && d < best) [best, hit, fid, prop] = [d, null, null, false];
+        if (d > 0 && d >= skip && d < best) [best, hit, fid, prop] = [d, null, null, false];
       }
     }
     if (best >= reach) return null;
     const toLocal = (v: THREE.Vector3) => new THREE.Vector3(v.x + 5 * UP_DX, v.y - y0, v.z);
-    return { hit, fid, prop, point: toLocal(r.at(best, new THREE.Vector3())), from: toLocal(r.origin.clone().addScaledVector(r.direction, 0.6).add(new THREE.Vector3(0, -0.18, 0))) };
+    // the ball leaves the gun: your right hand in third person, just under the eyes in first
+    const gun = chest
+      ? chest.clone().add(new THREE.Vector3(Math.cos(this.camYaw) * 0.32, 0.15, -Math.sin(this.camYaw) * 0.32)).addScaledVector(r.direction, 0.35)
+      : r.origin.clone().addScaledVector(r.direction, 0.6).add(new THREE.Vector3(0, -0.18, 0));
+    return { hit, fid, prop, point: toLocal(r.at(best, new THREE.Vector3())), from: toLocal(gun) };
   }
 
   /** The piece you'd turn into: the one at the crosshair if it's close enough, else the nearest one in front of you. */
@@ -1743,12 +1770,20 @@ export class World {
       this.camera.lookAt(eye.x + fx * cp, eye.y + Math.sin(this.fpPitch), eye.z + fz * cp);
     } else {
       const cp = Math.cos(this.camPitch);
-      this.camera.position.set(
-        this.camTarget.x + Math.sin(this.camYaw) * cp * this.camDist,
-        this.camTarget.y + Math.sin(this.camPitch) * this.camDist,
-        this.camTarget.z + Math.cos(this.camYaw) * cp * this.camDist,
-      );
-      this.camera.lookAt(this.camTarget);
+      // seeker with the gun: over the right shoulder and closer, so the crosshair looks past you
+      const aim = this.phAim;
+      const t = aim ? this.aimTarget.copy(this.camTarget).add(new THREE.Vector3(Math.cos(this.camYaw) * 0.7, 0.4, -Math.sin(this.camYaw) * 0.7)) : this.camTarget;
+      let dist = aim ? Math.min(this.camDist, 4.2) : this.camDist;
+      const back = this.camBack.set(Math.sin(this.camYaw) * cp, Math.sin(this.camPitch), Math.cos(this.camYaw) * cp);
+      // aiming on floor 6: the camera never backs through a wall into the next room (its furniture
+      // would block the view) — it comes in closer instead, like in any third-person shooter
+      if (aim && this.myFloor === 5) {
+        this.phTargets();
+        this.camRay.set(t, back);
+        for (const w of this.phWallBoxes) if (this.camRay.intersectBox(w, this.camHit)) dist = Math.min(dist, Math.max(0.9, this.camHit.distanceTo(t) - 0.3));
+      }
+      this.camera.position.copy(t).addScaledVector(back, dist);
+      this.camera.lookAt(t);
     }
     if (this.me) {
       const ducked = this.hiddenIds.has(this.me.id); // in a duct: you're not drawn, even for yourself

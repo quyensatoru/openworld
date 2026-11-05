@@ -294,7 +294,7 @@ export function PropActions() {
         </button>
       </div>
     ) : (
-      <div className="ph-tip">🖱️ Click để bắn · Esc để nhả chuột · bắn nhầm đồ thật là mất máu!</div>
+      <div className="ph-tip">🖱️ Click để bắn · rê chuột để ngắm · V đổi góc nhìn · Esc nhả chuột</div>
     );
   const mine = v.props[me];
   const now = serverNow();
@@ -392,7 +392,7 @@ export function PropSplash() {
       <div className="ph-splash-s">
         {v.me.team === 'hider'
           ? `Bạn có ${v.settings.hideS} giây: nhắm vào một món đồ rồi bấm Biến hình, tìm chỗ trà trộn và khoá góc cho thật tự nhiên.`
-          : 'Chờ trong phòng chờ. Khi cửa mở: soi kỹ, đồ nào "lạ" thì bắn — nhưng bắn nhầm đồ thật là mất máu!'}
+          : 'Chờ trong phòng chờ. Khi cửa mở: soi kỹ, đồ nào "lạ" thì đưa tâm ngắm vào rồi bắn (góc nhìn nào cũng bắn được, V để đổi) — nhưng bắn nhầm đồ thật là mất máu!'}
       </div>
       {mates.length > 0 && <div className="ph-splash-m">Cùng phe: {mates.join(', ')}</div>}
     </div>
