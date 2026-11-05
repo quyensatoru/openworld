@@ -3,7 +3,7 @@
 // like Mixamo, so three-vrm's retarget recipe applies). Faces blink and smile, eyes follow the camera,
 // hair and skirts swing with VRM spring bones.
 import * as THREE from 'three';
-import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { GLTFLoader, type GLTF, type GLTFParser } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM, type VRMHumanBoneName } from '@pixiv/three-vrm';
 import type { Emote } from '../../../shared/protocol';
@@ -60,10 +60,90 @@ const RUN_SPEED = 5.36;
 const damp = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
-const loader = new GLTFLoader();
-loader.register((parser) => new VRMLoaderPlugin(parser));
 let anims: Promise<GLTF> | null = null;
 const plainLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder); // anims.glb is meshopt-compressed
+
+/**
+ * What every copy of one VRM file shares: the file itself, its textures (28 images, ~50 MB once on
+ * the GPU — ten people as the same character used to upload them ten times) and the clips
+ * retargeted onto its rig. Freed when the last copy goes.
+ */
+interface Shared {
+  file: Promise<ArrayBuffer>;
+  textures: Map<number, Promise<THREE.Texture>>;
+  clips: Map<Role, THREE.AnimationClip> | null;
+  users: number;
+}
+const shared = new Map<string, Shared>();
+
+function sharedFor(url: string): Shared {
+  let s = shared.get(url);
+  if (!s) {
+    const file = fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`${url}: ${r.status}`);
+      return r.arrayBuffer();
+    });
+    s = { file, textures: new Map(), clips: null, users: 0 };
+    file.catch(() => shared.delete(url)); // try again next time
+    shared.set(url, s);
+  }
+  return s;
+}
+
+/** GLTFLoader plugin: a texture already loaded for another copy of the same file is handed out again. */
+class SharedTextures {
+  readonly name = 'OFFICE_shared_textures';
+  constructor(
+    private parser: GLTFParser,
+    private s: Shared,
+  ) {}
+  loadTexture(index: number): Promise<THREE.Texture> {
+    let t = this.s.textures.get(index);
+    if (!t) {
+      t = this.parser.loadTexture(index);
+      this.s.textures.set(index, t);
+    }
+    return t;
+  }
+}
+
+function release(url: string) {
+  const s = shared.get(url);
+  if (!s || --s.users > 0) return;
+  shared.delete(url);
+  for (const t of s.textures.values()) void t.then((x) => x.dispose()).catch(() => {});
+}
+
+/**
+ * One model at a time, a frame apart: parsing a VRM (geometry, spring bones, merging the pieces)
+ * blocks the page for a moment, and twenty people arriving at once froze it for seconds.
+ */
+let lane: Promise<unknown> = Promise.resolve();
+const breather = () => new Promise<void>((r) => {
+  requestAnimationFrame(() => r());
+  setTimeout(r, 120); // hidden tab: no frames
+});
+function oneAtATime<T>(job: () => Promise<T>): Promise<T> {
+  const run = lane.then(job, job);
+  lane = run.then(breather, breather);
+  return run;
+}
+
+/** Face parts (eyes, brows, lashes, mouth) sit inside the head's own shadow: not drawn into the shadow map. */
+const FACE_PART = /_(FACE|EYE)$/;
+/** Hairline details (lashes, eyeliner, eye highlights) — a pixel or two from far away: not drawn there. */
+const FINE_PART = /(EyeHighlight|EyeExtra|FaceEyelash|FaceEyeline)/;
+
+/** Free one character without touching what its copies share (textures). */
+function disposeKeepTextures(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const m = o as THREE.SkinnedMesh;
+    if (!m.isMesh) return;
+    m.geometry?.dispose();
+    for (const mat of Array.isArray(m.material) ? m.material : [m.material]) mat?.dispose();
+    if (m.isSkinnedMesh) m.skeleton?.dispose();
+  });
+}
 
 function retarget(clip: THREE.AnimationClip, rig: THREE.Object3D, vrm: VRM, keepRoot: boolean): THREE.AnimationClip {
   const tracks: THREE.KeyframeTrack[] = [];
@@ -165,6 +245,7 @@ export class VrmAvatar implements Avatar {
     private vrm: VRM,
     clips: Map<Role, THREE.AnimationClip>,
     height: number,
+    private url: string,
   ) {
     this.height = height;
     this.mirror = vrm.meta?.metaVersion === '0' ? 1 : -1;
@@ -202,64 +283,93 @@ export class VrmAvatar implements Avatar {
     this.root.add(this.flute, this.mug, this.mic);
   }
 
-  /** Load a VRM, fit it to `height` metres, retarget the shared clips. */
-  static async load(url: string, height: number, lookTarget?: THREE.Object3D): Promise<VrmAvatar> {
+  /** Load a VRM, fit it to `height` metres, retarget the shared clips (one model at a time, see oneAtATime). */
+  static load(url: string, height: number, lookTarget?: THREE.Object3D): Promise<VrmAvatar> {
+    return oneAtATime(() => VrmAvatar.build(url, height, lookTarget));
+  }
+
+  private static async build(url: string, height: number, lookTarget?: THREE.Object3D): Promise<VrmAvatar> {
     anims ??= plainLoader.loadAsync('/models/anims.glb');
-    const [gltf, animGltf] = await Promise.all([loader.loadAsync(url), anims]);
-    const vrm = gltf.userData.vrm as VRM;
-    VRMUtils.removeUnnecessaryVertices(gltf.scene);
-    VRMUtils.combineSkeletons?.(gltf.scene);
-    mergeSkinnedPieces(gltf.scene, true); // ~100 hair / body pieces → one per material
-    VRMUtils.rotateVRM0(vrm); // VRM 0.x faces -z; the game expects +z
-    const glowMats: GlowMat[] = [];
-    vrm.scene.traverse((o) => {
-      o.frustumCulled = false;
-      const m = o as THREE.Mesh;
-      if (!m.isMesh) return;
-      m.castShadow = true;
-      m.receiveShadow = true;
-      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
-        const t = mat as THREE.Material & ToonLike;
-        // no ink outlines: they make the characters look drawn-on next to the soft 3D office
-        if (t.isOutline) {
-          t.visible = false;
-          continue;
+    const sh = sharedFor(url);
+    sh.users++;
+    try {
+      const [file, animGltf] = await Promise.all([sh.file, anims]);
+      const loader = new GLTFLoader();
+      loader.register((parser) => new VRMLoaderPlugin(parser));
+      loader.register((parser) => new SharedTextures(parser, sh));
+      const gltf = await loader.parseAsync(file, url.slice(0, url.lastIndexOf('/') + 1));
+      const vrm = gltf.userData.vrm as VRM;
+      VRMUtils.removeUnnecessaryVertices(gltf.scene);
+      VRMUtils.combineSkeletons?.(gltf.scene);
+      mergeSkinnedPieces(gltf.scene, true); // ~100 hair / body pieces → one per material
+      VRMUtils.rotateVRM0(vrm); // VRM 0.x faces -z; the game expects +z
+      const glowMats: GlowMat[] = [];
+      const fine: THREE.Object3D[] = [];
+      vrm.scene.traverse((o) => {
+        o.frustumCulled = false;
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        m.castShadow = !mats.every((x) => FACE_PART.test(x.name));
+        if (mats.every((x) => FINE_PART.test(x.name))) fine.push(m);
+        m.receiveShadow = true;
+        for (const mat of mats) {
+          const t = mat as THREE.Material & ToonLike;
+          // no ink outlines: they make the characters look drawn-on next to the soft 3D office
+          if (t.isOutline) {
+            t.visible = false;
+            continue;
+          }
+          // softer, less banded shading
+          if (typeof t.shadingToonyFactor === 'number') t.shadingToonyFactor = Math.min(t.shadingToonyFactor, 0.55);
+          if (t.shadeColorFactor?.isColor && t.color?.isColor) t.shadeColorFactor.lerp(t.color.clone().multiplyScalar(0.72), 0.5);
+          if (!t.emissive?.isColor) continue;
+          // emission = own colours, scaled by how dark the room is (see VrmAvatar.glow). VRoid ships a
+          // black emission map; hair textures are grey with the colour in the factor.
+          if (t.map) t.emissiveMap = t.map;
+          glowMats.push({ mat: t, col: t.color?.isColor ? t.color.clone() : new THREE.Color(1, 1, 1) });
+          t.needsUpdate = true;
         }
-        // softer, less banded shading
-        if (typeof t.shadingToonyFactor === 'number') t.shadingToonyFactor = Math.min(t.shadingToonyFactor, 0.55);
-        if (t.shadeColorFactor?.isColor && t.color?.isColor) t.shadeColorFactor.lerp(t.color.clone().multiplyScalar(0.72), 0.5);
-        if (!t.emissive?.isColor) continue;
-        // emission = own colours, scaled by how dark the room is (see VrmAvatar.glow). VRoid ships a
-        // black emission map; hair textures are grey with the colour in the factor.
-        if (t.map) t.emissiveMap = t.map;
-        glowMats.push({ mat: t, col: t.color?.isColor ? t.color.clone() : new THREE.Color(1, 1, 1) });
-        t.needsUpdate = true;
+      });
+      // scale to the wanted height (rest pose head top ≈ head bone + a bit)
+      const box = new THREE.Box3().setFromObject(vrm.scene);
+      const h = Math.max(0.5, box.max.y - box.min.y);
+      const s = height / h;
+      vrm.scene.scale.setScalar(s);
+      vrm.scene.position.y = -box.min.y * s;
+      if (vrm.lookAt && lookTarget) vrm.lookAt.target = lookTarget;
+      // retarget clips once per file (the anims file carries the UAL rig in its rest pose); every
+      // copy's rig has the same bone names and proportions
+      if (!sh.clips) {
+        const rig = animGltf.scene;
+        rig.updateMatrixWorld(true);
+        const clips = new Map<Role, THREE.AnimationClip>();
+        for (const [role, name] of Object.entries(CLIPS) as [Role, string][]) {
+          const c = animGltf.animations.find((a) => a.name === name);
+          if (c) clips.set(role, retarget(c, rig, vrm, KEEP_ROOT.has(role)));
+        }
+        sh.clips = clips;
       }
-    });
-    // scale to the wanted height (rest pose head top ≈ head bone + a bit)
-    const box = new THREE.Box3().setFromObject(vrm.scene);
-    const h = Math.max(0.5, box.max.y - box.min.y);
-    const s = height / h;
-    vrm.scene.scale.setScalar(s);
-    vrm.scene.position.y = -box.min.y * s;
-    if (vrm.lookAt && lookTarget) vrm.lookAt.target = lookTarget;
-    // retarget clips (the anims file carries the UAL rig in its rest pose)
-    const rig = animGltf.scene;
-    rig.updateMatrixWorld(true);
-    const clips = new Map<Role, THREE.AnimationClip>();
-    for (const [role, name] of Object.entries(CLIPS) as [Role, string][]) {
-      const c = animGltf.animations.find((a) => a.name === name);
-      if (c) clips.set(role, retarget(c, rig, vrm, KEEP_ROOT.has(role)));
+      const av = new VrmAvatar(vrm, sh.clips, height, url);
+      av.glowMats = glowMats;
+      av.fine = fine;
+      return av;
+    } catch (err) {
+      release(url);
+      throw err;
     }
-    const av = new VrmAvatar(vrm, clips, height);
-    av.glowMats = glowMats;
-    return av;
   }
 
   /** Self-illumination for all VRM characters: low in daylight, higher in the dark bar / cinema. */
   static glow = 0.06;
   private glowMats: GlowMat[] = [];
   private appliedGlow = -1;
+  private springsAsleep = false;
+  private fine: THREE.Object3D[] = [];
+  private fineShown = true;
+  private springDt = 0;
+  private springTick = false;
+  private updated = false;
 
   emote(e: Emote) {
     this.emoteName = e;
@@ -372,7 +482,38 @@ export class VrmAvatar implements Avatar {
       this.appliedGlow = VrmAvatar.glow;
       for (const g of this.glowMats) g.mat.emissive!.copy(g.col).multiplyScalar(this.appliedGlow);
     }
-    this.vrm.update(dt);
+    // what vrm.update() does, with less detail further away
+    const vrm = this.vrm;
+    vrm.humanoid.update();
+    if (this.fineShown !== !s.far) {
+      this.fineShown = !s.far;
+      for (const m of this.fine) m.visible = this.fineShown;
+    }
+    if (s.far && this.updated) {
+      // far away: the pose only — no hair / skirt physics, no face (nobody can see them from there)
+      this.springsAsleep = true;
+    } else {
+      if (this.springsAsleep) {
+        // back near: restart the springs from the pose they are in now, or the hair would whip
+        // across the distance walked meanwhile
+        this.springsAsleep = false;
+        this.springDt = 0;
+        vrm.scene.updateMatrixWorld(true);
+        vrm.springBoneManager?.reset();
+      }
+      vrm.lookAt?.update(dt);
+      vrm.expressionManager?.update();
+      vrm.nodeConstraintManager?.update();
+      // hair / skirt physics: every frame up close, every other frame some way off (the time adds up)
+      this.springDt += dt;
+      this.springTick = !this.springTick;
+      if (!s.mid || this.springTick) {
+        vrm.springBoneManager?.update(this.springDt);
+        this.springDt = 0;
+      }
+      for (const m of vrm.materials ?? []) (m as THREE.Material & { update?: (d: number) => void }).update?.(dt);
+      this.updated = true;
+    }
     // a glass for toasts / a mug for coffee / the karaoke mic, held in the right hand
     const want = this.holdW > 0.5 ? this.mic : ew > 0.3 ? (e === 'toast' ? this.flute : e === 'coffee' ? this.mug : null) : null;
     for (const prop of [this.flute, this.mug, this.mic]) {
@@ -462,6 +603,8 @@ export class VrmAvatar implements Avatar {
 
   dispose() {
     this.mixer.stopAllAction();
-    VRMUtils.deepDispose(this.vrm.scene);
+    this.mixer.uncacheRoot(this.vrm.scene);
+    disposeKeepTextures(this.vrm.scene);
+    release(this.url);
   }
 }

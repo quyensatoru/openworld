@@ -10,6 +10,7 @@ import type { Avatar } from './avatar/types';
 import { VrmAvatar } from './avatar/vrm-avatar';
 import { blobShadow } from './blob';
 import { NameTag } from './overlays';
+import { attach } from './attach';
 import type { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 /** What the camera sees this frame (from the engine). */
@@ -207,6 +208,11 @@ export class BarStaff {
     return this.staff.map((s) => s.holder);
   }
 
+  /** Put every loaded character back into the scene (a warm-up render); update() takes out the ones not drawn. */
+  attachAll() {
+    for (const s of this.staff) if (s.avatar) s.holder.add(s.avatar.root);
+  }
+
   /** The loaded characters (culled one by one while off screen). */
   roots(): THREE.Object3D[] {
     return this.staff.flatMap((s) => (s.avatar ? [s.avatar.root] : []));
@@ -274,7 +280,10 @@ export class BarStaff {
       }
     }
     if (show && !this.loading && !this.loadingDone) void this.preload();
-    if (!on) return;
+    if (!on) {
+      for (const s of this.staff) if (s.avatar) attach(s.avatar.root, s.holder, false);
+      return;
+    }
     for (const s of this.staff) {
       let p = s.pose(now);
       const o = s.override;
@@ -316,14 +325,15 @@ export class BarStaff {
       }
       const anim: AnimState = s.speed > 0.15 ? 'walk' : 'idle';
       const seen = !view || view.inView(s.holder.position, s.vrm?.height ?? 1.75 * s.cfg.height);
-      if (s.avatar) s.avatar.root.visible = seen;
+      if (s.avatar) attach(s.avatar.root, s.holder, seen);
       s.animAcc = Math.min(0.1, s.animAcc + dt);
       if (!seen) continue;
       s.lod ^= 1;
-      if (s.lod && view && view.cam.distanceToSquared(s.holder.position) > 12 * 12) continue;
+      const d2 = view ? view.cam.distanceToSquared(s.holder.position) : 0;
+      if (s.lod && d2 > 12 * 12) continue;
       const adt = s.animAcc;
       s.animAcc = 0;
-      s.avatar?.update(adt, { speed: s.speed, anim, seatKind: null, lookAt: null, talking: false });
+      s.avatar?.update(adt, { speed: s.speed, anim, seatKind: null, lookAt: null, talking: false, far: d2 > 15 * 15, mid: d2 > 7 * 7 });
     }
   }
 }

@@ -11,6 +11,10 @@ export interface DriveState {
   talking: boolean;
   /** Something held in the right hand for a while (karaoke mic). */
   hold?: 'mic' | null;
+  /** Far from the camera: skip the fine detail (hair / cloth physics, facial expressions). */
+  far?: boolean;
+  /** Some way off: hair / cloth physics at half rate. */
+  mid?: boolean;
 }
 
 export interface Avatar {

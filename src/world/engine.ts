@@ -46,6 +46,7 @@ import { OfficeScene } from './office';
 import { NameTag } from './overlays';
 import { NavGrid } from './pathfinding';
 import { BarStaff } from './npc';
+import { attach } from './attach';
 import { VrmAvatar } from './avatar/vrm-avatar';
 import { party } from './bar';
 import { MOLE_CAMS } from '../../shared/mole';
@@ -124,6 +125,16 @@ interface PlayerView {
   lodTick: number;
   /** outside the camera's view last frame (not drawn, not animated) */
   offscreen: boolean;
+  /** Squared distance to the camera last frame (detail level). */
+  camD2: number;
+  /** A model still to build (lazy: see pumpAvatars) — null when the one shown is current. */
+  want: AvatarConfig | null;
+  /** Key of the model being built right now ('' = none). */
+  building: string;
+  /** When they went off your floor (their model is given back after a while); 0 = here. */
+  awaySince: number;
+  /** Their model draws a real shadow (near the camera); far away the blob does. */
+  castOn: boolean;
 }
 
 /** "Đẹp": full resolution; "Nhẹ": 1× resolution, smaller shadow map; "Tiết kiệm pin": also no shadow map (a blob under people). */
@@ -134,12 +145,32 @@ export type Mood = 'bar' | 'kara' | 'night' | 'camp' | 'facility';
 const KARA_HUES = ['#9b5cff', '#ff3ea5', '#2de2e6', '#5d9bff'].map((c) => new THREE.Color(c));
 
 const INTERP_DELAY = 120;
+/** Detail levels by distance to the camera (metres): beyond HALF people animate every other
+ *  frame, beyond THIRD every third; beyond FAR no hair/cloth physics or faces; beyond SHADOW a blob
+ *  under their feet instead of a real shadow (fewer draws in the shadow map). */
+const LOD_MID = 7; // hair / cloth physics at half rate
+const LOD_HALF = 12;
+const LOD_THIRD = 24;
+const LOD_FAR = 15;
+const LOD_SHADOW = 16;
+/** Someone off your floor this long gives their model back (rebuilt when you meet again). */
+const AWAY_UNLOAD_MS = 180_000;
 const damp = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
 /** Pitch that puts a cinema seat's view on the middle of the screen. */
 function cinemaPitch(seat: Seat): number {
   return Math.atan2(CINEMA_SCREEN.y - ((seat.y ?? 0) + 1.2), Math.abs(CINEMA_SCREEN.z - seat.z)) * 0.85;
+}
+
+/** Turn a character's real shadow on/off (meshes that never cast — face parts — stay off). */
+function setCastShadow(root: THREE.Object3D, on: boolean) {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.userData.casts ??= m.castShadow;
+    m.castShadow = on && m.userData.casts;
+  });
 }
 
 /** The browser can't draw 3D (WebGL off / GPU blocked / driver crashed). */
@@ -910,6 +941,11 @@ export class World {
       animAcc: 0,
       lodTick: Math.random() < 0.5 ? 0 : 1,
       offscreen: false,
+      camD2: 0,
+      want: null,
+      building: '',
+      awaySince: 0,
+      castOn: true,
     };
     this.players.set(p.id, v);
     this.loadAvatar(v, p.avatar);
@@ -921,26 +957,101 @@ export class World {
     const key = JSON.stringify(cfg);
     if (key === v.avatarKey) return;
     const prev = JSON.parse(v.avatarKey || '{}') as Partial<AvatarConfig>;
-    const bodyChanged = !v.avatar || prev.body !== cfg.body || prev.build !== cfg.build;
     v.avatarKey = key;
     v.tag.object.position.y = 1.95 * cfg.height;
-    if (v.avatar && !bodyChanged) {
+    // same body: recolour the model there is
+    if (v.avatar && !v.want && prev.body === cfg.body && prev.build === cfg.build) {
       v.avatar.setConfig(cfg);
       return;
     }
-    avatars.create(cfg).then((av) => {
-      if (this.disposed || this.players.get(v.id) !== v || v.avatarKey !== key) {
-        av.dispose();
-        return;
+    // a new model: yours right away, everyone else's when it is worth it (pumpAvatars)
+    v.want = cfg;
+    if (v.isMe) this.buildAvatar(v);
+  }
+
+  /** Remote models being built (one at a time). */
+  private buildingRemote = 0;
+  private unloadTimer = 2;
+
+  private buildAvatar(v: PlayerView) {
+    const cfg = v.want;
+    if (!cfg || v.building) return;
+    const key = v.avatarKey;
+    v.building = key;
+    if (!v.isMe) this.buildingRemote++;
+    avatars
+      .create(cfg)
+      .then(async (av) => {
+        // shaders and textures onto the GPU first: the frame that first shows them doesn't stall
+        if (!v.isMe) await this.prewarm(av.root);
+        if (this.disposed || this.players.get(v.id) !== v || v.avatarKey !== key) {
+          av.dispose(); // gone, or changed meanwhile (`want` holds the new one)
+          return;
+        }
+        if (v.avatar) {
+          v.holder.remove(v.avatar.root);
+          v.avatar.dispose();
+        }
+        v.avatar = av;
+        v.want = null;
+        v.castOn = true;
+        if (v.isMe) v.holder.add(av.root); // everyone else's: cullPeople puts it in when it is on screen
+        v.blob.visible = !this.charShadows;
+      })
+      .catch((err) => {
+        console.warn('[avatars] build failed', err);
+        if (v.avatarKey === key) v.want = null;
+      })
+      .finally(() => {
+        if (v.building === key) v.building = '';
+        if (!v.isMe) this.buildingRemote--;
+        else if (v.want && this.players.get(v.id) === v) this.buildAvatar(v); // you changed again meanwhile
+      });
+  }
+
+  /**
+   * Lazy loading. Only people on your floor are ever drawn, so only they get a model: one at a
+   * time, the ones on screen and nearest first (twenty people arriving used to parse twenty models
+   * at once and freeze the game for seconds). Someone who has been on another floor for a few
+   * minutes gives theirs back (GPU memory), and it is built again when you meet.
+   */
+  private pumpAvatars(dt: number) {
+    this.unloadTimer -= dt;
+    if (this.unloadTimer <= 0) {
+      this.unloadTimer = 2;
+      const now = performance.now();
+      for (const v of this.players.values()) {
+        if (v.isMe) continue;
+        if (this.sharesFloor(v.x, v.z)) {
+          v.awaySince = 0;
+          continue;
+        }
+        if (!v.avatar || v.building) continue;
+        if (!v.awaySince) v.awaySince = now;
+        else if (now - v.awaySince > AWAY_UNLOAD_MS && !this.phProps.has(v.id)) {
+          v.holder.remove(v.avatar.root);
+          v.avatar.dispose();
+          v.avatar = null;
+          v.want = JSON.parse(v.avatarKey) as AvatarConfig;
+          v.blob.visible = false;
+          v.awaySince = 0;
+        }
       }
-      if (v.avatar) {
-        v.holder.remove(v.avatar.root);
-        v.avatar.dispose();
+    }
+    if (this.buildingRemote > 0) return;
+    let best: PlayerView | null = null;
+    let bestScore = Infinity;
+    const cam = this.camera.position;
+    for (const v of this.players.values()) {
+      if (v.isMe || !v.want || v.building || !this.sharesFloor(v.x, v.z)) continue;
+      const d2 = v.holder.position.distanceToSquared(cam);
+      const score = this.inView(v.holder.position, 1.8) ? d2 : d2 * 4 + 400;
+      if (score < bestScore) {
+        bestScore = score;
+        best = v;
       }
-      v.avatar = av;
-      v.holder.add(av.root);
-      v.blob.visible = !this.charShadows;
-    });
+    }
+    if (best) this.buildAvatar(best);
   }
 
   removePlayer(id: string) {
@@ -1727,8 +1838,9 @@ export class World {
       if (this.phProps.get(v.id)?.model) continue; // a piece of furniture: nothing to animate
       if (!v.isMe) {
         if (!v.holder.visible || v.offscreen) continue;
-        v.lodTick ^= 1;
-        if (v.lodTick && this.camera.position.distanceToSquared(v.holder.position) > 26 * 26) continue;
+        v.lodTick++;
+        const d2 = v.camD2;
+        if (d2 > LOD_THIRD * LOD_THIRD ? v.lodTick % 3 : d2 > LOD_HALF * LOD_HALF ? v.lodTick % 2 : 0) continue;
       }
       const adt = v.animAcc;
       v.animAcc = 0;
@@ -1739,6 +1851,8 @@ export class World {
         lookAt: v.lookAt,
         talking: v.speaking,
         hold: v.hold,
+        far: !v.isMe && v.camD2 > LOD_FAR * LOD_FAR,
+        mid: !v.isMe && v.camD2 > LOD_MID * LOD_MID,
       });
     }
 
@@ -1793,6 +1907,7 @@ export class World {
       this.me.tag.object.visible = !fp && !ducked;
     }
     const hideBar = this.cullPeople();
+    this.pumpAvatars(dt);
 
     // lighting: time of day + cinema darkness for whoever sits in the dark
     this.todTimer -= dt;
@@ -1937,7 +2052,15 @@ export class World {
       if (v.isMe || !v.avatar) continue;
       const seen = all || this.inView(v.holder.position, v.avatar.height || 1.8);
       v.offscreen = !seen;
-      v.avatar.root.visible = seen && !pr?.model;
+      attach(v.avatar.root, v.holder, seen && !pr?.model && v.holder.visible);
+      v.camD2 = v.holder.position.distanceToSquared(this.camera.position);
+      // far away: a blob instead of a real shadow (the shadow map draws every character again)
+      const cast = this.charShadows && v.camD2 < LOD_SHADOW * LOD_SHADOW;
+      if (cast !== v.castOn) {
+        v.castOn = cast;
+        setCastShadow(v.avatar.root, cast);
+      }
+      v.blob.visible = !cast && !pr?.model;
     }
     const c = this.camera.position;
     const inCinema = this.myFloor === 1 && c.x > CINEMA_VX0 && c.x < CINEMA_VX1 && c.z > CINEMA.z0 && c.z < CINEMA.z1;
@@ -2083,6 +2206,8 @@ export class World {
     let n = 0;
     for (const t of textures) {
       if (this.disposed) return;
+      // already on the GPU (shared by another copy of the same character): nothing to wait for
+      if ((this.renderer.properties.get(t) as { __webglTexture?: unknown }).__webglTexture) continue;
       this.renderer.initTexture(t);
       if (++n % 4 === 0) await new Promise((r) => requestAnimationFrame(r)); // a few uploads per frame
     }
@@ -2116,6 +2241,7 @@ export class World {
   private warmRender() {
     const o = this.office;
     // everything, culled or not (the point is to get every shader and texture onto the GPU)
+    this.staff.attachAll(); // (taken out of the scene while not drawn; the next update does that again)
     const holders = [...this.staff.holders(), ...this.staff.roots(), o.bar.root];
     const prevHolders = holders.map((h) => h.visible);
     o.setFloorView([o.downstairs.visible, true, true, true, true, true], 1);

@@ -98,8 +98,7 @@ class AvatarFactory {
     const anims = await this.gltf(m.animations);
     this.clips = pickClips(anims.animations, m.clips);
     if (m.hairFile) this.hairGltf = await this.gltf(m.hairFile);
-    // Preload bodies so creating an avatar is instant.
-    await Promise.all(m.bodies.map((b) => this.gltf(b.url)));
+    // bodies load the first time someone wears one (six files nobody may be wearing)
     this.manifest = m;
   }
 
