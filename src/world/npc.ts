@@ -198,8 +198,8 @@ export class BarStaff {
    * Fetch the VRoid models one by one in the background (started right after you enter the
    * office), handing each to `warm` so its shaders/textures are ready before anyone goes upstairs.
    */
-  preload(warm?: (root: THREE.Object3D) => Promise<void>): Promise<void> {
-    this.loadingDone ??= this.loadVrms(warm);
+  preload(warm?: (root: THREE.Object3D) => Promise<void>, calm?: () => boolean): Promise<void> {
+    this.loadingDone ??= this.loadVrms(warm, calm);
     return this.loadingDone;
   }
 
@@ -223,10 +223,12 @@ export class BarStaff {
     for (const s of this.staff) out.push(s.tag.object);
   }
 
-  private async loadVrms(warm?: (root: THREE.Object3D) => Promise<void>) {
+  private async loadVrms(warm?: (root: THREE.Object3D) => Promise<void>, calm?: () => boolean) {
     this.loading = true;
     for (const s of this.staff) {
       if (!s.vrm || s.avatar) continue;
+      // each model stops the page for a moment: wait (a few seconds at most) for you to stand still
+      for (let i = 0; i < 40 && calm && !calm(); i++) await new Promise((r) => setTimeout(r, 100));
       try {
         const av = await VrmAvatar.load(s.vrm.url, s.vrm.height, this.lookTarget);
         // shaders and textures first, then into the scene: whoever is in the bar sees her appear

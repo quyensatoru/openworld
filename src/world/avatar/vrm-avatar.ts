@@ -302,6 +302,9 @@ export class VrmAvatar implements Avatar {
       loader.register((parser) => new SharedTextures(parser, sh));
       const gltf = await loader.parseAsync(file, url.slice(0, url.lastIndexOf('/') + 1));
       const vrm = gltf.userData.vrm as VRM;
+      // no spring "center" (see scripts/prepare-vrm.mjs): three-vrm wraps that node's matrix
+      // elements in a Proxy, and every matrix multiply in the game turns slow and garbage-heavy
+      for (const j of vrm.springBoneManager?.joints ?? []) if (j.center) j.center = null;
       // the steps below take a phone ~150 ms together: a frame between them, so the game doesn't stop
       await breather();
       VRMUtils.removeUnnecessaryVertices(gltf.scene);

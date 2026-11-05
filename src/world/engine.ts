@@ -129,6 +129,8 @@ interface PlayerView {
   camD2: number;
   /** A model still to build (lazy: see pumpAvatars) — null when the one shown is current. */
   want: AvatarConfig | null;
+  /** Since when (performance.now) it has been waiting. */
+  wantSince: number;
   /** Key of the model being built right now ('' = none). */
   building: string;
   /** When they went off your floor (their model is given back after a while); 0 = here. */
@@ -270,6 +272,11 @@ export class World {
   /** Resolution that steps down while the machine can't keep up, and back up once it can. */
   private resScale = 1;
   private avgGap = 16.7;
+  /** Time the frame's own work takes (ms, smoothed): tells a busy CPU from a busy GPU. */
+  private avgCpu = 0;
+  private noteCpu(start: number) {
+    this.avgCpu += (performance.now() - start - this.avgCpu) * 0.05;
+  }
   private slowFor = 0;
   private quickFor = 0;
   private hemiBase = new THREE.Color('#f4f7ff');
@@ -428,6 +435,7 @@ export class World {
     this.charBudget = BUDGET_BY_QUALITY[q];
     this.budgetTimer = 0;
     this.resScale = 1;
+    this.loadAdapt();
     this.slowFor = this.quickFor = 0;
     this.applyPixelRatio();
     const size = q === 'high' ? 2048 : 1024;
@@ -452,9 +460,11 @@ export class World {
   /** Sets the drawing resolution; false when it was already that. */
   private applyPixelRatio(): boolean {
     const dpr = window.devicePixelRatio || 1;
-    const base = this.quality === 'high' ? Math.min(dpr, 2) : Math.min(dpr, 1);
-    // stepping down never goes below 1 on "Đẹp" (a retina screen drawn at 1×), 0.75× otherwise
-    const floor = this.quality === 'high' ? Math.min(base, 1) : 0.75 * base;
+    // "Đẹp" and "Nhẹ" draw up to 2× (phones are 2–3×: drawn at 1× they looked smeared); "Nhẹ" saves on
+    // shadows and detail instead, and the resolution only steps down while the GPU can't keep up —
+    // never below 1×. Battery saver: 1×, down to 0.75×.
+    const base = this.quality === 'eco' ? Math.min(dpr, 1) : Math.min(dpr, 2);
+    const floor = this.quality === 'eco' ? 0.75 * base : Math.min(base, 1);
     const r = Math.max(floor, base * this.resScale);
     if (Math.abs(r - this.renderer.getPixelRatio()) < 0.01) return false;
     this.renderer.setPixelRatio(r);
@@ -489,30 +499,65 @@ export class World {
     }
     if (this.slowFor > 3000) {
       this.slowFor = 0;
-      let stepped = false;
-      if (this.resScale > 0.5) {
-        const was = this.resScale;
-        this.resScale = Math.max(0.5, this.resScale - 0.15);
-        if (this.applyPixelRatio()) {
-          this.resize();
-          stepped = true;
-        } else this.resScale = was; // already as low as it goes (resizing the canvas again would only stutter)
-      }
-      // resolution as low as it goes and still slow: fewer people drawn in full ("Nhẹ" / "Tiết kiệm pin")
-      if (!stepped && Number.isFinite(this.charBudget) && this.charBudget > BUDGET_MIN) {
-        this.charBudget = Math.max(BUDGET_MIN, this.charBudget - 2);
-        this.budgetTimer = 0;
-      }
+      // what is short? If the frame's own work fills most of it (the CPU: characters, bones), fewer
+      // people drawn in full first — fewer pixels wouldn't help and only blur. Otherwise the GPU: fewer pixels.
+      const cpuBound = this.avgCpu > target * 0.75;
+      if (cpuBound ? this.fewerPeople() || this.fewerPixels() : this.fewerPixels() || this.fewerPeople()) this.saveAdapt();
     } else if (this.quickFor > 12000) {
       this.quickFor = 0;
-      // quick again: people back first, then sharpness
-      if (this.charBudget < BUDGET_BY_QUALITY[this.quality]) {
-        this.charBudget += 2;
-        this.budgetTimer = 0;
-      } else if (this.resScale < 1) {
+      // quick again: give back what has room (people while the CPU is idle enough, else sharpness)
+      const full = BUDGET_BY_QUALITY[this.quality];
+      const cpuRoom = this.avgCpu < target * 0.5;
+      if (cpuRoom && this.charBudget < full) this.charBudget += 2;
+      else if (this.resScale < 1) {
         this.resScale = Math.min(1, this.resScale + 0.15);
         if (this.applyPixelRatio()) this.resize();
-      }
+      } else if (this.charBudget < full) this.charBudget += 2;
+      else return;
+      this.budgetTimer = 0;
+      this.saveAdapt();
+    }
+  }
+
+  /** One step down in resolution; false when it is as low as it goes. */
+  private fewerPixels(): boolean {
+    if (this.resScale <= 0.5) return false;
+    const was = this.resScale;
+    this.resScale = Math.max(0.5, this.resScale - 0.15);
+    if (this.applyPixelRatio()) {
+      this.resize();
+      return true;
+    }
+    this.resScale = was; // already at the floor (resizing the canvas again would only stutter)
+    return false;
+  }
+
+  /** Two people fewer drawn in full ("Nhẹ" / "Tiết kiệm pin"); false when at the minimum. */
+  private fewerPeople(): boolean {
+    if (!Number.isFinite(this.charBudget) || this.charBudget <= BUDGET_MIN) return false;
+    this.charBudget = Math.max(BUDGET_MIN, this.charBudget - 2);
+    this.budgetTimer = 0;
+    return true;
+  }
+
+  /** What this device settled on, per quality: the next visit starts there instead of finding it again. */
+  private saveAdapt() {
+    try {
+      localStorage.setItem(`office-adapt-${this.quality}`, JSON.stringify({ res: this.resScale, budget: Number.isFinite(this.charBudget) ? this.charBudget : null }));
+    } catch {
+      /* private mode */
+    }
+  }
+
+  private loadAdapt() {
+    try {
+      const a = JSON.parse(localStorage.getItem(`office-adapt-${this.quality}`) || 'null') as { res?: number; budget?: number | null } | null;
+      if (!a) return;
+      if (typeof a.res === 'number') this.resScale = Math.min(1, Math.max(0.5, a.res));
+      const full = BUDGET_BY_QUALITY[this.quality];
+      if (typeof a.budget === 'number' && Number.isFinite(full)) this.charBudget = Math.min(full, Math.max(BUDGET_MIN, a.budget));
+    } catch {
+      /* private mode / bad data */
     }
   }
 
@@ -983,6 +1028,7 @@ export class World {
       offscreen: false,
       camD2: 0,
       want: null,
+      wantSince: 0,
       building: '',
       awaySince: 0,
       castOn: true,
@@ -1006,12 +1052,16 @@ export class World {
       return;
     }
     // a new model: yours right away, everyone else's when it is worth it (pumpAvatars)
+    if (!v.want) v.wantSince = performance.now();
     v.want = cfg;
     if (v.isMe) this.buildAvatar(v);
   }
 
   /** Remote models being built (one at a time). */
   private buildingRemote = 0;
+  /** How long you have stood still with the camera at rest (s), and the yaw last frame. */
+  private calmFor = 0;
+  private calmYaw = 0;
   private unloadTimer = 2;
 
   private buildAvatar(v: PlayerView) {
@@ -1074,6 +1124,7 @@ export class World {
           v.avatar.dispose();
           v.avatar = null;
           v.want = JSON.parse(v.avatarKey) as AvatarConfig;
+          v.wantSince = now;
           v.blob.visible = false;
           v.awaySince = 0;
         }
@@ -1084,11 +1135,18 @@ export class World {
       this.budgetTimer = 0.4;
       this.rankBudget();
     }
+    // building a model costs the page a moment: while you walk or turn the camera (when a stutter
+    // shows most) people wait — at most a couple of seconds
+    const turned = Math.abs(Math.atan2(Math.sin(this.camYaw - this.calmYaw), Math.cos(this.camYaw - this.calmYaw)));
+    this.calmYaw = this.camYaw;
+    this.calmFor = (this.me?.speed ?? 0) > 0.3 || turned > 0.004 ? 0 : this.calmFor + dt;
     if (this.buildingRemote > 0) return;
+    const now = performance.now();
     let best: PlayerView | null = null;
     let bestScore = Infinity;
     for (const v of this.players.values()) {
       if (v.isMe || !v.want || v.building || !v.inBudget || !this.sharesFloor(v.x, v.z)) continue;
+      if (this.calmFor < 0.3 && now - v.wantSince < 2500) continue;
       const score = this.drawScore(v);
       if (score < bestScore) {
         bestScore = score;
@@ -2076,6 +2134,7 @@ export class World {
     if (this.cctv) {
       this.renderer.shadowMap.needsUpdate = false;
       this.renderCctv();
+      this.noteCpu(now);
       return;
     }
     // shadows: every other frame, and not at all in the dark (cinema film / bar)
@@ -2084,6 +2143,7 @@ export class World {
     if (this.cssScene.children.length) this.css3d.render(this.cssScene, this.camera);
     this.renderer.render(this.scene, this.camera);
     this.renderTags();
+    this.noteCpu(now);
   };
 
   /** Where the camera looks this frame (after it moved). */
@@ -2282,7 +2342,8 @@ export class World {
       // already on the GPU (shared by another copy of the same character): nothing to wait for
       if ((this.renderer.properties.get(t) as { __webglTexture?: unknown }).__webglTexture) continue;
       this.renderer.initTexture(t);
-      if (++n % 4 === 0) await new Promise((r) => requestAnimationFrame(r)); // a few uploads per frame
+      // a few uploads per frame (fewer on "Nhẹ" / phones)
+      if (++n % (this.quality === 'high' ? 4 : 2) === 0) await new Promise((r) => requestAnimationFrame(r));
     }
   }
 
@@ -2296,13 +2357,16 @@ export class World {
     // goes up before that froze for a second on the shaders compiled there and then
     this.warmPending = !this.disposed;
     let first = true;
-    await this.staff.preload(async (root) => {
-      await this.prewarm(root);
-      // the shadow shaders of a skinned, morphing character are only made by a shadow pass: draw
-      // one as soon as the first model is in (the others reuse them — same kind of mesh)
-      if (first) this.warmPending = !this.disposed;
-      first = false;
-    });
+    await this.staff.preload(
+      async (root) => {
+        await this.prewarm(root);
+        // the shadow shaders of a skinned, morphing character are only made by a shadow pass: draw
+        // one as soon as the first model is in (the others reuse them — same kind of mesh)
+        if (first) this.warmPending = !this.disposed;
+        first = false;
+      },
+      () => this.calmFor > 0.3,
+    );
     this.warmPending = !this.disposed;
   }
 
