@@ -11,6 +11,11 @@ export interface Rect {
   z0: number;
   x1: number;
   z1: number;
+  /**
+   * World height of the top of this block, when you can get onto it (see `obstacleRects`).
+   * `undefined` or `Infinity` = a wall: it stops you however high you are.
+   */
+  top?: number;
 }
 
 export interface Zone extends Rect {
@@ -210,6 +215,22 @@ export const WORLD_D = OFFICE_D;
 export const WALL_T = 0.2;
 export const PLAYER_RADIUS = 0.28;
 export const SPAWN = { x: 20, z: 25.5, ry: Math.PI };
+
+// ---------------------------------------------------------------- jumping
+/** Downward pull, m/s². */
+export const GRAVITY = 20;
+/** How high a jump goes — just over a desk, so tables, sofas and counters are reachable. */
+export const JUMP_H = 0.95;
+/** Starting upward speed for that height (peak after ~0.31 s, back down after ~0.62 s). */
+export const JUMP_V0 = Math.sqrt(2 * GRAVITY * JUMP_H);
+/** Ledges this low are walked onto without jumping (and slopes/steps never block you). */
+export const STEP_UP = 0.3;
+/** Furniture taller than this is a wall: you can never stand on top of it. */
+export const CLIMB_MAX = 1.15;
+/** You may still jump this long after walking off an edge. */
+export const COYOTE_TIME = 0.12;
+/** Pressing jump this long before landing still counts. */
+export const JUMP_BUFFER = 0.18;
 
 export function floorOf(x: number): Floor {
   return x >= 290 ? 5 : x >= 230 ? 4 : x >= 170 ? 3 : x >= 110 ? 2 : x >= 50 ? 1 : 0;
@@ -1063,6 +1084,58 @@ for (const l of LIFTS) {
   f('trashBin', 29.0, 27.5, 0.4, 0.4, 0, 'cage');
 }
 
+/**
+ * Height of the surface you land on when you jump onto a piece of furniture, in metres above the
+ * floor it stands on. Only things you can actually climb are listed: anything missing here, or
+ * taller than CLIMB_MAX, is treated as a wall you bump into at any height.
+ */
+export const FURN_TOP: Partial<Record<FurnitureKind, number>> = {
+  // desks and tables
+  desk: 0.75,
+  focusDesk: 0.75,
+  pcDesk: 0.76,
+  meetingTable: 0.77,
+  roundTable: 0.78,
+  coffeeTable: 0.45,
+  barTable: 0.76,
+  moleTable: 0.79,
+  tvStand: 0.46,
+  nightstand: 0.5,
+  // counters
+  counter: 0.93,
+  barCounter: 0.81,
+  reception: 1.1,
+  snackBar: 1.0,
+  djBooth: 1.05,
+  songConsole: 1.04,
+  // soft furniture
+  sofa: 0.45,
+  armchair: 0.43,
+  beanbag: 0.42,
+  bed: 0.6,
+  bedDouble: 0.52,
+  stool2: 0.5,
+  log: 0.48,
+  // boxes, props and odds and ends
+  carton: 0.48,
+  pallet: 0.66,
+  trolley: 0.6,
+  printer: 0.78,
+  washer: 0.85,
+  trashBin: 0.56,
+  cone: 0.62,
+  fireExt: 0.6,
+  teddy: 0.5,
+  toyBall: 0.4,
+};
+
+/** Top of a piece of furniture in world height, or Infinity when it can't be climbed. */
+export function furnitureTop(f: Furniture): number {
+  const h = FURN_TOP[f.kind];
+  if (h === undefined || h > CLIMB_MAX) return Infinity;
+  return groundAt(f.x, f.z) + (f.y ?? 0) + h;
+}
+
 /** Furniture tall enough to hide behind on floor 5 (blocks the line of sight). */
 export const TALL_KINDS = new Set<FurnitureKind>(['serverRack', 'shelfRack', 'bookshelf', 'filing', 'cabinet', 'crates', 'vending', 'fridge', 'partition', 'medCurtain', 'pillar', 'monitorWall']);
 
@@ -1090,16 +1163,22 @@ export function obstacleRects(): Rect[] {
     const rotated = Math.abs(Math.sin(f.ry)) > 0.5;
     const hw = (rotated ? f.d : f.w) / 2;
     const hd = (rotated ? f.w : f.d) / 2;
-    out.push({ x0: f.x - hw, z0: f.z - hd, x1: f.x + hw, z1: f.z + hd });
+    out.push({ x0: f.x - hw, z0: f.z - hd, x1: f.x + hw, z1: f.z + hd, top: furnitureTop(f) });
   }
   return out;
 }
 
-/** Push a circle out of all rects. Returns corrected position. */
-export function resolveCollision(rects: Rect[], x: number, z: number, r = PLAYER_RADIUS): { x: number; z: number } {
+/**
+ * Push a circle out of all rects. Returns corrected position.
+ * `passTop`: anything whose top is at or below this height is cleared and does not block — that is
+ * how you walk about on a desk you jumped onto. Leave it out and everything blocks, as the
+ * navigation grid needs.
+ */
+export function resolveCollision(rects: Rect[], x: number, z: number, r = PLAYER_RADIUS, passTop = -Infinity): { x: number; z: number } {
   for (let iter = 0; iter < 3; iter++) {
     let moved = false;
     for (const b of rects) {
+      if (b.top !== undefined && b.top <= passTop) continue; // we are clear above it
       const cx = Math.max(b.x0, Math.min(x, b.x1));
       const cz = Math.max(b.z0, Math.min(z, b.z1));
       const dx = x - cx;
@@ -1126,6 +1205,52 @@ export function resolveCollision(rects: Rect[], x: number, z: number, r = PLAYER
   x = Math.max(r + WALL_T, Math.min(WORLD_W - r - WALL_T, x));
   z = Math.max(r + WALL_T, Math.min(WORLD_D - r - WALL_T, z));
   return { x, z };
+}
+
+// Only the furniture you can climb onto has a top, and it never moves: bucket it into a coarse
+// grid once, so "what am I standing on?" looks at a handful of boxes instead of all 900 every
+// frame, for every player in the room.
+const SUPPORT_CELL = 4;
+const SUPPORT_COLS = Math.ceil(WORLD_W / SUPPORT_CELL) + 1;
+const SUPPORT_ROWS = Math.ceil(WORLD_D / SUPPORT_CELL) + 1;
+let supportGrid: Rect[][] | null = null;
+
+function buildSupportGrid(): Rect[][] {
+  const grid: Rect[][] = Array.from({ length: SUPPORT_COLS * SUPPORT_ROWS }, () => []);
+  for (const f of FURNITURE) {
+    if (!f.solid) continue;
+    const top = furnitureTop(f);
+    if (top === Infinity) continue;
+    const rotated = Math.abs(Math.sin(f.ry)) > 0.5;
+    const hw = (rotated ? f.d : f.w) / 2;
+    const hd = (rotated ? f.w : f.d) / 2;
+    const box: Rect = { x0: f.x - hw, z0: f.z - hd, x1: f.x + hw, z1: f.z + hd, top };
+    for (let i = Math.max(0, Math.floor(box.x0 / SUPPORT_CELL)); i <= Math.min(SUPPORT_COLS - 1, Math.floor(box.x1 / SUPPORT_CELL)); i++) {
+      for (let j = Math.max(0, Math.floor(box.z0 / SUPPORT_CELL)); j <= Math.min(SUPPORT_ROWS - 1, Math.floor(box.z1 / SUPPORT_CELL)); j++) {
+        grid[i * SUPPORT_ROWS + j].push(box);
+      }
+    }
+  }
+  return grid;
+}
+
+/**
+ * What a player at (x, z) is standing on: the floor, or the top of the highest thing under them
+ * that is no higher than `maxTop` (how far up they can reach from where they are).
+ */
+export function supportAt(x: number, z: number, maxTop: number): number {
+  let best = groundAt(x, z);
+  if (!supportGrid) supportGrid = buildSupportGrid();
+  const i = Math.floor(x / SUPPORT_CELL);
+  const j = Math.floor(z / SUPPORT_CELL);
+  if (i < 0 || j < 0 || i >= SUPPORT_COLS || j >= SUPPORT_ROWS) return best;
+  for (const b of supportGrid[i * SUPPORT_ROWS + j]) {
+    const t = b.top!;
+    if (t <= best || t > maxTop) continue;
+    if (x <= b.x0 || x >= b.x1 || z <= b.z0 || z >= b.z1) continue;
+    best = t;
+  }
+  return best;
 }
 
 /** Rooms where everyone inside hears everyone (and nobody outside). */

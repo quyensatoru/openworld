@@ -11,6 +11,8 @@ export interface DriveState {
   talking: boolean;
   /** Something held in the right hand for a while (karaoke mic). */
   hold?: 'mic' | null;
+  /** Feet off the ground (jumping / falling): hold the jump pose even while moving. */
+  air?: boolean;
   /** Far from the camera: skip the fine detail (hair / cloth physics, facial expressions). */
   far?: boolean;
   /** Some way off: hair / cloth physics at half rate. */

@@ -27,11 +27,16 @@ import {
   UP_DX,
   WORLD_D,
   WORLD_W,
+  CLIMB_MAX,
+  GRAVITY,
+  JUMP_H,
+  JUMP_V0,
   floorOf,
   groundAt,
   liftAtPos,
   onDanceFloor,
   sameFloorX,
+  supportAt,
   visualX,
   zoneAt,
   type Lift,
@@ -312,10 +317,9 @@ export class World {
     if (this.controller) this.controller.stick = { x, y };
   }
 
-  /** Jump (the Space key / the phone's jump button). */
+  /** Jump (the Space key / the phone's jump button). The emote follows once we leave the ground. */
   jump() {
-    const c = this.controller;
-    if (c && !c.seat && !c.busy) this.cb.onEmoteKey(-1);
+    this.controller?.requestJump();
   }
 
   /** What E would do right now (for the phone's action button), or null. */
@@ -327,6 +331,8 @@ export class World {
   private lastSend = 0;
   private lastSent = { x: 0, z: 0, ry: 0, anim: 'idle' as AnimState };
   private zoneId = '';
+  /** Feet were on something last frame (to make a sound the moment we land). */
+  private wasOnGround = true;
   private promptTimer = 0;
   private wallTimer = 0;
   private uiTimer = 0;
@@ -625,7 +631,7 @@ export class World {
       else if (e.code === 'KeyV' && !e.repeat) this.setViewMode(this.viewMode === 'first' ? 'third' : 'first');
       else if (e.code === 'Space' && !e.repeat) {
         e.preventDefault();
-        if (!c.seat && !c.busy) this.cb.onEmoteKey(-1); // jump
+        c.requestJump();
       }
       else if (e.code === 'Escape') {
         c.cancelPath();
@@ -988,6 +994,7 @@ export class World {
     v.state = { ...p };
     this.controller = new LocalController(p.x, p.z, p.ry, this.nav, this.nav.rects);
     this.controller.onStandUp = () => this.cb.onStandUp();
+    this.controller.onJump = () => this.cb.onEmoteKey(-1); // play + broadcast the jump animation
     if (p.seat) {
       const seat = SEAT_BY_ID.get(p.seat);
       if (seat) this.controller.snapSeat(seat);
@@ -1271,8 +1278,12 @@ export class World {
     const v = this.players.get(id);
     if (!v) return;
     if (e === 'jump') {
-      if (v.anim === 'sit' || v.jumpT >= 0) return;
-      v.jumpT = 0;
+      if (v.anim === 'sit') return;
+      // our own height comes from the controller; remote people get the arc below
+      if (!v.isMe) {
+        if (v.jumpT >= 0) return;
+        v.jumpT = 0;
+      }
     }
     v.avatar?.emote(e);
     v.tag.emote(e);
@@ -1870,17 +1881,23 @@ export class World {
       const v = this.me;
       v.speed = c.speed;
       v.anim = c.seat ? 'sit' : c.anim;
-      v.groundY = this.ride ? this.rideY() : damp(v.groundY, groundAt(c.x, c.z), 14, dt);
-      const jy = this.jumpY(v, dt);
-      v.holder.position.set(visualX(c.x), v.groundY + jy, c.z);
-      v.blob.position.y = 0.012 - jy;
+      // `groundY` is the floor the camera sits on: it only moves once we have actually landed, so
+      // flying over a desk doesn't yank the view up. Small steps and slopes are still smoothed.
+      const sup = c.supportY;
+      if (this.ride) v.groundY = this.rideY();
+      else if (c.onGround) v.groundY = Math.abs(sup - v.groundY) > 0.5 ? sup : damp(v.groundY, sup, 16, dt);
+      v.jumpT = c.airborne ? 0 : -1; // a flag now (no auto-dancing in mid-air)
+      if (c.onGround && !this.wasOnGround) this.cb.onStep(v.id, c.x, c.z, true, true); // landed
+      this.wasOnGround = c.onGround;
+      v.holder.position.set(visualX(c.x), c.y, c.z);
+      v.blob.position.y = 0.012 - (c.y - sup); // the shadow stays on whatever is below us
       v.holder.rotation.y = c.ry;
       v.x = c.x;
       v.z = c.z;
       v.ry = c.ry;
       v.state.x = c.x;
       v.state.z = c.z;
-      this.voiceRing.position.set(visualX(c.x), v.groundY + 0.015, c.z);
+      this.voiceRing.position.set(visualX(c.x), sup + 0.015, c.z);
       const zone = zoneAt(c.x, c.z).id;
       if (zone !== this.zoneId) {
         this.zoneId = zone;
@@ -1930,7 +1947,10 @@ export class World {
       v.z = z;
       v.ry = ry;
       v.anim = anim;
-      v.groundY = damp(v.groundY, groundAt(x, z), liftAtPos(x, z) ? 2.2 : 14, dt);
+      // they only send x/z: being inside a footprint means they climbed onto it (walking into one
+      // is impossible), so put them on its top — never higher than a jump could reach
+      const sup = supportAt(x, z, groundAt(x, z) + CLIMB_MAX);
+      v.groundY = damp(v.groundY, sup, liftAtPos(x, z) ? 2.2 : 14, dt);
       const jy = this.jumpY(v, dt);
       v.holder.position.set(visualX(x), v.groundY + jy, z);
       v.blob.position.y = 0.012 - jy;
@@ -2007,6 +2027,7 @@ export class World {
         lookAt: v.lookAt,
         talking: v.speaking,
         hold: v.hold,
+        air: v.jumpT >= 0,
         far: !v.isMe && v.camD2 > this.lod.far * this.lod.far,
         mid: !v.isMe && v.camD2 > this.lod.mid * this.lod.mid,
       });
@@ -2034,7 +2055,8 @@ export class World {
       const fz = -Math.cos(this.camYaw);
       // seated: the body is shifted onto the chair, and the eyes sit a bit forward of it
       const sf = seated ? 0.32 : 0.1;
-      const eye = new THREE.Vector3(visualX(me.x) + Math.sin(me.ry) * sf, me.groundY + this.eyeH + bobY, me.z + Math.cos(me.ry) * sf);
+      const air = this.controller ? Math.max(0, this.controller.y - me.groundY) : 0;
+      const eye = new THREE.Vector3(visualX(me.x) + Math.sin(me.ry) * sf, me.groundY + air + this.eyeH + bobY, me.z + Math.cos(me.ry) * sf);
       this.camera.position.copy(eye);
       const cp = Math.cos(this.fpPitch);
       this.camera.lookAt(eye.x + fx * cp, eye.y + Math.sin(this.fpPitch), eye.z + fz * cp);
@@ -2322,15 +2344,18 @@ export class World {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Height of a jump arc (0.55 m, 0.62 s). */
+  /**
+   * Height of a remote player's jump arc. They only send x/z, so their hop is replayed from the
+   * emote — same height and airtime as the real one the controller runs for us.
+   */
   private jumpY(v: PlayerView, dt: number): number {
     if (v.jumpT < 0) return 0;
-    v.jumpT += dt / 0.62;
+    v.jumpT += (dt * GRAVITY) / (2 * JUMP_V0);
     if (v.jumpT >= 1) {
       v.jumpT = -1;
       return 0;
     }
-    return 4 * 0.55 * v.jumpT * (1 - v.jumpT);
+    return 4 * JUMP_H * v.jumpT * (1 - v.jumpT);
   }
 
   /** Jump to another place (portals between the office and the cinema). */
@@ -2343,7 +2368,10 @@ export class World {
     c.z = z;
     c.ry = ry;
     c.vx = c.vz = 0;
-    this.me.groundY = groundAt(x, z);
+    c.y = c.supportY = groundAt(x, z);
+    c.vy = 0;
+    c.onGround = true;
+    this.me.groundY = c.y;
     this.camTarget.set(visualX(x), 1.15 + this.me.groundY, z);
     this.camYaw = ry + Math.PI;
   }
@@ -2477,6 +2505,7 @@ export class World {
         r.switched = true;
         c.shiftX((r.to - r.from) * UP_DX);
       }
+      c.y = c.supportY = this.rideY();
       this.office.setRideCar(visualX(r.lift.cx), this.rideY(), r.lift.cz);
       if (r.t >= 1) {
         this.ride = null;

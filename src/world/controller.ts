@@ -1,5 +1,18 @@
-// Local player movement: keyboard (camera-relative), click-to-move paths, smooth sit/stand.
-import { resolveCollision, type Rect, type Seat } from '../../shared/map';
+// Local player movement: keyboard (camera-relative), click-to-move paths, smooth sit/stand, and
+// the vertical half — gravity, jumping and standing on top of the furniture.
+import {
+  COYOTE_TIME,
+  GRAVITY,
+  JUMP_BUFFER,
+  JUMP_V0,
+  PLAYER_RADIUS,
+  STEP_UP,
+  groundAt,
+  resolveCollision,
+  supportAt,
+  type Rect,
+  type Seat,
+} from '../../shared/map';
 import type { AnimState } from '../../shared/protocol';
 import type { NavGrid } from './pathfinding';
 
@@ -24,9 +37,17 @@ export function seatApproach(seat: Seat): { x: number; z: number } {
 export class LocalController {
   x: number;
   z: number;
+  /** Feet height, in world units: the floor you are on plus anything you have climbed onto. */
+  y: number;
+  /** Surface right under the feet — equal to `y` unless you are in the air. */
+  supportY: number;
   ry: number;
   vx = 0;
   vz = 0;
+  /** Vertical speed (jumping / falling). */
+  vy = 0;
+  /** Feet on something solid. */
+  onGround = true;
   speed = 0;
   anim: AnimState = 'idle';
   seat: Seat | null = null;
@@ -39,8 +60,15 @@ export class LocalController {
   private onArrive: (() => void) | null = null;
   private trans: { from: { x: number; z: number; ry: number }; to: { x: number; z: number; ry: number }; t: number; dur: number; done: () => void } | null = null;
 
+  /** Jump pressed a moment ago — used as soon as the feet are back on something. */
+  private jumpBuf = 0;
+  /** Time left to still jump after walking off an edge. */
+  private coyote = 0;
+
   /** Called when the player starts moving away from a seat. */
   onStandUp: (() => void) | null = null;
+  /** Called the moment a jump actually leaves the ground (plays and broadcasts the animation). */
+  onJump: (() => void) | null = null;
   /** Riding the lift: no walking, the engine moves us. */
   locked = false;
 
@@ -54,6 +82,18 @@ export class LocalController {
     this.x = x;
     this.z = z;
     this.ry = ry;
+    this.y = this.supportY = groundAt(x, z);
+  }
+
+  /** In the air (jumping or falling) — the avatar holds its jump pose. */
+  get airborne(): boolean {
+    return !this.onGround;
+  }
+
+  /** Space / the phone's jump button. Buffered, so pressing just before landing still works. */
+  requestJump() {
+    if (this.seat || this.trans || this.locked) return;
+    this.jumpBuf = JUMP_BUFFER;
   }
 
   get busy(): boolean {
@@ -110,6 +150,7 @@ export class LocalController {
     this.x = seat.x;
     this.z = seat.z;
     this.ry = seat.ry;
+    this.groundTo(groundAt(seat.x, seat.z));
   }
 
   standUp(after?: () => void) {
@@ -141,6 +182,7 @@ export class LocalController {
       this.ry = tr.from.ry + Math.atan2(Math.sin(tr.to.ry - tr.from.ry), Math.cos(tr.to.ry - tr.from.ry)) * k;
       this.vx = this.vz = 0;
       this.speed = 0;
+      this.groundTo(groundAt(this.x, this.z));
       if (tr.t >= tr.dur) {
         this.trans = null;
         tr.done();
@@ -149,9 +191,12 @@ export class LocalController {
     }
 
     if (this.locked) {
+      // frozen (a meeting) or riding the lift — put the feet down; a lift ride overwrites our
+      // height right after this, in the engine's updateFloors
       this.vx = this.vz = 0;
       this.speed = 0;
       this.anim = 'idle';
+      this.groundTo(supportAt(this.x, this.z, this.y + STEP_UP));
       return;
     }
 
@@ -173,6 +218,7 @@ export class LocalController {
     }
 
     if (this.seat) {
+      this.groundTo(groundAt(this.x, this.z));
       if (ix || iy) this.standUp();
       return;
     }
@@ -223,7 +269,9 @@ export class LocalController {
     this.vz = damp(this.vz, wz * target, accel, dt);
     const nx = this.x + this.vx * dt;
     const nz = this.z + this.vz * dt;
-    const res = resolveCollision(this.rects, nx, nz);
+    // whatever we are standing on is walked over, not bumped into; in the air we only clear what
+    // our feet are actually above, so we don't slide through the side of a desk on the way up
+    const res = resolveCollision(this.rects, nx, nz, PLAYER_RADIUS, this.y + (this.onGround ? STEP_UP : 0.05));
     // keep velocity consistent with what actually happened (sliding along walls)
     if (dt > 0) {
       this.vx = (res.x - this.x) / dt;
@@ -234,5 +282,49 @@ export class LocalController {
     this.speed = Math.hypot(this.vx, this.vz);
     if (this.speed > 0.05) this.ry = angleDamp(this.ry, Math.atan2(this.vx, this.vz), 11, dt);
     this.anim = this.speed > 3 ? 'run' : this.speed > 0.12 ? 'walk' : 'idle';
+    this.fall(dt);
+  }
+
+  /** Seated / riding / being moved about: feet flat on `y`, nothing in flight. */
+  private groundTo(y: number) {
+    this.y = this.supportY = y;
+    this.vy = 0;
+    this.onGround = true;
+    this.jumpBuf = 0;
+    this.coyote = 0;
+  }
+
+  /** Gravity, jumping, landing — and walking up small steps or down slopes without leaving the floor. */
+  private fall(dt: number) {
+    this.jumpBuf = Math.max(0, this.jumpBuf - dt);
+    this.coyote = this.onGround ? COYOTE_TIME : Math.max(0, this.coyote - dt);
+    const wasOnGround = this.onGround;
+    // how far up we can reach from here: a step while walking, nothing much while flying up
+    const reach = this.vy > 0 ? 0.02 : STEP_UP;
+    const sup = supportAt(this.x, this.z, this.y + reach);
+
+    if (this.jumpBuf > 0 && (this.onGround || this.coyote > 0)) {
+      this.jumpBuf = 0;
+      this.coyote = 0;
+      this.vy = JUMP_V0;
+      this.onGround = false;
+      this.onJump?.();
+    }
+
+    // midpoint step: the arc reaches exactly JUMP_H whatever the frame rate is — plain Euler loses
+    // a third of the height at 10 fps, which is the difference between landing on a desk and not
+    let ny = this.y + (this.vy - 0.5 * GRAVITY * dt) * dt;
+    this.vy -= GRAVITY * dt;
+    // walking down a slope or a shallow step: stay glued to it instead of taking off
+    const glue = wasOnGround && this.vy <= 0 ? Math.max(0.06, this.speed * dt * 1.6) : 0;
+    if (this.vy <= 0 && ny <= sup + glue) {
+      ny = sup;
+      this.vy = 0;
+      this.onGround = true;
+    } else {
+      this.onGround = false;
+    }
+    this.y = ny;
+    this.supportY = sup;
   }
 }

@@ -542,7 +542,7 @@ function Help() {
   const touchRows: [string, string][] = [
     ['🕹️ Cần gạt (trái)', 'Kéo để đi — kéo hết cỡ để chạy'],
     ['✋ (phải)', 'Làm việc của phím E: ngồi, mở bảng, làm nhiệm vụ, đóng mở cửa…'],
-    ['⤴', 'Nhảy'],
+    ['⤴', 'Nhảy — nhảy lên được bàn, ghế sofa, quầy, thùng hàng…'],
     ['Chạm', 'Chạm ghế để ngồi · chạm người để xem thông tin · chạm sàn để đi tới đó'],
     ['Vuốt / chụm 2 ngón', 'Xoay camera / phóng to thu nhỏ'],
     ['⋯', 'Góc nhìn thứ nhất, toàn màn hình, chụp ảnh, bảng công việc, cài đặt'],
@@ -554,7 +554,7 @@ function Help() {
     ['Kéo chuột / cuộn', 'Xoay camera / phóng to thu nhỏ'],
     ['V', 'Góc nhìn thứ nhất ↔ thứ ba (ở góc thứ nhất: A/D để quay người)'],
     ['Cầu thang / thang máy', 'Tầng 2 (rạp phim, bar), tầng 3 (phòng game), tầng 4 (karaoke, ma sói): đi cầu thang ở sảnh, hoặc vào thang máy kính rồi bấm chọn tầng'],
-    ['Space', 'Nhảy'],
+    ['Space', 'Nhảy — nhảy lên được bàn, ghế sofa, quầy, thùng hàng… đi ra khỏi mép là rơi xuống'],
     ['E', 'Tương tác: ngồi xuống, mở Kanban, pha cà phê…'],
     ['1 – 9', 'Biểu cảm: vẫy tay, vỗ tay, ăn mừng, nhảy… · 9 = 🥂 cạn ly (đứng cạnh ai đó cùng bấm)'],
     ['📸', 'Chụp ảnh khung cảnh hiện tại, tải về máy'],

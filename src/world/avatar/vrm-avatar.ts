@@ -436,7 +436,8 @@ export class VrmAvatar implements Avatar {
 
     // clip emotes (dance, jump) take over while standing; arm emotes are layered on later
     const dancing = this.emoteName === 'dance';
-    const clipEmote = this.sitState === 'stand' && this.moveW < 0.5 && (dancing || this.emoteName === 'jump') ? this.emoteName : null;
+    const jumping = this.emoteName === 'jump' && (s.air || this.moveW < 0.5);
+    const clipEmote = this.sitState === 'stand' && (jumping || (dancing && this.moveW < 0.5)) ? this.emoteName : null;
     const clipW = clipEmote ? ew : 0;
     const base = (1 - clipW) * (1 - transW);
     const loco = base * (1 - this.sitW);
