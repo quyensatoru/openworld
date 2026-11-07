@@ -198,3 +198,59 @@ export async function userForToken(db: D1Database, token: string): Promise<strin
   const r = await db.prepare('SELECT user_id FROM activity_tokens WHERE token = ?').bind(token).first<{ user_id: string }>();
   return r?.user_id ?? null;
 }
+
+// ---------------------------------------------------------------- push subscriptions
+export interface PushRow {
+  endpoint: string;
+  user_id: string;
+  p256dh: string;
+  auth: string;
+  last_sent: number;
+}
+
+export async function savePushSub(db: D1Database, userId: string, endpoint: string, p256dh: string, auth: string, now: number): Promise<void> {
+  // one row per device; re-subscribing with the same endpoint just refreshes the keys
+  await db
+    .prepare(
+      `INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created_at, last_sent) VALUES (?, ?, ?, ?, ?, 0)
+       ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`,
+    )
+    .bind(endpoint, userId, p256dh, auth, now)
+    .run();
+}
+
+export async function deletePushSub(db: D1Database, endpoint: string): Promise<void> {
+  await db.prepare(`DELETE FROM push_subs WHERE endpoint = ?`).bind(endpoint).run();
+}
+
+/** Everyone worth notifying: not in the room right now, and not pushed to recently. */
+export async function pushTargets(db: D1Database, excludeUsers: string[], quietBefore: number, limit: number): Promise<PushRow[]> {
+  const holes = excludeUsers.map(() => '?').join(',');
+  const sql =
+    `SELECT endpoint, user_id, p256dh, auth, last_sent FROM push_subs WHERE last_sent < ?` +
+    (excludeUsers.length ? ` AND user_id NOT IN (${holes})` : '') +
+    ` ORDER BY last_sent ASC LIMIT ?`;
+  const res = await db
+    .prepare(sql)
+    .bind(quietBefore, ...excludeUsers, limit)
+    .all<PushRow>();
+  return res.results ?? [];
+}
+
+export async function markPushed(db: D1Database, endpoints: string[], now: number): Promise<void> {
+  if (!endpoints.length) return;
+  const holes = endpoints.map(() => '?').join(',');
+  await db.prepare(`UPDATE push_subs SET last_sent = ? WHERE endpoint IN (${holes})`).bind(now, ...endpoints).run();
+}
+
+export async function dropPushSubs(db: D1Database, endpoints: string[]): Promise<void> {
+  if (!endpoints.length) return;
+  const holes = endpoints.map(() => '?').join(',');
+  await db.prepare(`DELETE FROM push_subs WHERE endpoint IN (${holes})`).bind(...endpoints).run();
+}
+
+/** Every device one person has registered. */
+export async function subsForUser(db: D1Database, userId: string): Promise<PushRow[]> {
+  const r = await db.prepare(`SELECT endpoint, user_id, p256dh, auth, last_sent FROM push_subs WHERE user_id = ?`).bind(userId).all<PushRow>();
+  return r.results ?? [];
+}

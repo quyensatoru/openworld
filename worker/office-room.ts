@@ -10,6 +10,7 @@ import { Karaoke } from './karaoke';
 import { Werewolf } from './werewolf';
 import { MoleGame } from './mole';
 import { PropHuntGame } from './prophunt';
+import { sendPush, vapidFrom, type VapidKeys } from './push';
 import type { KaraState } from '../shared/karaoke';
 import { MEDIA_KIND, WORLD_D as OFFICE_D, WORLD_W as OFFICE_W, SEAT_BY_ID, SPAWN, ZONE_BY_ID, inRange, zoneAt, type MediaKind } from '../shared/map';
 import {
@@ -165,6 +166,21 @@ export class OfficeRoom extends DurableObject<Env> {
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === '/activity' && req.method === 'POST') return this.onActivity(req);
+    if (url.pathname === '/nudge-status') {
+      // why the room did or did not wake anybody — the gates are invisible from outside otherwise
+      const [from, to] = this.nudgeHours;
+      return Response.json({
+        here: this.present().length,
+        conns: this.conns.size,
+        sockets: this.ctx.getWebSockets().length,
+        needs: OfficeRoom.NUDGE_MIN_PEOPLE,
+        hourLocal: new Date(Date.now() + this.tz * 60_000).getUTCHours(),
+        hours: [from, to],
+        msSinceLastNudge: this.lastNudge ? Date.now() - this.lastNudge : null,
+        roomGapMs: OfficeRoom.NUDGE_ROOM_GAP,
+        hasVapid: !!vapidFrom(this.env as Env & { VAPID_PUBLIC_KEY?: string; VAPID_PRIVATE_KEY?: string }),
+      });
+    }
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -366,6 +382,90 @@ export class OfficeRoom extends DurableObject<Env> {
     await db.touchUser(this.env.DB, id, now);
   }
 
+  // ---------------------------------------------------------------- push nudges
+  /** The whole room is only allowed to wake people this often, however many come and go. */
+  private static readonly NUDGE_ROOM_GAP = 2 * 3600_000;
+  /** And one person is only woken this often, whatever the room does. */
+  private static readonly NUDGE_PERSON_GAP = 6 * 3600_000;
+  /** Below this it is not worth anyone's trip. */
+  private static readonly NUDGE_MIN_PEOPLE = 3;
+  /** One fetch per device, and the free plan allows 50 subrequests per invocation. */
+  private static readonly NUDGE_BATCH = 40;
+  private lastNudge = 0;
+  /** Local hours between which it is acceptable to buzz someone, from PUSH_HOURS ("8-22"). */
+  private get nudgeHours(): [number, number] {
+    const raw = (this.env as Env & { PUSH_HOURS?: string }).PUSH_HOURS ?? '8-22';
+    const m = /^(\d{1,2})\s*-\s*(\d{1,2})$/.exec(raw.trim());
+    if (!m) return [8, 22];
+    return [Math.min(23, Number(m[1])), Math.min(24, Number(m[2]))];
+  }
+
+  /**
+   * Who is actually in the room. `this.conns` is rebuilt from the sockets each time the object
+   * wakes, so during a wake it can be empty while people are plainly connected — read the sockets
+   * themselves instead.
+   */
+  private present(): PlayerState[] {
+    const out: PlayerState[] = [];
+    const seen = new Set<string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const a = ws.deserializeAttachment() as Attachment | null;
+      if (a?.p && !seen.has(a.p.id)) {
+        seen.add(a.p.id);
+        out.push(a.p);
+      }
+    }
+    for (const c of this.conns.values()) if (!seen.has(c.p.id)) { seen.add(c.p.id); out.push(c.p); }
+    return out;
+  }
+
+  /**
+   * Tell people who are not here that it has got busy. This is the only thing in the whole app
+   * that can reach someone who closed the tab, which also makes it the easiest thing to ruin:
+   * one badly-timed buzz and they turn notifications off for good. Hence the gates below —
+   * enough people, not too often, and not in the middle of the night.
+   */
+  private maybeNudge(now: number) {
+    const here = this.present();
+    if (here.length < OfficeRoom.NUDGE_MIN_PEOPLE) return;
+    if (now - this.lastNudge < OfficeRoom.NUDGE_ROOM_GAP) return;
+    const hour = new Date(now + this.tz * 60_000).getUTCHours();
+    const [from, to] = this.nudgeHours;
+    if (hour < from || hour >= to) return; // nobody wants this at two in the morning
+    const vapid = vapidFrom(this.env as Env & { VAPID_PUBLIC_KEY?: string; VAPID_PRIVATE_KEY?: string; VAPID_SUBJECT?: string });
+    if (!vapid) return; // push not set up on this deployment
+    this.lastNudge = now;
+    void this.sendNudge(vapid, here, now);
+  }
+
+  private async sendNudge(vapid: VapidKeys, here: PlayerState[], now: number) {
+    try {
+      const names = here.map((p) => p.name).filter(Boolean);
+      const onlineIds = here.map((p) => p.id);
+      const targets = await db.pushTargets(this.env.DB, onlineIds, now - OfficeRoom.NUDGE_PERSON_GAP, OfficeRoom.NUDGE_BATCH);
+      if (!targets.length) {
+        console.log('push: nobody to tell (everyone subscribed is already here, or was told recently)');
+        return;
+      }
+      // say who is there — a name you know is the whole reason to come back
+      const who = names.length <= 3 ? names.join(', ') : `${names.slice(0, 2).join(', ')} và ${names.length - 2} người nữa`;
+      const payload = {
+        title: `${here.length} người đang ở Office`,
+        body: `${who} đang online. Vào chơi cùng không?`,
+        tag: 'office-busy',
+        url: '/',
+      };
+      const results = await Promise.all(targets.map((t) => sendPush(vapid, t, payload)));
+      const sent: string[] = [];
+      const gone: string[] = [];
+      targets.forEach((t, i) => (results[i] === 'gone' ? gone : results[i] === 'sent' ? sent : []).push(t.endpoint));
+      await Promise.all([db.markPushed(this.env.DB, sent, now), db.dropPushSubs(this.env.DB, gone)]);
+      console.log(`push: ${sent.length} sent, ${gone.length} dropped, ${targets.length - sent.length - gone.length} failed`);
+    } catch (err) {
+      console.error('nudge failed', err);
+    }
+  }
+
   /** Rooms with their own game state: give it to people walking in, drop mics of people walking out. */
   private zoneChanged(c: Conn, prev: string) {
     const zone = c.p.zone;
@@ -515,6 +615,7 @@ export class OfficeRoom extends DurableObject<Env> {
     const conn = this.makeConn(ws, p, null);
     this.conns.set(id, conn);
     this.persistAttachment(conn);
+    this.maybeNudge(now);
 
     const day = this.day(now);
     const activity = await this.recentActivity(now);

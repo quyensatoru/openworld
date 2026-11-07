@@ -2,8 +2,9 @@
 // Static files (the game client) are served by Workers Static Assets before this runs.
 
 import { summarizeHook } from './activity';
-import { userForToken } from './db';
+import { deletePushSub, dropPushSubs as dropSubs, savePushSub, subsForUser as mySubs, userForToken } from './db';
 import { checkPasscode, clearCookie, isAuthed, loginBlocked, passcodeRequired, recordLoginFailure, sessionCookie } from './auth';
+import { sendPush, vapidFrom } from './push';
 import { hanoiWeather } from './weather';
 
 export { OfficeRoom } from './office-room';
@@ -11,6 +12,9 @@ export { OfficeRoom } from './office-room';
 interface OptionalSecrets {
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
 }
 
 const json = (data: unknown, init: ResponseInit = {}) =>
@@ -178,6 +182,74 @@ export default {
       case '/api/weather': {
         if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
         return json(await hanoiWeather(), { headers: { 'Cache-Control': 'public, max-age=300' } });
+      }
+
+      // ---- Web Push. The public key is not a secret: the browser needs it to subscribe.
+      case '/api/push/key': {
+        if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
+        const v = vapidFrom(env as Env & OptionalSecrets);
+        return json({ key: v?.publicKey ?? null });
+      }
+
+      case '/api/push/subscribe': {
+        if (req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
+        if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
+        const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+        const cid = String(b.cid ?? '');
+        const endpoint = String(b.endpoint ?? '');
+        const p256dh = String(b.p256dh ?? '');
+        const auth = String(b.auth ?? '');
+        // Endpoints are URLs at the browser vendor's push service, so always https — except on a
+        // dev server, where the tests stand up their own push service over plain http.
+        const localDev = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+        const endpointOk = /^https:\/\//.test(endpoint) || (localDev && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(endpoint));
+        if (
+          !/^[a-zA-Z0-9_-]{8,64}$/.test(cid) ||
+          !endpointOk ||
+          endpoint.length > 1024 ||
+          !/^[A-Za-z0-9_-]{80,100}$/.test(p256dh) || // 65 bytes base64url
+          !/^[A-Za-z0-9_-]{16,32}$/.test(auth) // 16 bytes base64url
+        ) {
+          return json({ error: 'bad subscription' }, { status: 400 });
+        }
+        await savePushSub(env.DB, cid, endpoint, p256dh, auth, Date.now());
+        return json({ ok: true });
+      }
+
+      case '/api/push/unsubscribe': {
+        if (req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
+        if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
+        const b = (await req.json().catch(() => ({}))) as { endpoint?: unknown };
+        const endpoint = String(b.endpoint ?? '');
+        if (endpoint) await deletePushSub(env.DB, endpoint);
+        return json({ ok: true });
+      }
+
+      // "Send me one now" — the button right after you switch notifications on, so you find out
+      // it works while you still remember enabling it.
+      case '/api/push/test': {
+        if (req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
+        if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
+        const v = vapidFrom(env as Env & OptionalSecrets);
+        if (!v) return json({ ok: false, error: 'server chưa cấu hình VAPID' }, { status: 503 });
+        const b = (await req.json().catch(() => ({}))) as { cid?: unknown };
+        const cid = String(b.cid ?? '');
+        if (!/^[a-zA-Z0-9_-]{8,64}$/.test(cid)) return json({ error: 'bad cid' }, { status: 400 });
+        const subs = await mySubs(env.DB, cid);
+        if (!subs.length) return json({ ok: false, error: 'chưa có thiết bị nào đăng ký' }, { status: 404 });
+        const results = await Promise.all(
+          subs.map((sb) => sendPush(v, sb, { title: 'Office', body: 'Thông báo đang hoạt động 👍', tag: 'office-test', url: '/' })),
+        );
+        const gone = subs.filter((_, i) => results[i] === 'gone').map((sb) => sb.endpoint);
+        if (gone.length) await dropSubs(env.DB, gone);
+        return json({ ok: results.includes('sent'), results });
+      }
+
+      // Local only: explains why the room did or did not send a nudge.
+      case '/api/push/why': {
+        if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') return json({ error: 'not found' }, { status: 404 });
+        const stub = env.OFFICE.get(env.OFFICE.idFromName('main'));
+        return stub.fetch('https://office/nudge-status');
       }
 
       case '/api/ws': {

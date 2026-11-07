@@ -3,7 +3,8 @@ import { ZONE_BY_ID } from '../../shared/map';
 import { STATUS_META } from '../../shared/protocol';
 import { daylight, localHour, weatherText } from '../../shared/weather';
 import { game } from '../game';
-import { loadPref, savePref } from '../profile';
+import { loadPref, loadProfile, savePref } from '../profile';
+import { disablePush, enablePush, pushState, testPush, type PushState } from '../push';
 import { getState, setState, useStore } from '../store';
 import { TouchControls, setTouchUi } from './Touch';
 import { Safe } from './Safe';
@@ -424,6 +425,62 @@ function Banners() {
   );
 }
 
+/** Opt-in to being told when the office gets busy — the only way to reach someone who left. */
+function PushToggle() {
+  const [state, setState_] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState<boolean | null>(null);
+  useEffect(() => {
+    void pushState().then(setState_);
+  }, []);
+  if (state === null) return null;
+  if (state === 'unsupported') return null;
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      setSent(null);
+      setState_(state === 'on' ? await disablePush() : await enablePush(loadProfile().cid));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const sendTest = async () => {
+    setBusy(true);
+    try {
+      setSent(await testPush(loadProfile().cid));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const note =
+    state === 'on'
+      ? 'Khi có từ 3 người trở lên đang ở Office, bạn sẽ nhận được một thông báo. Nhiều nhất một lần mỗi 6 tiếng, và không bao giờ sau 22h.'
+      : state === 'denied'
+        ? 'Trình duyệt đang chặn thông báo của trang này. Mở phần cài đặt quyền của trình duyệt để bật lại.'
+        : state === 'needs-install'
+          ? 'Trên iPhone, thông báo chỉ hoạt động khi đã thêm Office vào màn hình chính. Bấm nút Chia sẻ → "Thêm vào MH chính", rồi mở lại từ đó.'
+          : 'Đóng tab là hết biết khi nào có người. Bật cái này để được báo khi Office đông vui.';
+  return (
+    <div className="field">
+      <label style={{ fontWeight: 600, display: 'block', marginBottom: 8 }}>Báo khi có người ở Office</label>
+      <div className="chips">
+        <button className={`chip${state === 'on' ? ' on' : ''}`} onClick={() => void toggle()} disabled={busy || state === 'denied' || state === 'needs-install'}>
+          {state === 'on' ? '🔔 Đang bật' : '🔕 Đang tắt'}
+        </button>
+        {state === 'on' && (
+          <button className="chip" disabled={busy} onClick={() => void sendTest()}>
+            {sent === null ? '📨 Gửi thử' : sent ? '✅ Đã gửi' : '⚠️ Không gửi được'}
+          </button>
+        )}
+      </div>
+      <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+        {note}
+      </p>
+    </div>
+  );
+}
+
 function Settings() {
   const quality = useStore((s) => s.quality);
   const fpsCap = useStore((s) => s.fpsCap);
@@ -437,6 +494,7 @@ function Settings() {
           ✕
         </button>
         <h2>Cài đặt</h2>
+        <Safe><PushToggle /></Safe>
         <div className="field">
           <label style={{ fontWeight: 600, display: 'block', marginBottom: 8 }}>Chất lượng đồ hoạ</label>
           <div className="chips">

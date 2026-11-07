@@ -18,6 +18,8 @@ Văn phòng ảo 3D cho team: mỗi người mở link, nhập mã văn phòng, 
 - **Màn hình Claude Code** trên bàn làm việc: Cài đặt → "Màn hình Claude Code" → tạo mã → dán đoạn hooks vào `~/.claude/settings.json`. Monitor ở bàn bạn ngồi sẽ hiện Claude đang làm gì (chỉ tên công cụ + tên file/mô tả lệnh; prompt chỉ hiện nếu bạn bật). Click vào monitor để xem đầy đủ.
 - **Phòng họp**: ai trong phòng cũng nghe nhau; chia sẻ màn hình hiện lên TV; click TV để phóng to, cuộn chuột để zoom, kéo để xem chỗ khác.
 
+- **Báo khi Office đông vui** (Web Push): đóng tab rồi vẫn nhận được thông báo "4 người đang ở Office" trên điện thoại/máy tính. Bật trong ⋯ → Cài đặt. Chỉ báo khi có từ 3 người trở lên, nhiều nhất một lần mỗi 6 tiếng mỗi người, và chỉ trong khung giờ `PUSH_HOURS`.
+
 **Kiến trúc**: một Cloudflare Worker phục vụ cả frontend (Workers Static Assets, tương đương Pages) lẫn API. Durable Object `OfficeRoom` giữ phòng realtime qua WebSocket (Hibernation API). D1 lưu người dùng, task, chat, worklog.
 
 ```
@@ -68,12 +70,17 @@ npx wrangler d1 create office                    # copy database_id in ra vào w
 npm run db:migrate:remote                            # tạo bảng (DO cũng tự tạo nếu thiếu)
 npx wrangler secret put OFFICE_PASSCODE              # mã văn phòng cho cả team
 npx wrangler secret put SESSION_SECRET               # chuỗi ngẫu nhiên dài
+node scripts/gen-vapid.mjs                           # sinh cặp khoá thông báo (in ra hướng dẫn)
+npx wrangler secret put VAPID_PRIVATE_KEY            # dán khoá riêng vừa sinh
+npx wrangler secret put VAPID_SUBJECT                # mailto:ban@congty.com
 npm run deploy                                       # → https://office.<subdomain>.workers.dev
 ```
 
 Đổi `OFFICE_PASSCODE` là mọi phiên đăng nhập cũ hết hiệu lực. Tên văn phòng và múi giờ nằm ở `vars` trong `wrangler.jsonc`.
 
 **TURN (nên bật)**: trong mạng công ty/Wi-Fi thường bị chặn kết nối trực tiếp giữa 2 máy → voice không nghe được (thanh trạng thái sẽ báo "Mạng chặn voice"). Cách bật: nếu có đồng nghiệp làm remote sau mạng chặn P2P (không nghe được nhau), tạo TURN key trong Cloudflare Dashboard → Realtime → TURN, rồi `wrangler secret put TURN_KEY_ID` và `TURN_KEY_API_TOKEN`.
+
+**Thông báo đẩy (Web Push)**: dùng chuẩn W3C + VAPID, **không cần Firebase, không tốn phí** — Google/Mozilla/Apple đều chuyển phát miễn phí. Khoá công khai đặt ở `vars.VAPID_PUBLIC_KEY` trong `wrangler.jsonc` (khoá này không phải bí mật), khoá riêng là secret. Khung giờ được phép báo chỉnh ở `vars.PUSH_HOURS` (mặc định `8-22`, theo giờ văn phòng). Trên iPhone, thông báo chỉ chạy sau khi người dùng **thêm Office vào màn hình chính** — đây là giới hạn của iOS, không phải của app.
 
 **Gói Free**: ~100k request/ngày (tin nhắn WebSocket gửi lên tính 20 tin = 1 request) và giới hạn thời lượng Durable Object — đủ cho team ~20 người giờ hành chính. Client chỉ gửi vị trí khi đang di chuyển (≈10 lần/giây).
 
