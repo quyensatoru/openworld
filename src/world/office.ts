@@ -389,7 +389,8 @@ export class OfficeScene {
           (it.id === 'wed-dress' && x.kind === 'mannequinDress') ||
           (it.id === 'wed-mc' && x.kind === 'mcPodium') ||
           (it.id === 'wed-cake' && x.kind === 'weddingCake') ||
-          (it.id === 'wed-tower' && x.kind === 'champagneTable'),
+          (it.id === 'wed-tower' && x.kind === 'champagneTable') ||
+          (it.id === 'wed-lights' && x.kind === 'lightPanel'),
       );
       const proxy = new THREE.Mesh(new THREE.BoxGeometry(f ? Math.max(f.w, 0.6) : 1, 2.2, f ? Math.max(f.d, 0.6) : 1), new THREE.MeshBasicMaterial({ visible: false }));
       proxy.position.set(f?.x ?? it.x, it.kind === 'wheel' ? 1.75 : 1.1, f?.z ?? it.z);

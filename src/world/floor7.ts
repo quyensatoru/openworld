@@ -27,6 +27,7 @@ import {
   WED_TOWER,
   F7,
   money,
+  type WedLights,
   type WedState,
   type WedStep,
 } from '../../shared/wedding';
@@ -546,6 +547,8 @@ export class Floor7Fx {
   onCue: (cue: WedCue, s: WedState) => void = () => {};
 
   private s: WedState | null = null;
+  /** The house lights (the switch): glows read softer with the lights up, brighter with them off. */
+  private lights: WedLights = 'auto';
   private fired = new Set<string>();
   private t = 0;
 
@@ -1178,9 +1181,14 @@ export class Floor7Fx {
   }
 
   // ------------------------------------------------------------------ state
+  setLights(l: WedLights) {
+    this.lights = l;
+  }
+
   apply(s: WedState) {
     const prev = this.s;
     this.s = s;
+    this.lights = s.lights ?? 'auto';
     if (!prev || prev.stepAt !== s.stepAt || prev.step !== s.step) this.fired.clear();
     if (!prev || prev.groom?.name !== s.groom?.name || prev.bride?.name !== s.bride?.name) this.drawSign();
     this.screenKey = '';
@@ -1497,16 +1505,19 @@ export class Floor7Fx {
 
     // ---------- lights
     this.fairyMat.uniforms.time.value = t;
-    this.fairyMat.uniforms.boost.value = party ? 1.25 : 1;
+    // with the house lights up the decorative glows step back; with them off they carry the room
+    const lk = this.lights === 'on' ? 0.55 : this.lights === 'off' ? 1.2 : 1;
+    this.fairyMat.uniforms.boost.value = (party ? 1.25 : 1) * lk;
+    this.glowMat.uniforms.boost.value = this.lights === 'on' ? 0.75 : this.lights === 'off' ? 1.15 : 1;
     if (party) this.edgeMat.color.copy(PARTY_HUES[Math.floor(t / 1.2) % PARTY_HUES.length]).lerp(PARTY_HUES[(Math.floor(t / 1.2) + 1) % PARTY_HUES.length], (t / 1.2) % 1);
     else this.edgeMat.color.copy(GOLD).multiplyScalar(0.75 + 0.25 * Math.sin(t * 1.4));
     this.glowMat.uniforms.time.value = t;
     this.motesMat.uniforms.time.value = t;
-    this.motesMat.uniforms.boost.value = party ? 1.4 : 1;
-    (this.pools.material as THREE.MeshBasicMaterial).opacity = (party ? 0.16 : 0.34) * (0.94 + 0.06 * Math.sin(t * 2.1));
+    this.motesMat.uniforms.boost.value = (party ? 1.4 : 1) * (this.lights === 'on' ? 0.35 : lk);
+    (this.pools.material as THREE.MeshBasicMaterial).opacity = (party ? 0.16 : 0.34) * (this.lights === 'on' ? 0.45 : lk) * (0.94 + 0.06 * Math.sin(t * 2.1));
     // uplights breathe; in the party they chase through the colours
     const upM = this.uplights.material as THREE.MeshBasicMaterial;
-    upM.opacity = 0.55 + 0.1 * Math.sin(t * 0.7);
+    upM.opacity = (0.55 + 0.1 * Math.sin(t * 0.7)) * (this.lights === 'on' ? 0.6 : lk);
     if (party) upM.color.copy(PARTY_HUES[Math.floor(t / 1.6) % PARTY_HUES.length]).lerp(WARM, 0.35);
     else upM.color.set('#ffffff');
     (this.stageWash.material as THREE.MeshBasicMaterial).opacity = (romance ? 0.55 : 0.42) * (0.85 + 0.15 * Math.sin(t * 0.5));

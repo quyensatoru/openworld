@@ -8,7 +8,7 @@ import { ROLE_META, type WolfMsg, type WolfView } from '../shared/werewolf';
 import { rainLevel, type Weather } from '../shared/weather';
 import type { Furniture } from '../shared/map';
 import { F6, PH_BOARD, PH_FIRE_S, PH_PROPS, type PhFx, type PhMsg, type PhView } from '../shared/prophunt';
-import { F7, STEP_META, WED_PROGRAM, WED_SPOTS, attireOf, inWedZone, money, type WedFx, type WedMsg, type WedState } from '../shared/wedding';
+import { F7, LIGHTS_META, LIGHTS_ORDER, STEP_META, WED_PROGRAM, WED_SPOTS, attireOf, inWedZone, money, type WedFx, type WedLights, type WedMsg, type WedState } from '../shared/wedding';
 import type { WedCue } from './world/floor7';
 import { DOOR_BY_ID, MOLE_BOARD, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, MOLE_VENTS, MOLE_VENT_RANGE, STATION_BY_ID, VENT_BY_ID, VISION, doorMid, doorRect, meetingSpot, type MoleFx, type MoleMsg, type MoleView } from '../shared/mole';
 import * as THREE from 'three';
@@ -456,10 +456,12 @@ class Game {
     }
     // floor 7: a candle-lit ballroom; darker for the first dance, party colours when it kicks off
     // (a banquet hall is dim: the light comes from the chandeliers, candles, uplights and the stage)
+    // The switch by the entrance: lights up (to see everyone clearly) or off (candles only).
     if (this.zoneId === 'wedding') {
-      const st = getState().wed.step;
-      const dark = st === 'party' || st === 'dance' ? 0.985 : 0.97;
-      this.world?.setDim(0, dark, st === 'party' ? 'wedParty' : 'wedding');
+      const { step: st, lights } = getState().wed;
+      const party = st === 'party' || st === 'dance';
+      const dark = lights === 'on' ? 0.38 : lights === 'off' ? 0.995 : party ? 0.985 : 0.97;
+      this.world?.setDim(0, dark, st === 'party' && lights !== 'on' ? 'wedParty' : 'wedding');
     } else if (this.zoneId === 'hall7') this.world?.setDim(0, 0.5, 'wedding');
     else if (this.zoneId === 'bridal') this.world?.setDim(0, 0.3, 'wedding');
     const onWed = inWedZone(this.zoneId);
@@ -1025,6 +1027,12 @@ class Game {
         } else toast('🎂 Bánh cưới 5 tầng — đợi cô dâu chú rể cắt bánh rồi mới được ăn nhé!', 'info', 3500);
         break;
       }
+      case 'wed-lights': {
+        // each press: automatic → lights up → lights off → automatic
+        const cur = getState().wed.lights;
+        this.wedLights(LIGHTS_ORDER[(LIGHTS_ORDER.indexOf(cur) + 1) % LIGHTS_ORDER.length]);
+        break;
+      }
       case 'wed-tower':
         this.emote('toast');
         toast('🥂 Một ly sâm panh mát lạnh — nâng ly chúc mừng đôi uyên ương!', 'info', 3500);
@@ -1201,6 +1209,10 @@ class Game {
     this.syncWedLooks();
     const me = getState().me?.id ?? '';
     const fresh = serverNow() - s.stepAt < 12_000;
+    if (prev.lights !== s.lights) {
+      this.onCinemaZone();
+      w.office.f7.setLights(s.lights);
+    }
     if (prev.step !== s.step || prev.stepAt !== s.stepAt) {
       if (s.step !== 'idle' && fresh && floorOf(w.positionOf(me)?.x ?? 0) === 6) setState({ wedBanner: { step: s.step, at: Date.now() } });
       if (fresh && (s.bride?.id === me || s.groom?.id === me)) this.wedChoreo(s, me);
@@ -1388,6 +1400,12 @@ class Game {
           a?.sfx('whoosh', 0.35);
         }
         break;
+      case 'lights':
+        if (w.myFloor === 6) {
+          a?.sfx('tick', 0.9);
+          toast(`${LIGHTS_META[fx.lights].emoji} ${fx.id === me ? 'Bạn' : fx.name} đã ${LIGHTS_META[fx.lights].said}`, 'info', 2600);
+        }
+        break;
     }
   }
 
@@ -1404,6 +1422,11 @@ class Game {
         this.emote('dance');
       }
     }
+  }
+
+  /** The ballroom's house lights. */
+  wedLights(lights: WedLights) {
+    this.wed({ a: 'lights', lights });
   }
 
   /** Guests: a reaction, a party popper, a handful of petals. */

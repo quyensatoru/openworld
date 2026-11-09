@@ -144,6 +144,17 @@ export const WED_T = {
   bouquetFly: 1500,
 };
 
+/** The ballroom's house lights: automatic (dim and glowing, darker for the dance), up, or off (candles only). */
+export type WedLights = 'auto' | 'on' | 'off';
+export const LIGHTS_META: Record<WedLights, { name: string; emoji: string; said: string }> = {
+  auto: { name: 'Tự động', emoji: '✨', said: 'để đèn sảnh tự động' },
+  on: { name: 'Bật đèn', emoji: '💡', said: 'bật đèn sảnh' },
+  off: { name: 'Tắt đèn', emoji: '🌙', said: 'tắt đèn sảnh — chỉ còn nến lung linh' },
+};
+export const LIGHTS_ORDER: WedLights[] = ['auto', 'on', 'off'];
+/** The light switch on the ballroom's south wall, east of the entrance. */
+export const WED_SWITCH = { x: X(23.0), z: 18.88 };
+
 export type WedAttire = 'bride' | 'groom' | 'bridesmaid' | 'groomsman';
 export const ATTIRE_META: Record<WedAttire, { name: string; emoji: string; hint: string }> = {
   bride: { name: 'Váy cưới & khăn voan', emoji: '👰', hint: 'Khăn voan, vương miện hoa và bó hoa cầm tay' },
@@ -192,6 +203,8 @@ export interface WedState {
   bouquet: WedBouquet | null;
   /** Weddings held here so far. */
   count: number;
+  /** House lights in the ballroom. */
+  lights: WedLights;
 }
 
 export const emptyWed = (): WedState => ({
@@ -207,6 +220,7 @@ export const emptyWed = (): WedState => ({
   attire: {},
   bouquet: null,
   count: 0,
+  lights: 'auto',
 });
 
 /** What someone wears: the couple always dress for it. */
@@ -236,13 +250,15 @@ export type WedMsg =
   | { a: 'react'; e: string }
   | { a: 'popper' }
   | { a: 'petals' }
-  | { a: 'attire'; attire: WedAttire | null };
+  | { a: 'attire'; attire: WedAttire | null }
+  | { a: 'lights'; lights: WedLights };
 
 export type WedFx =
   | { k: 'gift'; id: string; name: string; amount: number; wish: string }
   | { k: 'react'; id: string; e: string }
   | { k: 'popper'; id: string }
-  | { k: 'petals'; id: string };
+  | { k: 'petals'; id: string }
+  | { k: 'lights'; id: string; name: string; lights: WedLights };
 
 /** Next step in the programme (party is the last one). */
 export function nextStep(s: WedStep): WedStep {

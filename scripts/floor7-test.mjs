@@ -176,6 +176,15 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   X.send(wed({ a: 'attire', attire: 'bridesmaid' }));
   ok(!!(await G.wait(state((s) => s.attire[X.cid] === 'bridesmaid'))), 'a guest dresses as a bridesmaid');
 
+  // the house lights: during the ceremony only the couple / MC switch them
+  X.send(wed({ a: 'lights', lights: 'on' }));
+  ok(!!(await X.wait((m) => m.t === 'err' && /đổi đèn/.test(m.msg))), 'a guest cannot switch the lights during the ceremony');
+  M.send(wed({ a: 'lights', lights: 'disco' }));
+  M.send(wed({ a: 'lights', lights: 'off' }));
+  const lf = await X.wait((m) => m.t === 'wedFx' && m.fx.k === 'lights');
+  ok(!!lf && lf.fx.lights === 'off' && lf.fx.name === 'MC Vui', 'the MC turns the lights off (everyone is told; nonsense modes ignored)');
+  ok(!!(await X.wait(state((s) => s.lights === 'off'))), 'lights off in the state');
+
   // bouquet: the guest on the dance floor catches it
   X.move(F7 + 20, 6.6);
   await sleep(1000);
@@ -200,6 +209,9 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   const done = await X.wait(state((s) => s.step === 'idle' && s.count >= 1));
   ok(!!done && !done.s.groom && !done.s.bride && done.s.mc?.id === M.cid && done.s.total === 0, 'the hall is free again (the MC stays)');
   ok(!!(await X.wait((m) => m.t === 'chat' && /kết thúc tốt đẹp/.test(m.m.text), 3000)), 'thanks everyone in the chat');
+  ok(done?.s.lights === 'off', 'the lights stay as they were after the party');
+  X.send(wed({ a: 'lights', lights: 'auto' }));
+  ok(!!(await G.wait(state((s) => s.lights === 'auto'))), 'with no ceremony on, any guest can work the switch');
 
   // a role is freed when you leave the floor while the hall is quiet; outfits go when you leave the office
   G.send(wed({ a: 'role', role: 'groom', on: true }));

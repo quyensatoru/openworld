@@ -1174,6 +1174,7 @@ export function buildFurniture(f: Furniture, dyn: Dynamic): THREE.Group {
     case 'vanity':
     case 'mannequinDress':
     case 'mannequinSuit':
+    case 'lightPanel':
       buildWeddingPiece(f, g, dyn);
       break;
   }

@@ -16,6 +16,7 @@ import {
   money,
   nextStep,
   onWedStage,
+  LIGHTS_ORDER,
   type WedAttire,
   type WedMsg,
   type WedPerson,
@@ -46,7 +47,7 @@ export class Wedding {
   /** After waking up (state loaded from storage). */
   restore(s: WedState | undefined) {
     if (!s || typeof s !== 'object') return;
-    this.state = { ...emptyWed(), ...s, attire: s.attire ?? {}, gifts: s.gifts ?? [] };
+    this.state = { ...emptyWed(), ...s, attire: s.attire ?? {}, gifts: s.gifts ?? [], lights: s.lights ?? 'auto' };
     // a toss that was in the air when the room went to sleep: land it now
     if (this.state.step === 'bouquet' && !this.state.bouquet) this.arm();
   }
@@ -149,6 +150,16 @@ export class Wedding {
         this.host.broadcast({ t: 'wedFx', fx: { k: m.a, id: p.id } });
         return;
       }
+      case 'lights': {
+        if (!onFloor || !LIGHTS_ORDER.includes(m.lights) || m.lights === s.lights) return;
+        // during the ceremony the lights belong to whoever runs it; otherwise anyone up here
+        if (s.step !== 'idle' && !this.canRun(p.id)) return this.host.err(p.id, 'Đang làm lễ — chỉ cô dâu, chú rể hoặc MC mới đổi đèn được 💡');
+        if (!this.throttle(p.id, 'lights', 700)) return;
+        s.lights = m.lights;
+        this.host.broadcast({ t: 'wedFx', fx: { k: 'lights', id: p.id, name: p.name, lights: m.lights } });
+        this.publish();
+        return;
+      }
       case 'attire': {
         if (!onFloor) return;
         if (m.attire === null) delete s.attire[p.id];
@@ -228,7 +239,7 @@ export class Wedding {
       this.host.chat(`🎊 Đám cưới của ${s.groom.name} & ${s.bride.name} đã kết thúc tốt đẹp${gifts}. Chúc hai bạn trăm năm hạnh phúc! 💕`);
     }
     const count = s.count + 1;
-    this.state = { ...emptyWed(), count, attire: s.attire, mc: s.mc };
+    this.state = { ...emptyWed(), count, attire: s.attire, mc: s.mc, lights: s.lights };
     this.arm();
     this.publish();
   }

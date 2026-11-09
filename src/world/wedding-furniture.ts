@@ -922,6 +922,16 @@ export function buildWeddingPiece(f: Furniture, g: THREE.Group, dyn: Dynamic): v
       ball(g, 0.06, P.ivory, 0, 1.63, 0, 1);
       break;
     }
+    case 'lightPanel': {
+      // the hall's light switch: an ivory plate with a gold rim and three lit keys, at hand height
+      bx(g, f.w + 0.03, 0.27, 0.012, P.gold, 0, 1.3, -0.006);
+      bx(g, f.w, 0.24, 0.018, P.ivory, 0, 1.3, 0);
+      for (let i = 0; i < 3; i++) {
+        bx(g, 0.07, 0.11, 0.014, P.glossy, -0.1 + i * 0.1, 1.3, 0.012);
+        ball(g, 0.008, bulb(), -0.1 + i * 0.1, 1.37, 0.018, 0);
+      }
+      break;
+    }
     default:
       break;
   }

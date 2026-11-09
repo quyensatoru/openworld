@@ -1,6 +1,6 @@
 // Office layout shared by the client (3D build, collision, path finding) and the server (zones).
 import { F6, PH_BOARD, PH_ROOMS, PH_ROOM_IDS, PH_WALLS, phZone, type PhRoom } from './prophunt';
-import { F7, WED_AISLE, WED_CAKE, WED_CHAIRS, WED_CHAIR_R, WED_CHANDELIERS, WED_DRESSES, WED_GIFT, WED_PHOTO, WED_PODIUM, WED_RINGS, WED_ROOMS, WED_SCREEN, WED_SIGN, WED_STAGE, WED_TABLES, WED_TOWER, WED_VANITY, WED_WALLS, onWedStage, type WedRoom } from './wedding';
+import { F7, WED_AISLE, WED_CAKE, WED_CHAIRS, WED_CHAIR_R, WED_CHANDELIERS, WED_DRESSES, WED_GIFT, WED_PHOTO, WED_PODIUM, WED_RINGS, WED_ROOMS, WED_SCREEN, WED_SIGN, WED_STAGE, WED_TABLES, WED_TOWER, WED_VANITY, WED_WALLS, WED_SWITCH, onWedStage, type WedRoom } from './wedding';
 import { BELL, CAM_DESK, CRIT, FUSE, FUSE_SPOT, MOLE_BOARD, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, MOLE_WALLS, ROOM_META, STATIONS, TASK_META, doorMid, type MoleTaskKind } from './mole';
 // Units are metres. x grows to the east, z grows to the south, y is up.
 // Character yaw `ry`: 0 = facing +z (south), PI/2 = facing +x (east).
@@ -144,7 +144,8 @@ export type FurnitureKind =
   | 'sconce'
   | 'vanity'
   | 'mannequinDress'
-  | 'mannequinSuit';
+  | 'mannequinSuit'
+  | 'lightPanel';
 
 export interface Furniture {
   id: string;
@@ -1188,6 +1189,8 @@ for (const l of LIFTS) {
   INTERACTABLES.push({ id: 'wed-mc', kind: 'wedding', x: WED_PODIUM.x - 0.3, z: WED_PODIUM.z + 0.75, radius: 1.3, label: '🎙️ Bục MC · điều khiển lễ cưới' });
   INTERACTABLES.push({ id: 'wed-cake', kind: 'wedding', x: WED_CAKE.x, z: WED_CAKE.z + 1.15, radius: 1.3, label: '🎂 Bánh cưới' });
   INTERACTABLES.push({ id: 'wed-tower', kind: 'wedding', x: WED_TOWER.x, z: WED_TOWER.z + 1.2, radius: 1.3, label: '🥂 Lấy một ly sâm panh' });
+  put('lightPanel', WED_SWITCH.x, WED_SWITCH.z, 0.34, 0.06, Math.PI, false, BALL);
+  INTERACTABLES.push({ id: 'wed-lights', kind: 'wedding', x: WED_SWITCH.x, z: WED_SWITCH.z - 0.9, radius: 1.2, label: '💡 Công tắc đèn sảnh' });
 
   // reception hall: gift table, welcome sign, photo wall, somewhere to sit
   put('giftTable', WED_GIFT.x, WED_GIFT.z, 1.8, 0.6, 0, true, HALL7);

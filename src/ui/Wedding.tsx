@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import {
   ATTIRE_META,
   GIFT_AMOUNTS,
+  LIGHTS_META,
+  LIGHTS_ORDER,
   STEP_META,
   WED_PROGRAM,
   WED_REACTS,
@@ -55,6 +57,7 @@ export function WeddingPanel() {
           —
         </button>
       </div>
+      <LightSwitch s={s} />
       <div className="wed-tabs">
         {(
           [
@@ -69,6 +72,25 @@ export function WeddingPanel() {
         ))}
       </div>
       <div className="wed-body">{tab === 'program' ? <Program s={s} /> : tab === 'gift' ? <Gifts s={s} /> : <Dress s={s} zone={zone ?? ''} />}</div>
+    </div>
+  );
+}
+
+/** The ballroom's house lights: everyone on the floor sees the same thing. */
+function LightSwitch({ s }: { s: WedState }) {
+  const me = useStore((st) => st.me?.id ?? '');
+  const players = useStore((st) => st.players);
+  const here = (id: string | undefined) => !!id && (id === me || onFloor(players[id]?.zone));
+  const runner = [s.groom, s.bride, s.mc].some((p) => p?.id === me);
+  const locked = s.step !== 'idle' && !runner && [s.groom, s.bride, s.mc].some((p) => p && here(p.id));
+  return (
+    <div className="wed-lights" title={locked ? 'Đang làm lễ — cô dâu, chú rể hoặc MC giữ công tắc đèn' : 'Đèn sảnh tiệc (mọi người cùng thấy)'}>
+      <span className="wl-label">Đèn sảnh</span>
+      {LIGHTS_ORDER.map((l) => (
+        <button key={l} className={s.lights === l ? 'on' : ''} disabled={locked} onClick={() => game.wedLights(l)}>
+          {LIGHTS_META[l].emoji} {LIGHTS_META[l].name}
+        </button>
+      ))}
     </div>
   );
 }

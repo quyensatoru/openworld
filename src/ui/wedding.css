@@ -68,6 +68,40 @@
   color: #9b6b78;
   background: rgba(212, 86, 124, 0.08);
 }
+.wed-lights {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 12px 8px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(43, 31, 42, 0.07);
+}
+.wl-label {
+  flex: none;
+  padding: 0 6px 0 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #9b6b78;
+}
+.wed-lights button {
+  flex: 1;
+  padding: 5px 4px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #6f3a4a;
+  background: transparent;
+}
+.wed-lights button.on {
+  color: #fff7e6;
+  background: linear-gradient(135deg, #3a2a40, #6b4a2e);
+  box-shadow: 0 3px 10px rgba(43, 31, 42, 0.3);
+}
+.wed-lights button:disabled {
+  opacity: 0.55;
+}
 .wed-tabs {
   display: flex;
   gap: 4px;
