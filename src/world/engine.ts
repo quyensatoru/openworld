@@ -7,6 +7,7 @@ import type { AvatarConfig } from '../../shared/avatar';
 import {
   CINEMA,
   CINEMA_SCREEN,
+  FLOORS,
   FLOOR_H,
   FURNITURE,
   INTERACTABLES,
@@ -58,6 +59,8 @@ import { VrmAvatar } from './avatar/vrm-avatar';
 import { party } from './bar';
 import { MOLE_CAMS } from '../../shared/mole';
 import { PH_GRAB_RANGE, PH_SHOT_RANGE, isPhProp } from '../../shared/prophunt';
+import type { WedAttire } from '../../shared/wedding';
+import { makeAttire, placeAttire, type AttireParts } from './avatar/attire';
 import { IS_TOUCH } from '../ui/touch-detect';
 
 export interface WorldCallbacks {
@@ -128,6 +131,14 @@ interface PlayerView {
   autoDance: boolean;
   /** Karaoke: holding a mic. */
   hold: 'mic' | null;
+  /** Wedding: carrying a bouquet (the bride, whoever caught it). */
+  wedHold: boolean;
+  /** Wedding outfit, and the pieces put on the current model. */
+  attire: WedAttire | null;
+  attireParts: AttireParts | null;
+  attireOn: Avatar | null;
+  /** Head joint → crown of the head (measured once standing). */
+  topOff: number;
   /** Soft shadow at the feet (when characters don't go into the shadow map). */
   blob: THREE.Mesh;
   /** Animation time not yet given to the avatar (skipped frames: off screen / far away). */
@@ -155,7 +166,8 @@ interface PlayerView {
 export type GfxQuality = 'high' | 'low' | 'eco';
 
 /** Room lighting while it is dark: the bar's party lights, karaoke colours, the werewolf village. */
-export type Mood = 'bar' | 'kara' | 'night' | 'camp' | 'facility';
+export type Mood = 'bar' | 'kara' | 'night' | 'camp' | 'facility' | 'wedding' | 'wedParty';
+const WED_HUES = ['#ff8fb4', '#ffd27a', '#9fd8ff', '#c9a8ff'].map((c) => new THREE.Color(c));
 const KARA_HUES = ['#9b5cff', '#ff3ea5', '#2de2e6', '#5d9bff'].map((c) => new THREE.Color(c));
 
 const INTERP_DELAY = 120;
@@ -1006,16 +1018,17 @@ export class World {
     this.route(l.cx, l.cz);
   }
 
-  /** Walk somewhere and turn to face `ry` on arrival (stands up first if seated). */
-  walkAndFace(x: number, z: number, ry: number) {
+  /** Walk somewhere and turn to face `ry` on arrival (stands up first if seated). `stroll`: never run. */
+  walkAndFace(x: number, z: number, ry: number, stroll = false, then?: () => void) {
     const c = this.controller;
     if (!c || this.ride) return;
     if (c.seat) c.standUp();
     const face = () => {
       c.ry = ry;
+      then?.();
     };
     if (Math.hypot(c.x - x, c.z - z) < 0.3) face();
-    else this.route(x, z, face);
+    else this.route(x, z, face, stroll ? false : undefined);
   }
 
   /** Ride the lift you are standing in to floor `to`. */
@@ -1135,6 +1148,11 @@ export class World {
       danceT: 0.7,
       autoDance: false,
       hold: null,
+      wedHold: false,
+      attire: null,
+      attireParts: null,
+      attireOn: null,
+      topOff: 0,
       blob,
       animAcc: 0,
       lodTick: Math.random() < 0.5 ? 0 : 1,
@@ -1870,6 +1888,46 @@ export class World {
     if (v) v.hold = hold;
   }
 
+  /** Wedding: what someone wears, and whether they carry a bouquet. */
+  setWedLook(id: string, attire: WedAttire | null, bouquet: boolean) {
+    const v = this.players.get(id);
+    if (!v) return;
+    v.wedHold = bouquet;
+    if (v.attire === attire) return;
+    v.attire = attire;
+    // the pieces are rebuilt for the new outfit on the next frame
+    if (v.attireParts) v.attireParts.root.removeFromParent();
+    v.attireParts = null;
+    v.attireOn = null;
+  }
+
+  /** Keep a wedding outfit on its model (models are rebuilt / swapped lazily). */
+  private dressUp(v: PlayerView) {
+    const av = v.avatar;
+    if (!v.attire || !av) {
+      if (v.attireParts) v.attireParts.root.removeFromParent();
+      v.attireParts = null;
+      v.attireOn = null;
+      return;
+    }
+    if (v.attireOn !== av || !v.attireParts) {
+      if (v.attireParts) v.attireParts.root.removeFromParent();
+      v.attireParts = makeAttire(v.attire);
+      av.root.add(v.attireParts.root);
+      v.attireOn = av;
+      v.topOff = 0;
+    }
+    const head = av.bone?.('head') ?? null;
+    const neck = av.bone?.('neck') ?? null;
+    if (!v.topOff && head && v.anim !== 'sit') {
+      // from the head joint up to the crown: measured once, standing
+      const p = head.getWorldPosition(new THREE.Vector3());
+      av.root.worldToLocal(p);
+      v.topOff = Math.min(0.32, Math.max(0.12, av.height - p.y));
+    }
+    placeAttire(v.attireParts, av.root, head, neck, v.topOff || 0.2);
+  }
+
   /** Extra marker on a name tag (Ma Sói: 💀, votes…). */
   setBadge(id: string, text: string | null) {
     this.players.get(id)?.tag.setBadge(text);
@@ -1898,6 +1956,16 @@ export class World {
   }
 
   /** Latest known position (not the interpolated one) — used by proximity voice even when the tab is hidden. */
+  /** Where someone is drawn right now (the wedding's effects follow the couple): logical x / z, feet above their floor, facing. */
+  drawnPose(id: string): { x: number; z: number; y: number; ry: number } | null {
+    const v = this.players.get(id);
+    if (!v) return null;
+    const c = v.isMe ? this.controller : null;
+    const x = c ? c.x : v.x;
+    const z = c ? c.z : v.z;
+    return { x, z, y: v.groundY - floorOf(x) * FLOOR_H, ry: c ? c.ry : v.ry };
+  }
+
   positionOf(id: string): { x: number; z: number } | null {
     const v = this.players.get(id);
     if (!v) return null;
@@ -2102,11 +2170,12 @@ export class World {
         seatKind: seatId ? SEAT_BY_ID.get(seatId)?.kind ?? null : null,
         lookAt: v.lookAt,
         talking: v.speaking,
-        hold: v.hold,
+        hold: v.hold ?? (v.wedHold ? 'bouquet' : null),
         air: v.jumpT >= 0,
         far: !v.isMe && v.camD2 > this.lod.far * this.lod.far,
         mid: !v.isMe && v.camD2 > this.lod.mid * this.lod.mid,
       });
+      if (v.attire || v.attireParts) this.dressUp(v);
     }
 
     // camera
@@ -2198,6 +2267,15 @@ export class World {
       } else if (this.mood === 'night') {
         this.moodCol.set('#3d55b8');
         add = 0.12;
+      } else if (this.mood === 'wedding') {
+        // candle-lit ballroom: warm rose gold, breathing very slowly
+        this.moodCol.set('#ffc9a6');
+        add = 0.42 + 0.04 * Math.sin(t * 0.6);
+      } else if (this.mood === 'wedParty') {
+        const k = t / 3;
+        const i = Math.floor(k) % WED_HUES.length;
+        this.moodCol.copy(WED_HUES[i]).lerp(WED_HUES[(i + 1) % WED_HUES.length], k % 1);
+        add = 0.3;
       } else if (this.mood === 'facility') {
         // cold, dim and unsteady: the lights dip now and then
         this.moodCol.set('#6f86c8');
@@ -2495,6 +2573,7 @@ export class World {
     await this.prewarm(this.office.roof4);
     await this.prewarm(this.office.roof5);
     await this.prewarm(this.office.roof6);
+    await this.prewarm(this.office.roof7);
     // draw the floors once now: the staff take a while to arrive (six VRoid models), and whoever
     // goes up before that froze for a second on the shaders compiled there and then
     this.warmPending = !this.disposed;
@@ -2523,7 +2602,7 @@ export class World {
     this.staff.attachAll(); // (taken out of the scene while not drawn; the next update does that again)
     const holders = [...this.staff.holders(), ...this.staff.roots(), o.bar.root];
     const prevHolders = holders.map((h) => h.visible);
-    o.setFloorView([o.downstairs.visible, true, true, true, true, true], 1);
+    o.setFloorView([o.downstairs.visible, ...Array.from({ length: FLOORS - 1 }, () => true)], 1);
     o.showWells();
     holders.forEach((h) => (h.visible = true));
     const cam = new THREE.PerspectiveCamera(70, 1.6, 0.5, 300);
@@ -2563,11 +2642,11 @@ export class World {
     const c = this.controller;
     const f = this.myFloor;
     // floor 2 is also drawn from floor 3: the double-height cinema walls belong to it
-    const vis = [f === 0, f === 1 || f === 2, f === 2, f === 3, f === 4, f === 5];
+    const vis = Array.from({ length: FLOORS }, (_, i) => i === f || (i === 1 && f === 2));
     const vx = c ? visualX(c.x) : 0;
     if (c && this.viewMode === 'first' && c.z > 21 && vx > 8 && vx < 36) {
       if (f > 0) vis[f - 1] = true;
-      if (f < 5) vis[f + 1] = true;
+      if (f < FLOORS - 1) vis[f + 1] = true;
     }
     if (this.ride) vis[this.ride.from] = vis[this.ride.to] = true;
     const key = vis.reduce((k, v, i) => k | (v ? 1 << i : 0), 0) | (f << 8);

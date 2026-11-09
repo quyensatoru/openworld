@@ -1,0 +1,638 @@
+/* ================================================================ Tiệc cưới (floor 7)
+   Ivory and blush with champagne gold: a printed wedding invitation more than a game HUD. */
+.wed-pill,
+.wed-panel {
+  position: absolute;
+  left: 14px;
+  bottom: 84px;
+  z-index: 6;
+  color: #5b2a3a;
+  border-radius: 20px;
+  border: 1px solid rgba(216, 178, 110, 0.55);
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(255, 220, 228, 0.9), transparent 60%),
+    linear-gradient(170deg, rgba(255, 251, 246, 0.97), rgba(250, 235, 238, 0.97));
+  box-shadow:
+    0 18px 50px rgba(90, 30, 50, 0.28),
+    inset 0 0 0 4px rgba(255, 255, 255, 0.55);
+}
+.wed-pill {
+  padding: 10px 16px;
+  font-weight: 700;
+  font-size: 13.5px;
+  max-width: calc(100vw - 28px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wed-panel {
+  width: min(372px, calc(100vw - 28px));
+  max-height: calc(100vh - 162px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.wed-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px 8px;
+}
+.wed-title {
+  display: grid;
+  min-width: 0;
+}
+.wed-title b {
+  font-size: 18px;
+  font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  letter-spacing: 0.2px;
+  background: linear-gradient(90deg, #b8860b, #d4567c);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wed-title small {
+  color: #9b6b78;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wed-x {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 9px;
+  color: #9b6b78;
+  background: rgba(212, 86, 124, 0.08);
+}
+.wed-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 8px;
+  border-bottom: 1px solid rgba(216, 178, 110, 0.35);
+}
+.wed-tabs button {
+  flex: 1;
+  padding: 7px 4px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #8a5866;
+  background: transparent;
+}
+.wed-tabs button.on {
+  color: #fff;
+  background: linear-gradient(135deg, #d4567c, #c48a3a);
+  box-shadow: 0 4px 12px rgba(212, 86, 124, 0.3);
+}
+.wed-body {
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+}
+.wed-note,
+.wed-tip {
+  font-size: 12.5px;
+  color: #8a5866;
+  line-height: 1.45;
+  margin: 6px 0;
+}
+.wed-tip {
+  margin-top: 12px;
+  opacity: 0.85;
+}
+.wed-big {
+  width: 100%;
+  margin-top: 8px;
+  padding: 11px 12px;
+  border-radius: 14px;
+  font-weight: 800;
+  font-size: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, #e0628a, #c9567a 45%, #b8862f);
+  box-shadow: 0 8px 20px rgba(201, 86, 122, 0.35);
+}
+.wed-big:disabled {
+  opacity: 0.5;
+}
+.wed-end {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #8a5866;
+  background: rgba(155, 107, 120, 0.1);
+}
+
+/* roles */
+.wed-roles {
+  display: grid;
+  gap: 6px;
+}
+.wed-role {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(216, 178, 110, 0.3);
+}
+.wed-role.mine {
+  border-color: #d4567c;
+  background: rgba(255, 228, 236, 0.85);
+}
+.wr-icon {
+  font-size: 22px;
+}
+.wr-text {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+.wr-text small {
+  font-size: 11px;
+  color: #a98290;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.wr-text b {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wr-btn {
+  flex: none;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #e0628a, #c48a3a);
+}
+.wr-btn.ghost {
+  color: #8a5866;
+  background: rgba(155, 107, 120, 0.12);
+}
+.wr-btn:disabled {
+  opacity: 0.45;
+}
+.wed-start {
+  margin-top: 8px;
+}
+.wed-now {
+  margin-top: 10px;
+  padding: 10px 12px 12px;
+  border-radius: 14px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 236, 241, 0.85));
+  border: 1px solid rgba(216, 178, 110, 0.45);
+}
+.wn-label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #b8862f;
+  font-weight: 700;
+}
+.wn-step {
+  font-size: 19px;
+  font-weight: 800;
+  margin-top: 2px;
+  font-family: 'Playfair Display', Georgia, serif;
+}
+.wn-mc {
+  font-size: 12.5px;
+  font-style: italic;
+  color: #9b6b78;
+  margin-top: 4px;
+}
+.wed-steps {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.wed-steps button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 7px;
+  border-radius: 10px;
+  font-size: 12px;
+  text-align: left;
+  color: #6f3a4a;
+  background: rgba(255, 255, 255, 0.6);
+}
+.wed-steps button:disabled {
+  cursor: default;
+}
+.wed-steps li.on button {
+  color: #fff;
+  background: linear-gradient(135deg, #e0628a, #c48a3a);
+}
+.wed-steps li.done button {
+  color: #a98290;
+}
+.ws-n {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: rgba(216, 178, 110, 0.25);
+}
+.ws-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* gifts */
+.wg-label {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.wg-amounts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+.wg-amounts button {
+  padding: 8px 4px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #8a2b3f;
+  background: linear-gradient(180deg, #fff, #fff1f3);
+  border: 1px solid rgba(209, 36, 47, 0.18);
+}
+.wg-amounts button.on {
+  color: #fff7d6;
+  background: linear-gradient(160deg, #d1242f, #a8141f);
+  border-color: #f2c14e;
+  box-shadow: 0 4px 12px rgba(209, 36, 47, 0.3);
+}
+.wg-form textarea {
+  width: 100%;
+  margin-top: 8px;
+  min-height: 62px;
+  resize: vertical;
+  padding: 9px 10px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 13px;
+  color: #5b2a3a;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(216, 178, 110, 0.45);
+}
+.wg-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  color: #fff7d6;
+  background: linear-gradient(135deg, #b81d2a, #8e1520);
+}
+.wg-total b {
+  font-size: 15px;
+  color: #ffd76a;
+}
+.wg-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.wg-list li {
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(216, 178, 110, 0.25);
+}
+.wg-list li.empty {
+  font-size: 12.5px;
+  color: #a98290;
+  text-align: center;
+}
+.wgl-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.wgl-top span {
+  color: #b81d2a;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.wg-list p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  font-style: italic;
+  color: #8a5866;
+}
+
+/* outfits */
+.wd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 6px;
+}
+.wd-grid button {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  border-radius: 14px;
+  text-align: center;
+  color: #6f3a4a;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(216, 178, 110, 0.3);
+}
+.wd-grid button.on {
+  border-color: #d4567c;
+  background: rgba(255, 226, 234, 0.95);
+  box-shadow: 0 0 0 2px rgba(212, 86, 124, 0.25);
+}
+.wd-grid button:disabled {
+  opacity: 0.55;
+}
+.wd-emoji {
+  font-size: 26px;
+}
+.wd-grid b {
+  font-size: 13px;
+}
+.wd-grid small {
+  font-size: 11px;
+  color: #a98290;
+  line-height: 1.3;
+}
+
+/* guests' quick actions: a column on the right edge */
+.wed-actions {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 251, 246, 0.9), rgba(250, 230, 236, 0.9));
+  border: 1px solid rgba(216, 178, 110, 0.5);
+  box-shadow: 0 12px 34px rgba(90, 30, 50, 0.22);
+}
+.wed-actions button {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 20px;
+  background: rgba(255, 255, 255, 0.85);
+  transition: transform 0.12s;
+}
+.wed-actions button:active {
+  transform: scale(0.88);
+}
+.wed-actions .wa-big {
+  background: linear-gradient(135deg, #ffe0ea, #ffe9c4);
+  box-shadow: inset 0 0 0 1px rgba(216, 178, 110, 0.6);
+}
+/* phones: nothing under the thumbs — the panel moves up under the location pill (the stick steps
+   aside while it is open, like the other room panels), the actions go along the top */
+.office.touch .wed-panel,
+.office.touch .wed-pill {
+  top: 60px;
+  bottom: auto;
+  z-index: 7;
+}
+.office.touch .wed-panel {
+  max-height: calc(100vh - 72px);
+}
+.office.touch:has(.wed-panel) .t-stick {
+  display: none;
+}
+.office.touch .wed-actions {
+  top: 120px;
+  right: 8px;
+  transform: none;
+  padding: 5px;
+  gap: 4px;
+}
+.office.touch .wed-actions button {
+  width: 34px;
+  height: 34px;
+  font-size: 17px;
+}
+
+/* the step's title across the screen */
+.wed-banner {
+  position: absolute;
+  left: 50%;
+  top: 132px;
+  transform: translateX(-50%);
+  z-index: 8;
+  pointer-events: none;
+  text-align: center;
+  padding: 18px 34px 20px;
+  border-radius: 26px;
+  color: #5b2a3a;
+  background:
+    radial-gradient(120% 100% at 50% 0%, rgba(255, 224, 232, 0.96), transparent 70%),
+    linear-gradient(180deg, rgba(255, 252, 247, 0.95), rgba(252, 236, 240, 0.95));
+  border: 1px solid rgba(216, 178, 110, 0.7);
+  box-shadow:
+    0 24px 60px rgba(90, 30, 50, 0.3),
+    inset 0 0 0 5px rgba(255, 255, 255, 0.6);
+  animation: wed-in 4.8s ease forwards;
+  max-width: calc(100vw - 40px);
+}
+.wb-emoji {
+  font-size: 40px;
+  line-height: 1;
+}
+.wb-name {
+  margin-top: 4px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-weight: 800;
+  font-size: 32px;
+  background: linear-gradient(90deg, #b8860b, #d4567c, #b8860b);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wb-names {
+  font-size: 15px;
+  font-weight: 700;
+  color: #9b4a62;
+  margin-top: 2px;
+}
+.wb-mc {
+  font-size: 13.5px;
+  font-style: italic;
+  color: #8a5866;
+  margin-top: 6px;
+}
+@keyframes wed-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -14px) scale(0.92);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.98);
+  }
+}
+
+/* gift pop-up + the bouquet */
+.wed-pop {
+  position: absolute;
+  right: 74px;
+  top: 30%;
+  z-index: 8;
+  pointer-events: none;
+  max-width: min(320px, calc(100vw - 100px));
+  padding: 11px 14px;
+  border-radius: 16px;
+  font-size: 13.5px;
+  color: #fff7e0;
+  background: linear-gradient(150deg, #c81e2b, #8e1520);
+  border: 1px solid #f2c14e;
+  box-shadow: 0 14px 36px rgba(120, 10, 20, 0.35);
+  animation: wed-pop 5s ease forwards;
+}
+.wed-pop b {
+  color: #ffd76a;
+}
+.wed-pop p {
+  margin: 5px 0 0;
+  font-style: italic;
+  color: #ffe9d6;
+}
+@keyframes wed-pop {
+  0% {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  8%,
+  85% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.wed-catch {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  z-index: 8;
+  pointer-events: none;
+  text-align: center;
+  padding: 16px 28px;
+  border-radius: 24px;
+  color: #5b2a3a;
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.96), rgba(255, 230, 238, 0.96));
+  border: 1px solid rgba(216, 178, 110, 0.7);
+  box-shadow: 0 20px 50px rgba(90, 30, 50, 0.3);
+  animation: wed-in 5.5s ease forwards;
+}
+.wc-emoji {
+  font-size: 46px;
+}
+.wc-name {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: 'Playfair Display', Georgia, serif;
+}
+.wc-sub {
+  font-size: 13.5px;
+  color: #8a5866;
+  margin-top: 4px;
+}
+
+/* phones */
+@media (max-width: 600px) {
+  .wed-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    bottom: 76px;
+    max-height: 58vh;
+  }
+  .wed-pill {
+    left: 8px;
+    bottom: 76px;
+  }
+  .wed-banner {
+    top: 96px;
+    padding: 12px 18px 14px;
+  }
+  .wb-name {
+    font-size: 24px;
+  }
+  .wed-pop {
+    right: 52px;
+    top: 22%;
+  }
+}
+@media (max-height: 500px) {
+  .office .wed-panel,
+  .office.touch .wed-panel {
+    left: 8px;
+    top: 54px;
+    bottom: 62px; /* the toolbar (mic!) stays reachable below */
+    max-height: none;
+    width: min(360px, 46vw);
+  }
+  .office .wed-pill,
+  .office.touch .wed-pill {
+    top: 54px;
+    bottom: auto;
+    left: 8px;
+  }
+  .office.touch .wed-actions {
+    top: 8px;
+    right: 92px;
+    display: flex;
+  }
+  .wed-banner {
+    top: 56px;
+    padding: 10px 18px;
+  }
+  .wb-emoji {
+    font-size: 28px;
+  }
+  .wb-name {
+    font-size: 22px;
+  }
+}

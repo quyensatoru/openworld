@@ -9,8 +9,8 @@ export interface DriveState {
   seatKind: SeatKind | null;
   lookAt: THREE.Vector3 | null; // world-space point to glance at
   talking: boolean;
-  /** Something held in the right hand for a while (karaoke mic). */
-  hold?: 'mic' | null;
+  /** Something held in the right hand for a while (karaoke mic, the bride's bouquet). */
+  hold?: 'mic' | 'bouquet' | null;
   /** Feet off the ground (jumping / falling): hold the jump pose even while moving. */
   air?: boolean;
   /** Far from the camera: skip the fine detail (hair / cloth physics, facial expressions). */
@@ -29,5 +29,7 @@ export interface Avatar {
   /** Fade out whatever emote is playing (e.g. stepping off the dance floor). */
   cancelEmote?(): void;
   setConfig(cfg: AvatarConfig): void;
+  /** The head / neck joint (wedding veils and bow ties are placed on it every frame). */
+  bone?(name: 'head' | 'neck'): THREE.Object3D | null;
   dispose(): void;
 }

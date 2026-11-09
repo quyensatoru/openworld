@@ -6,12 +6,43 @@ import * as THREE from 'three';
 let flute: THREE.Group | null = null;
 let mug: THREE.Group | null = null;
 let mic: THREE.Group | null = null;
+let bouquet: THREE.Group | null = null;
 
 function glassMat(color: string, opacity: number) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.08, metalness: 0.1, transparent: opacity < 1, opacity, depthWrite: opacity >= 1 });
 }
 
-export function makeProp(kind: 'flute' | 'mug' | 'mic'): THREE.Group {
+export function makeProp(kind: 'flute' | 'mug' | 'mic' | 'bouquet'): THREE.Group {
+  if (kind === 'bouquet') {
+    if (!bouquet) {
+      // the bride's bouquet: a dome of white and blush roses on a ribboned stem (held by the stem)
+      bouquet = new THREE.Group();
+      const cols = ['#ffffff', '#ffd6de', '#f6a9b9', '#fff3e4', '#ffffff', '#e98aa0'];
+      const mats = cols.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.75 }));
+      const geo = new THREE.IcosahedronGeometry(0.036, 1);
+      for (let i = 0; i < 14; i++) {
+        const a = i * 2.4;
+        const r = i ? 0.04 + (i % 3) * 0.022 : 0;
+        const f = new THREE.Mesh(geo, mats[i % mats.length]);
+        f.position.set(Math.cos(a) * r, 0.2 - r * 0.45, Math.sin(a) * r);
+        bouquet.add(f);
+      }
+      const leaf = new THREE.MeshStandardMaterial({ color: '#7fa37a', roughness: 0.8 });
+      for (let i = 0; i < 5; i++) {
+        const l = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.09, 5), leaf);
+        const a = (i / 5) * Math.PI * 2;
+        l.position.set(Math.cos(a) * 0.09, 0.16, Math.sin(a) * 0.09);
+        l.rotation.set(Math.sin(a) * 1.1, 0, -Math.cos(a) * 1.1);
+        bouquet.add(l);
+      }
+      const stems = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.016, 0.16, 8), leaf);
+      stems.position.y = 0.06;
+      const ribbon = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.06, 10), new THREE.MeshStandardMaterial({ color: '#fff7ef', roughness: 0.5 }));
+      ribbon.position.y = 0.075;
+      bouquet.add(stems, ribbon);
+    }
+    return bouquet.clone();
+  }
   if (kind === 'mic') {
     if (!mic) {
       mic = new THREE.Group();

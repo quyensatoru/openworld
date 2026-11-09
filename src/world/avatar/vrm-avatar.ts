@@ -234,7 +234,9 @@ export class VrmAvatar implements Avatar {
   private flute: THREE.Group;
   private mug: THREE.Group;
   private mic: THREE.Group;
+  private bouquet: THREE.Group;
   private holdW = 0;
+  private holdKind: 'mic' | 'bouquet' = 'mic';
   private rawHand: THREE.Object3D | null;
   private rawFore: THREE.Object3D | null;
   private rawGrip: THREE.Object3D[] = [];
@@ -280,6 +282,7 @@ export class VrmAvatar implements Avatar {
     this.flute = makeProp('flute');
     this.mug = makeProp('mug');
     this.mic = makeProp('mic');
+    this.bouquet = makeProp('bouquet');
     // (in the scene only while held: see update)
     // The normalised rig only drives the real bones (humanoid.update reads its local rotations, and
     // asks for a world position on demand): the renderer needn't recompute its 55 matrices a frame.
@@ -469,8 +472,9 @@ export class VrmAvatar implements Avatar {
     const e = this.emoteName;
     if (e && e !== 'dance' && ew > 0) this.armEmote(e, ew);
     // karaoke: hold the mic up to the mouth
-    this.holdW = damp(this.holdW, s.hold === 'mic' ? 1 : 0, 6, dt);
-    if (this.holdW > 0.01) this.micPose(this.holdW);
+    if (s.hold) this.holdKind = s.hold;
+    this.holdW = damp(this.holdW, s.hold ? 1 : 0, 6, dt);
+    if (this.holdW > 0.01) this.micPose(this.holdW, this.holdKind === 'bouquet');
 
     // face: blink every few seconds, smile while having fun
     this.blinkT -= dt;
@@ -526,11 +530,11 @@ export class VrmAvatar implements Avatar {
       this.updated = true;
     }
     // a glass for toasts / a mug for coffee / the karaoke mic, held in the right hand
-    const want = this.holdW > 0.5 ? this.mic : ew > 0.3 ? (e === 'toast' ? this.flute : e === 'coffee' ? this.mug : null) : null;
-    for (const prop of [this.flute, this.mug, this.mic]) {
+    const want = this.holdW > 0.5 ? (this.holdKind === 'mic' ? this.mic : this.bouquet) : ew > 0.3 ? (e === 'toast' ? this.flute : e === 'coffee' ? this.mug : null) : null;
+    for (const prop of [this.flute, this.mug, this.mic, this.bouquet]) {
       const held = prop === want && !!this.rawHand;
       attach(prop, this.root, held);
-      if (held) placeInHand(prop, this.root, this.rawHand!, this.rawFore, this.rawGrip, prop === this.mic ? 0.7 : 0);
+      if (held) placeInHand(prop, this.root, this.rawHand!, this.rawFore, this.rawGrip, prop === this.mic ? 0.7 : prop === this.bouquet ? 0.25 : 0);
     }
   }
 
@@ -579,7 +583,11 @@ export class VrmAvatar implements Avatar {
   }
 
   /** Mic to the mouth: aim the (normalised) arm bones in world space, then close the fist. */
-  private micPose(w: number) {
+  bone(name: 'head' | 'neck'): THREE.Object3D | null {
+    return this.vrm.humanoid.getRawBoneNode(name) ?? null;
+  }
+
+  private micPose(w: number, low = false) {
     const b = this.bones;
     if (!b.rightUpperArm || !b.rightLowerArm || !b.rightHand) return;
     this.root.updateMatrixWorld(true);
@@ -589,8 +597,9 @@ export class VrmAvatar implements Avatar {
     const up = new THREE.Vector3(0, 1, 0);
     const dir = (x: number, y: number, z: number) => right.clone().multiplyScalar(x).addScaledVector(up, y).addScaledVector(fwd, z).normalize();
     const sway = Math.sin(this.t * 2.2) * 0.04;
-    aimBone(b.rightUpperArm, b.rightLowerArm, dir(0.22, -0.72, 0.42 + sway), w);
-    aimBone(b.rightLowerArm, b.rightHand, dir(-0.55, 0.6, 0.55), w);
+    // a bouquet is carried lower: fist in front of the waist
+    aimBone(b.rightUpperArm, b.rightLowerArm, low ? dir(0.12, -0.92, 0.3 + sway) : dir(0.22, -0.72, 0.42 + sway), w);
+    aimBone(b.rightLowerArm, b.rightHand, low ? dir(-0.45, 0.3, 0.85) : dir(-0.55, 0.6, 0.55), w);
     this.grip(w);
   }
 

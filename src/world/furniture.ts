@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CINEMA_SCREEN, CINEMA_WALL_H, KARA_SCREEN, type Furniture, type Seat } from '../../shared/map';
 import { C, canvasTexture, mat } from './materials';
+import { banquetChair, buildWeddingPiece } from './wedding-furniture';
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
 
@@ -12,7 +13,7 @@ const geoCache = new Map<string, THREE.BufferGeometry>();
  * they get a plain box (12 triangles) instead of a 588-triangle rounded one — this alone took the
  * scene from ~3M to a few hundred thousand triangles.
  */
-function rboxGeo(w: number, h: number, d: number, r: number): THREE.BufferGeometry {
+export function rboxGeo(w: number, h: number, d: number, r: number): THREE.BufferGeometry {
   const rr = Math.max(0.001, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001));
   const key = `rb|${w.toFixed(3)}|${h.toFixed(3)}|${d.toFixed(3)}|${rr.toFixed(3)}`;
   let g = geoCache.get(key);
@@ -23,7 +24,7 @@ function rboxGeo(w: number, h: number, d: number, r: number): THREE.BufferGeomet
   return g;
 }
 
-function cylGeo(rt: number, rb: number, h: number, seg = 20): THREE.BufferGeometry {
+export function cylGeo(rt: number, rb: number, h: number, seg = 20): THREE.BufferGeometry {
   if (Math.max(rt, rb) < 0.05) seg = Math.min(seg, 10); // thin legs, poles, bottles
   const key = `cy|${rt}|${rb}|${h}|${seg}`;
   let g = geoCache.get(key);
@@ -34,7 +35,7 @@ function cylGeo(rt: number, rb: number, h: number, seg = 20): THREE.BufferGeomet
   return g;
 }
 
-function sphGeo(r: number, detail = r > 0.5 ? 2 : 1): THREE.BufferGeometry {
+export function sphGeo(r: number, detail = r > 0.5 ? 2 : 1): THREE.BufferGeometry {
   const key = `sp|${r}|${detail}`;
   let g = geoCache.get(key);
   if (!g) {
@@ -44,7 +45,7 @@ function sphGeo(r: number, detail = r > 0.5 ? 2 : 1): THREE.BufferGeometry {
   return g;
 }
 
-function mesh(geo: THREE.BufferGeometry, material: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+export function mesh(geo: THREE.BufferGeometry, material: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const m = new THREE.Mesh(geo, material);
   m.position.set(x, y, z);
   m.castShadow = true;
@@ -68,7 +69,7 @@ function hash(s: string): number {
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
 }
-function rngFrom(seed: string) {
+export function rngFrom(seed: string) {
   let s = hash(seed);
   return () => {
     s = (s * 1664525 + 1013904223) >>> 0;
@@ -191,13 +192,15 @@ export function seatModel(seat: Seat, index: number): THREE.Group | null {
     case 'meeting':
       return meetingChair(seat.zone === 'meetA' ? '#7fa7c9' : '#d9a5a0');
     case 'stool':
-      return seat.zone === 'bar' ? barStool() : stool(C.accents[index % C.accents.length]);
+      return seat.zone === 'bar' ? barStool() : stool(seat.zone === 'bridal' ? '#f2c4cc' : C.accents[index % C.accents.length]);
     case 'pc':
       return gamingChair(index);
     case 'cinema':
       return cinemaChair();
     case 'wolf':
       return stump(index);
+    case 'banquet':
+      return banquetChair();
     default:
       return null;
   }
@@ -1150,6 +1153,29 @@ export function buildFurniture(f: Furniture, dyn: Dynamic): THREE.Group {
       rbox(g, f.w + 0.03, 0.05, f.d + 0.03, C.wood, 0, H + 0.02, 0, 0.01);
       break;
     }
+    // floor 7: the wedding hall (src/world/wedding-furniture.ts)
+    case 'wedStage':
+    case 'wedScreen':
+    case 'flowerWall':
+    case 'flowerArch':
+    case 'aisleCarpet':
+    case 'flowerStand':
+    case 'banquetTable':
+    case 'chandelier':
+    case 'weddingCake':
+    case 'champagneTable':
+    case 'ringStand':
+    case 'mcPodium':
+    case 'giftTable':
+    case 'wedSign':
+    case 'photoWall':
+    case 'drape':
+    case 'sconce':
+    case 'vanity':
+    case 'mannequinDress':
+    case 'mannequinSuit':
+      buildWeddingPiece(f, g, dyn);
+      break;
   }
   g.position.set(f.x, f.y ?? 0, f.z);
   g.rotation.y = f.ry;

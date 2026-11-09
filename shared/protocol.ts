@@ -3,6 +3,7 @@ import type { KaraMsg, KaraState } from './karaoke';
 import type { WolfMsg, WolfView } from './werewolf';
 import type { MoleFx, MoleMsg, MoleView } from './mole';
 import type { PhFx, PhMsg, PhView } from './prophunt';
+import type { WedFx, WedMsg, WedState } from './wedding';
 // Shared wire protocol between the browser client and the OfficeRoom Durable Object.
 // Every message is JSON with a short `t` (type) field.
 
@@ -213,6 +214,7 @@ export type ClientMsg =
   | { t: 'wolf'; m: WolfMsg }
   | { t: 'mole'; m: MoleMsg }
   | { t: 'prop'; m: PhMsg }
+  | { t: 'wed'; m: WedMsg }
   | { t: 'activity:token' }
   | { t: 'activity:revoke' }
   | { t: 'ping' };
@@ -233,6 +235,7 @@ export type ServerMsg =
       cinema: CinemaState | null;
       jukebox?: CinemaState | null;
       kara?: KaraState;
+      wed?: WedState;
       activity: Record<string, ActivityEvent[]>;
     }
   | { t: 'join'; p: PlayerState }
@@ -260,6 +263,8 @@ export type ServerMsg =
   | { t: 'moleFx'; fx: MoleFx }
   | { t: 'prop'; v: PhView }
   | { t: 'propFx'; fx: PhFx }
+  | { t: 'wed'; s: WedState }
+  | { t: 'wedFx'; fx: WedFx }
   | { t: 'activity'; id: string; ev: ActivityEvent }
   | { t: 'activityToken'; token: string | null }
   | { t: 'kicked'; reason: string }

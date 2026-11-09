@@ -4,6 +4,7 @@ import type { Floor } from '../shared/map';
 import type { WolfView } from '../shared/werewolf';
 import type { MoleView } from '../shared/mole';
 import type { PhView } from '../shared/prophunt';
+import { emptyWed, type WedStep, type WedState } from '../shared/wedding';
 import { fallbackWeather, type Weather } from '../shared/weather';
 // Global UI state (React reads it through hooks; the 3D world and RTC write to it imperatively).
 // High-frequency data (positions) deliberately lives outside this store, in the World.
@@ -144,6 +145,16 @@ export interface OfficeStore {
   phHp: number | null;
   /** last time your shot hit a hider / you hit furniture / you got hit (for the crosshair + screen flashes) */
   phMark: { kind: 'hit' | 'miss' | 'hurt'; at: number } | null;
+  /** Tiệc cưới (floor 7) */
+  wed: WedState;
+  wedPanel: boolean;
+  wedTab: 'program' | 'gift' | 'dress';
+  /** A big title for a moment when a step of the programme starts. */
+  wedBanner: { step: WedStep; at: number } | null;
+  /** Someone's gift and wish, popping up for a moment. */
+  wedGift: { name: string; amount: number; wish: string; at: number } | null;
+  /** The bouquet landed (who caught it). */
+  wedCatch: { name: string | null; me: boolean; at: number } | null;
   activity: Record<string, ActivityEvent[]>;
   activityToken: string | null | undefined; // undefined = not requested yet
   screenOf: string | null; // player whose Claude screen is open
@@ -252,6 +263,12 @@ export const useStore = create<OfficeStore>(() => ({
   phCand: null,
   phHp: null,
   phMark: null,
+  wed: emptyWed(),
+  wedPanel: !IS_TOUCH,
+  wedTab: 'program',
+  wedBanner: null,
+  wedGift: null,
+  wedCatch: null,
   activity: {},
   activityToken: undefined,
   screenOf: null,

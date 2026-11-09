@@ -58,7 +58,9 @@ export class GltfAvatar implements Avatar {
   private flute: THREE.Group;
   private mug: THREE.Group;
   private mic: THREE.Group;
+  private bouquet: THREE.Group;
   private holdW = 0;
+  private holdKind: 'mic' | 'bouquet' = 'mic';
   private accessories = new THREE.Group();
   private accAnchor = new THREE.Object3D(); // child of the head bone, oriented like the character (y up, z forward)
   private attached = new Map<string, THREE.Object3D>(); // hair / beard meshes by node name
@@ -142,8 +144,9 @@ export class GltfAvatar implements Avatar {
     this.flute = makeProp('flute');
     this.mug = makeProp('mug');
     this.mic = makeProp('mic');
-    this.flute.visible = this.mug.visible = this.mic.visible = false;
-    this.root.add(this.flute, this.mug, this.mic);
+    this.bouquet = makeProp('bouquet');
+    this.flute.visible = this.mug.visible = this.mic.visible = this.bouquet.visible = false;
+    this.root.add(this.flute, this.mug, this.mic, this.bouquet);
 
     const b = this.m.bones;
     const find = (name: string | undefined, fallback: RegExp[]) => findBone(this.model, [...(name ? [name] : []), ...fallback]);
@@ -411,10 +414,13 @@ export class GltfAvatar implements Avatar {
     if (this.sitState === 'sit' && (s.seatKind === 'desk' || s.seatKind === 'focus' || s.seatKind === 'pc') && !s.talking) this.typingLayer();
     if (this.emoteName && !this.emoteAction) this.proceduralEmote(this.emoteName, this.emoteT, emoteW);
     // karaoke: mic up to the mouth (overrides the right arm of any emote)
-    this.holdW = damp(this.holdW, s.hold === 'mic' ? 1 : 0, 6, dt);
-    if (this.holdW > 0.01) this.micPose(this.holdW);
-    this.mic.visible = this.holdW > 0.5 && !!this.bones.rHand;
-    if (this.mic.visible) placeInHand(this.mic, this.root, this.bones.rHand!, this.bones.rFore, [], 0.7);
+    if (s.hold) this.holdKind = s.hold;
+    this.holdW = damp(this.holdW, s.hold ? 1 : 0, 6, dt);
+    if (this.holdW > 0.01) this.micPose(this.holdW, this.holdKind === 'bouquet');
+    const held = this.holdKind === 'mic' ? this.mic : this.bouquet;
+    this.mic.visible = this.bouquet.visible = false;
+    held.visible = this.holdW > 0.5 && !!this.bones.rHand;
+    if (held.visible) placeInHand(held, this.root, this.bones.rHand!, this.bones.rFore, [], held === this.mic ? 0.7 : 0.25);
     // a glass for toasts, a mug for coffee
     const want = emoteW > 0.3 && this.holdW < 0.5 ? (this.emoteName === 'toast' ? 'flute' : this.emoteName === 'coffee' ? 'mug' : null) : null;
     for (const [kind, prop] of [['flute', this.flute], ['mug', this.mug]] as const) {
@@ -472,15 +478,20 @@ export class GltfAvatar implements Avatar {
   }
 
   /** Holding a mic: upper arm down along the chest, forearm up so the fist sits under the chin. */
-  private micPose(w: number) {
+  private micPose(w: number, low = false) {
     const rootQ = this.root.getWorldQuaternion(new THREE.Quaternion());
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(rootQ);
     const charRight = new THREE.Vector3(-1, 0, 0).applyQuaternion(rootQ);
     const dir = (x: number, y: number, z: number) => charRight.clone().multiplyScalar(x).addScaledVector(UP, y).addScaledVector(fwd, z).normalize();
     const { rUpper, rFore, rHand } = this.bones;
     const sway = Math.sin(this.t * 2.2) * 0.04;
-    if (rUpper && rFore) aimBone(rUpper, rFore, dir(0.22, -0.72, 0.42 + sway), w);
-    if (rFore && rHand) aimBone(rFore, rHand, dir(-0.55, 0.6, 0.55), w);
+    // a bouquet is carried lower: fist in front of the waist
+    if (rUpper && rFore) aimBone(rUpper, rFore, low ? dir(0.12, -0.92, 0.3 + sway) : dir(0.22, -0.72, 0.42 + sway), w);
+    if (rFore && rHand) aimBone(rFore, rHand, low ? dir(-0.45, 0.3, 0.85) : dir(-0.55, 0.6, 0.55), w);
+  }
+
+  bone(name: 'head' | 'neck'): THREE.Object3D | null {
+    return this.bones[name] ?? null;
   }
 
   /** Arm-only emotes for roles without a clip (works seated too). */

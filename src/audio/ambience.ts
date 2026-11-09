@@ -4,6 +4,8 @@
 // everyone in the bar hears the same beat). Also the mini-games' one-shot stings (sfx), the Nội Gián
 // tension bed (drone + heartbeat) and the floor-5 facility hum — all synthesised live, no samples.
 
+import { WeddingMusic } from './wedding-music';
+
 export const MUSIC_BPM = 124;
 const STEP = 60 / MUSIC_BPM / 4; // a 16th note
 /** 4-bar loop: Am7 · Fmaj7 · C · G (bass root + chord tones). */
@@ -115,6 +117,7 @@ export class Ambience {
   private volume = 0.6;
   private quietZone = false;
   private music: MusicBus | null = null;
+  private wed: WeddingMusic | null = null;
   private musicLevel = 0;
   private musicCutoff = 18000;
   /** Shared clock in seconds (server time), so the beat is the same for everyone. */
@@ -1376,7 +1379,16 @@ export class Ambience {
     }
   }
 
+  /** Floor 7's wedding music + effects (null until the first user gesture has started the audio). */
+  wedding(): WeddingMusic | null {
+    if (!this.ctx || !this.master) return null;
+    this.wed ??= new WeddingMusic(this.ctx, this.master, () => this.clock());
+    return this.wed;
+  }
+
   dispose() {
+    this.wed?.dispose();
+    this.wed = null;
     this.ctx?.close().catch(() => {});
     this.ctx = null;
     this.music = null;

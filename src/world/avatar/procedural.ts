@@ -52,6 +52,7 @@ export class ProceduralAvatar implements Avatar {
   private eyes: THREE.Object3D[] = [];
   private cup: THREE.Object3D;
   private micProp: THREE.Object3D;
+  private bouquetProp: THREE.Object3D;
 
   private t = Math.random() * 10;
   private phase = 0;
@@ -95,6 +96,11 @@ export class ProceduralAvatar implements Avatar {
     micProp.visible = false;
     this.j.rHand.add(micProp);
     this.micProp = micProp;
+    const bq = makeProp('bouquet');
+    bq.position.set(0, -0.14, 0.04);
+    bq.visible = false;
+    this.j.rHand.add(bq);
+    this.bouquetProp = bq;
     this.setConfig(cfg);
   }
 
@@ -297,7 +303,20 @@ export class ProceduralAvatar implements Avatar {
       }
     }
 
-    // karaoke mic: hand up under the chin
+    // karaoke mic: hand up under the chin; the bouquet: hand in front of the waist
+    if (s.hold === 'bouquet') {
+      if (out === this.pMix) {
+        copyPose(this.pEmo, this.pMix);
+        out = this.pEmo;
+      }
+      out.rUpper.x = -0.35;
+      out.rUpper.z = -0.1;
+      out.rUpper.y = 0.15;
+      out.rFore.x = -1.35;
+      out.rFore.y = 0.45;
+      this.cup.visible = false;
+    }
+    this.bouquetProp.visible = s.hold === 'bouquet';
     if (s.hold === 'mic') {
       if (out === this.pMix) {
         copyPose(this.pEmo, this.pMix);
@@ -569,6 +588,10 @@ export class ProceduralAvatar implements Avatar {
       this.j[k].rotation.set(r.x, r.y, r.z);
     }
     this.j.hips.position.set(p.hp.x, p.hp.y, p.hp.z);
+  }
+
+  bone(name: 'head' | 'neck'): THREE.Object3D | null {
+    return this.j[name] ?? null;
   }
 
   dispose() {

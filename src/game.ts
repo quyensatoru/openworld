@@ -8,6 +8,8 @@ import { ROLE_META, type WolfMsg, type WolfView } from '../shared/werewolf';
 import { rainLevel, type Weather } from '../shared/weather';
 import type { Furniture } from '../shared/map';
 import { F6, PH_BOARD, PH_FIRE_S, PH_PROPS, type PhFx, type PhMsg, type PhView } from '../shared/prophunt';
+import { F7, STEP_META, WED_PROGRAM, WED_SPOTS, attireOf, inWedZone, money, type WedFx, type WedMsg, type WedState } from '../shared/wedding';
+import type { WedCue } from './world/floor7';
 import { DOOR_BY_ID, MOLE_BOARD, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, MOLE_VENTS, MOLE_VENT_RANGE, STATION_BY_ID, VENT_BY_ID, VISION, doorMid, doorRect, meetingSpot, type MoleFx, type MoleMsg, type MoleView } from '../shared/mole';
 import * as THREE from 'three';
 import { Ambience, MUSIC_BPM, type SfxKind } from './audio/ambience';
@@ -67,6 +69,9 @@ class Game {
   private karaVoice = { sid: '', sung: 0, heard: 0, sent: 0 };
   private karaCount = -1;
   private wasInKara = false;
+  private wasOnWed = false;
+  /** Wedding: when this client last made its couple dance (first dance loop). */
+  private wedDanceAt = 0;
   private spoken = 0;
 
   // ------------------------------------------------------------------ lifecycle
@@ -143,7 +148,8 @@ class Game {
               '🎮 Tầng 3 — phòng game Office Net bên phải · cầu thang lên tầng 4 ở bên trái',
               '🎤 Tầng 4 — phòng Karaoke bên trái · 🐺 Làng Ma Sói bên phải · cầu thang lên tầng 5 ở góc phải',
               getState().touch ? '🕵️ Tầng 5 — Nội Gián: tới bảng trong sảnh, bấm nút ✋ để tham gia' : '🕵️ Tầng 5 — Nội Gián: bấm E ở bảng trong sảnh để tham gia',
-              '🪑 Tầng 6 — Trốn tìm biến hình: bấm “Tham gia” ở bảng bên trái màn hình',
+              '🪑 Tầng 6 — Trốn tìm biến hình: bấm “Tham gia” ở bảng bên trái màn hình · cầu thang lên tầng 7 ngay cạnh',
+              '💒 Tầng 7 — Tiệc cưới: lễ đường ngay trước mặt, phòng cô dâu bên phải · bàn mừng cưới cạnh cửa',
             ][floor],
             'info',
             3500,
@@ -195,6 +201,12 @@ class Game {
     world.setFpLook(getState().fpLook);
     world.setFpsCap(getState().fpsCap);
     world.serverClock = () => serverNow() / 1000;
+    world.office.serverMs = serverNow;
+    world.office.f7.people = (id) => {
+      const p = world.drawnPose(id);
+      return p && floorOf(p.x) === 6 ? p : null;
+    };
+    world.office.f7.onCue = (cue, s) => this.onWedCue(cue, s);
     world.beatClock = () => (serverNow() / 1000) * (MUSIC_BPM / 60);
 
     const rtc = new RelayMedia({
@@ -326,6 +338,8 @@ class Game {
     if (floorOf(me.x) === 3) this.karaTick();
     if (floorOf(me.x) === 4 || getState().mole?.me.inGame) this.moleTick();
     if (floorOf(me.x) === 5 || getState().ph?.me.inGame) this.phTick();
+    if (floorOf(me.x) === 6) this.wedTick();
+    this.ambience?.wedding()?.tick();
     if (this.fastFrame % 16 === 0 && getState().wolf) world.office.updateWolfBoard(getState().wolf, serverNow());
     if (this.fastFrame % 6 === 0) {
       const now = serverNow();
@@ -378,6 +392,28 @@ class Game {
     }
     // someone picked a song on the jukebox: it replaces the house music
     this.ambience?.setMusic(jb && jb.pausedAt == null ? 0 : level, cutoff);
+    // floor 7: the wedding band (the track follows the programme, on the shared clock)
+    const wm = this.ambience?.wedding();
+    if (wm) {
+      const s = getState().wed;
+      let lv = 0;
+      let cut = 18000;
+      if (floorOf(me.x) === 6) {
+        if (this.zoneId === 'wedding') lv = 1;
+        else if (this.zoneId === 'hall7') {
+          lv = 0.42;
+          cut = 1100;
+        } else if (this.zoneId === 'bridal') {
+          lv = 0.3;
+          cut = 700;
+        } else lv = 0.2;
+      } else if (onStairs(me.x, me.z) && floorOf(me.x) === 5) {
+        lv = 0.08;
+        cut = 500;
+      }
+      wm.setTrack(lv > 0 ? STEP_META[s.step].track : null, s.step === 'idle' ? 0 : s.stepAt / 1000);
+      wm.setLevel(lv, cut);
+    }
   }
 
   private onCinemaZone() {
@@ -418,11 +454,22 @@ class Game {
       this.world?.setDim(0, blackout ? 0.97 : 0.32, blackout ? 'night' : 'facility');
       this.world?.office.setF5Lamps(!(mv && mv.phase === 'play' && mv.lights > serverNow()));
     }
+    // floor 7: a candle-lit ballroom; darker for the first dance, party colours when it kicks off
+    if (this.zoneId === 'wedding') {
+      const st = getState().wed.step;
+      const dark = st === 'party' ? 0.74 : st === 'dance' ? 0.64 : st === 'idle' || st === 'feast' ? 0.24 : 0.42;
+      this.world?.setDim(0, dark, st === 'party' ? 'wedParty' : 'wedding');
+    }
+    const onWed = inWedZone(this.zoneId);
+    if (onWed !== this.wasOnWed) {
+      this.wasOnWed = onWed;
+      if (onWed && !getState().touch) setState({ wedPanel: true });
+    }
     this.ambience?.setQuietZone(inside || ZONE_BY_ID.get(this.zoneId)?.kind === 'focus' || inKara || this.zoneId === 'wolfroom');
     this.ambience?.setHum(this.zoneId.startsWith('f5-'));
     // rain on the windows — muffled in the rooms with no outside wall
     const zk = ZONE_BY_ID.get(this.zoneId)?.kind;
-    const sealed = zk === 'cinema' || zk === 'bar' || zk === 'karaoke' || zk === 'wolf' || zk === 'mole' || zk === 'prop' || zk === 'game';
+    const sealed = zk === 'cinema' || zk === 'bar' || zk === 'karaoke' || zk === 'wolf' || zk === 'mole' || zk === 'prop' || zk === 'game' || zk === 'wedding';
     this.ambience?.setRain(rainLevel(getState().weather) * (sealed ? 0.22 : 1));
     if (inside !== this.wasInCinema) {
       this.wasInCinema = inside;
@@ -482,6 +529,7 @@ class Game {
     net.on('join', ({ p }) => {
       setState((s) => ({ players: { ...s.players, [p.id]: p }, team: { ...s.team, [p.id]: { id: p.id, name: p.name, avatar: p.avatar, lastSeen: Date.now(), desk: s.team[p.id]?.desk ?? null, today: s.team[p.id]?.today ?? null } } }));
       this.world?.upsertRemote(p);
+      this.syncWedLooks();
       this.rtc?.evaluate(p.id);
       if (this.welcomed) {
         toast(`👋 ${p.name} vừa vào văn phòng`);
@@ -546,6 +594,8 @@ class Game {
     net.on('mole', ({ v }) => this.applyMole(this.cleanMole(v)));
     net.on('moleFx', ({ fx }) => this.onMoleFx(fx));
     net.on('prop', ({ v }) => this.applyProp(v));
+    net.on('wed', ({ s }) => this.applyWed(s));
+    net.on('wedFx', ({ fx }) => this.onWedFx(fx));
     net.on('propFx', ({ fx }) => this.onPropFx(fx));
     net.on('snake', ({ f }) => {
       setState({ snake: f });
@@ -648,6 +698,7 @@ class Game {
     this.applyCinema(m.cinema, '', 'welcome');
     this.applyJukebox(m.jukebox ?? null, '', 'welcome');
     if (m.kara) this.applyKara(m.kara);
+    if (m.wed) this.applyWed(m.wed);
     this.zoneId = m.you.zone;
     this.rtc?.reset();
 
@@ -690,7 +741,7 @@ class Game {
     if (seat?.kind === 'desk') return 'working';
     if (seat?.kind === 'focus' || zone?.kind === 'focus') return 'focus';
     if (zone?.kind === 'meeting') return 'meeting';
-    if (zone?.kind === 'pantry' || zone?.kind === 'lounge' || zone?.kind === 'cinema' || zone?.kind === 'bar' || zone?.kind === 'game' || zone?.kind === 'karaoke' || zone?.kind === 'wolf' || zone?.kind === 'mole' || zone?.kind === 'prop') return 'break';
+    if (zone?.kind === 'pantry' || zone?.kind === 'lounge' || zone?.kind === 'cinema' || zone?.kind === 'bar' || zone?.kind === 'game' || zone?.kind === 'karaoke' || zone?.kind === 'wolf' || zone?.kind === 'mole' || zone?.kind === 'prop' || zone?.kind === 'wedding') return 'break';
     return 'online';
   }
 
@@ -951,6 +1002,31 @@ class Game {
       case 'kara-console':
         setState({ karaPanel: true, karaTab: 'search' });
         break;
+      case 'wed-gift':
+        setState({ wedPanel: true, wedTab: 'gift' });
+        break;
+      case 'wed-board':
+      case 'wed-mc':
+        setState({ wedPanel: true, wedTab: 'program' });
+        break;
+      case 'wed-dress':
+        setState({ wedPanel: true, wedTab: 'dress' });
+        break;
+      case 'wed-photo':
+        void this.takePhoto();
+        break;
+      case 'wed-cake': {
+        const st = getState().wed.step;
+        if (WED_PROGRAM.indexOf(st) > WED_PROGRAM.indexOf('cake')) {
+          this.emote('coffee');
+          toast('🍰 Một miếng bánh cưới ngọt lịm — chúc cô dâu chú rể ngọt ngào như bánh!', 'info', 3500);
+        } else toast('🎂 Bánh cưới 5 tầng — đợi cô dâu chú rể cắt bánh rồi mới được ăn nhé!', 'info', 3500);
+        break;
+      }
+      case 'wed-tower':
+        this.emote('toast');
+        toast('🥂 Một ly sâm panh mát lạnh — nâng ly chúc mừng đôi uyên ương!', 'info', 3500);
+        break;
       case 'wolf-board':
         setState({ wolfPanel: true });
         toast('🐺 Ngồi lên một gốc cây quanh đống lửa để vào ván. Đủ 5 người là bắt đầu được!', 'info', 4500);
@@ -972,7 +1048,7 @@ class Game {
   }
 
   /** Walk (running) to the office, the cinema or the bar — taking the stairs if it is on the other floor. */
-  travel(to: 'office' | 'cinema' | 'bar' | 'netcafe' | 'karaoke' | 'wolfroom' | 'mole' | 'prophunt') {
+  travel(to: 'office' | 'cinema' | 'bar' | 'netcafe' | 'karaoke' | 'wolfroom' | 'mole' | 'prophunt' | 'wedding') {
     const w = this.world;
     if (!w?.controller || w.riding) return;
     const target = {
@@ -984,6 +1060,7 @@ class Game {
       wolfroom: { x: 210.2, z: 16.8 },
       mole: { x: MOLE_BOARD.x, z: MOLE_BOARD.z + 1.6 },
       prophunt: { x: F6 + PH_BOARD.x, z: PH_BOARD.z - 1.8 },
+      wedding: { x: F7 + 20, z: 21.4 },
     }[to];
     if (!w.route(target.x, target.z, undefined, true)) return;
     if (this.autoFirstPerson) {
@@ -1001,6 +1078,7 @@ class Game {
         wolfroom: '🐺 Đang lên Làng Ma Sói (tầng 4)',
         mole: '🕵️ Đang lên tầng 5 chơi Nội Gián',
         prophunt: '🪑 Đang lên tầng 6 chơi Trốn tìm biến hình',
+        wedding: '💒 Đang lên tầng 7 dự tiệc cưới',
       }[to] + (cross ? ' (đi cầu thang)…' : '…'),
       'info',
       2500,
@@ -1105,6 +1183,230 @@ class Game {
       } else if (upstairs) toast(`🎡 ${name} quay trúng: ${WHEEL_PRIZES[prize]}`, 'info', 4500);
       w.confetti(by, false);
     }, Math.max(0, at + WHEEL_SPIN_MS - serverNow()));
+  }
+
+  // ------------------------------------------------------------------ wedding (floor 7)
+  wed(m: WedMsg) {
+    this.net?.send({ t: 'wed', m });
+  }
+
+  private applyWed(s: WedState) {
+    const prev = getState().wed;
+    setState({ wed: s });
+    const w = this.world;
+    if (!w) return;
+    w.office.f7.apply(s);
+    this.syncWedLooks();
+    const me = getState().me?.id ?? '';
+    const fresh = serverNow() - s.stepAt < 12_000;
+    if (prev.step !== s.step || prev.stepAt !== s.stepAt) {
+      if (s.step !== 'idle' && fresh && floorOf(w.positionOf(me)?.x ?? 0) === 6) setState({ wedBanner: { step: s.step, at: Date.now() } });
+      if (fresh && (s.bride?.id === me || s.groom?.id === me)) this.wedChoreo(s, me);
+      this.onCinemaZone();
+    }
+    // my role changed
+    const was = prev.bride?.id === me ? 'bride' : prev.groom?.id === me ? 'groom' : prev.mc?.id === me ? 'mc' : null;
+    const now = s.bride?.id === me ? 'bride' : s.groom?.id === me ? 'groom' : s.mc?.id === me ? 'mc' : null;
+    if (now && now !== was) {
+      toast(
+        now === 'mc'
+          ? '🎙️ Bạn là MC! Đứng trên sân khấu thì cả sảnh nghe bạn nói — điều khiển chương trình ở bảng 💒'
+          : `${now === 'bride' ? '👰 Bạn là cô dâu' : '🤵 Bạn là chú rể'} hôm nay! Khi đủ đôi, bấm “Bắt đầu hôn lễ” ở bảng 💒`,
+        'success',
+        6000,
+      );
+      chime('join', 0.08);
+    }
+  }
+
+  /** Outfits + bouquets for everyone we know. */
+  private syncWedLooks() {
+    const w = this.world;
+    const st = getState();
+    if (!w || !st.me) return;
+    const s = st.wed;
+    for (const id of [st.me.id, ...Object.keys(st.players)]) w.setWedLook(id, attireOf(s, id), this.wedBouquet(s, id));
+  }
+
+  /** The bride carries her bouquet down the aisle until she throws it; then whoever caught it does. */
+  private wedBouquet(s: WedState, id: string): boolean {
+    const i = WED_PROGRAM.indexOf(s.step);
+    if (s.bride?.id === id) {
+      if (s.step === 'bouquet') return !s.bouquet;
+      return i >= 0 && i <= WED_PROGRAM.indexOf('kiss');
+    }
+    if (s.bouquet?.id === id) return serverNow() >= s.bouquet.at && i >= WED_PROGRAM.indexOf('bouquet');
+    return false;
+  }
+
+  /** I'm the bride / the groom: go to my mark for this step. */
+  private wedChoreo(s: WedState, me: string) {
+    const w = this.world;
+    const key = STEP_META[s.step].spots;
+    if (!w || !key) return;
+    const k = s.bride?.id === me ? 0 : 1;
+    const spot = WED_SPOTS[key][k];
+    if (s.step === 'march') {
+      // the music is starting: line up at the entrance straight away, walk in on the cue
+      w.teleport(spot.x, spot.z, spot.ry);
+      return;
+    }
+    w.walkAndFace(spot.x, spot.z, spot.ry, true);
+  }
+
+  private amCouple(s: WedState) {
+    const me = getState().me?.id;
+    return !!me && (s.bride?.id === me || s.groom?.id === me);
+  }
+
+  /** A timed moment of the programme (fired by the floor-7 effects for everyone up there). */
+  private onWedCue(cue: WedCue, s: WedState) {
+    const a = this.ambience?.wedding();
+    const vol = this.zoneId === 'wedding' ? 1 : 0.45;
+    const sfx = (k: Parameters<NonNullable<typeof a>['sfx']>[0], v = 1) => a?.sfx(k, v * vol);
+    const me = getState().me?.id ?? '';
+    const couple = this.amCouple(s);
+    const guest = !couple && this.zoneId === 'wedding';
+    const w = this.world;
+    switch (cue) {
+      case 'march':
+        sfx('chime', 0.8);
+        break;
+      case 'marchGo': {
+        if (!couple || !w) break;
+        const k = s.bride?.id === me ? 0 : 1;
+        const arch = WED_SPOTS.arch[k];
+        // down the aisle at a stately pace, then turn to face each other under the arch
+        w.walkAndFace(arch.x, arch.z, arch.ry, true);
+        break;
+      }
+      case 'rings':
+        sfx('sparkle');
+        break;
+      case 'ringsLand':
+        sfx('chime');
+        if (couple) this.emote('heart');
+        else if (guest) this.emote('clap');
+        break;
+      case 'kiss':
+        sfx('kiss');
+        sfx('cannon', 0.8);
+        sfx('cheer');
+        if (couple) this.emote('heart');
+        else if (guest) this.emote('clap');
+        break;
+      case 'drumroll':
+        sfx('drumroll', 0.8);
+        break;
+      case 'cakeCut':
+        sfx('sparkle');
+        sfx('cheer', 0.8);
+        if (couple) this.emote('cheer');
+        else if (guest) this.emote('clap');
+        break;
+      case 'pour':
+        sfx('fizz');
+        if (couple) this.emote('toast');
+        break;
+      case 'toastTick':
+        sfx('tick');
+        break;
+      case 'toastGo':
+        sfx('clink');
+        sfx('cheer', 0.7);
+        if (this.zoneId === 'wedding') this.emote('toast');
+        break;
+      case 'feast':
+        sfx('chime', 0.7);
+        if (this.zoneId === 'wedding') toast('🍽️ Khai tiệc! Ngồi vào một ghế ở bàn tiệc để thưởng thức nhé', 'info', 4000);
+        break;
+      case 'bouquetTick':
+        sfx('tick');
+        break;
+      case 'bouquetThrow':
+        sfx('whoosh');
+        if (s.bride?.id === me) this.emote('cheer');
+        break;
+      case 'bouquetCatch': {
+        sfx('catch');
+        sfx('cheer', 0.8);
+        const mine = s.bouquet?.id === me;
+        setState({ wedCatch: { name: s.bouquet?.name ?? null, me: mine, at: Date.now() } });
+        if (mine) this.emote('cheer');
+        else if (guest) this.emote('clap');
+        this.syncWedLooks();
+        break;
+      }
+      case 'bouquetMiss':
+        sfx('whoosh', 0.6);
+        setState({ wedCatch: { name: null, me: false, at: Date.now() } });
+        break;
+      case 'dance':
+        this.wedDanceAt = 0;
+        break;
+      case 'party':
+        sfx('cannon');
+        sfx('cheer');
+        if (this.zoneId === 'wedding') this.emote('cheer');
+        break;
+    }
+  }
+
+  private onWedFx(fx: WedFx) {
+    const w = this.world;
+    if (!w) return;
+    const me = getState().me?.id;
+    const p = w.drawnPose(fx.id);
+    const here = !!p && floorOf(p.x) === 6 && w.myFloor === 6;
+    const a = this.ambience?.wedding();
+    switch (fx.k) {
+      case 'gift': {
+        if (here && p) w.office.f7.envelope(p.x, p.z, p.y);
+        if (w.myFloor === 6) {
+          a?.sfx('envelope', 0.8);
+          w.office.f7.wish(fx.name, fx.amount, fx.wish, serverNow());
+        }
+        const s = getState().wed;
+        if (fx.id === me) toast(`💌 Đã gửi phong bì ${money(fx.amount)} — cảm ơn bạn đã chung vui! (tiền ảo cho vui thôi nhé 😄)`, 'success', 4000);
+        else if (w.myFloor === 6 || this.amCouple(s)) setState({ wedGift: { name: fx.name, amount: fx.amount, wish: fx.wish, at: Date.now() } });
+        break;
+      }
+      case 'react':
+        if (here && p) w.office.f7.react(fx.e, p.x, p.z, p.y + 2.1);
+        break;
+      case 'popper':
+        if (here && p) {
+          w.office.f7.popper(p.x, p.z, p.y, p.ry);
+          a?.sfx('pop', 0.8);
+        }
+        break;
+      case 'petals':
+        if (here && p) {
+          w.office.f7.toss(p.x, p.z, p.y, p.ry);
+          a?.sfx('whoosh', 0.35);
+        }
+        break;
+    }
+  }
+
+  /** ~16 Hz while on floor 7. */
+  private wedTick() {
+    const s = getState().wed;
+    if (this.fastFrame % 8 === 0) this.syncWedLooks();
+    // the first dance: the couple keep dancing on the floor
+    if (s.step === 'dance' && this.amCouple(s)) {
+      const now = performance.now();
+      const el = serverNow() - s.stepAt;
+      if (el > 3500 && now - this.wedDanceAt > 5600) {
+        this.wedDanceAt = now;
+        this.emote('dance');
+      }
+    }
+  }
+
+  /** Guests: a reaction, a party popper, a handful of petals. */
+  wedReact(e: string) {
+    this.wed({ a: 'react', e });
   }
 
   /** Save the current view as a framed PNG. */

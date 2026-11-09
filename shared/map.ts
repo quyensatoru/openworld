@@ -1,10 +1,11 @@
 // Office layout shared by the client (3D build, collision, path finding) and the server (zones).
 import { F6, PH_BOARD, PH_ROOMS, PH_ROOM_IDS, PH_WALLS, phZone, type PhRoom } from './prophunt';
+import { F7, WED_AISLE, WED_CAKE, WED_CHAIRS, WED_CHAIR_R, WED_CHANDELIERS, WED_DRESSES, WED_GIFT, WED_PHOTO, WED_PODIUM, WED_RINGS, WED_ROOMS, WED_SCREEN, WED_SIGN, WED_STAGE, WED_TABLES, WED_TOWER, WED_VANITY, WED_WALLS, onWedStage, type WedRoom } from './wedding';
 import { BELL, CAM_DESK, CRIT, FUSE, FUSE_SPOT, MOLE_BOARD, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, MOLE_WALLS, ROOM_META, STATIONS, TASK_META, doorMid, type MoleTaskKind } from './mole';
 // Units are metres. x grows to the east, z grows to the south, y is up.
 // Character yaw `ry`: 0 = facing +z (south), PI/2 = facing +x (east).
 
-export type ZoneKind = 'work' | 'meeting' | 'pantry' | 'focus' | 'lounge' | 'lobby' | 'cinema' | 'bar' | 'game' | 'karaoke' | 'wolf' | 'mole' | 'prop';
+export type ZoneKind = 'work' | 'meeting' | 'pantry' | 'focus' | 'lounge' | 'lobby' | 'cinema' | 'bar' | 'game' | 'karaoke' | 'wolf' | 'mole' | 'prop' | 'wedding';
 
 export interface Rect {
   x0: number;
@@ -25,7 +26,7 @@ export interface Zone extends Rect {
   floor: 'wood' | 'carpet' | 'tile' | 'stone' | 'rug';
 }
 
-export type SeatKind = 'desk' | 'meeting' | 'sofa' | 'stool' | 'focus' | 'cinema' | 'pc' | 'wolf';
+export type SeatKind = 'desk' | 'meeting' | 'sofa' | 'stool' | 'focus' | 'cinema' | 'pc' | 'wolf' | 'banquet';
 
 export interface Seat {
   id: string;
@@ -122,7 +123,28 @@ export type FurnitureKind =
   | 'kidsHouse'
   | 'phBoard'
   | 'locker'
-  | 'wardrobe';
+  | 'wardrobe'
+  // floor 7 wedding hall
+  | 'wedStage'
+  | 'wedScreen'
+  | 'flowerWall'
+  | 'flowerArch'
+  | 'aisleCarpet'
+  | 'flowerStand'
+  | 'banquetTable'
+  | 'chandelier'
+  | 'weddingCake'
+  | 'champagneTable'
+  | 'ringStand'
+  | 'mcPodium'
+  | 'giftTable'
+  | 'wedSign'
+  | 'photoWall'
+  | 'drape'
+  | 'sconce'
+  | 'vanity'
+  | 'mannequinDress'
+  | 'mannequinSuit';
 
 export interface Furniture {
   id: string;
@@ -147,7 +169,7 @@ export interface Wall {
   kind: 'outer' | 'glass' | 'inner' | 'cinema' | 'up' | 'rail' | 'shaft' | 'hidden' | 'annex';
 }
 
-export type InteractKind = 'kanban' | 'coffee' | 'water' | 'arcade' | 'whiteboard' | 'cinema' | 'popcorn' | 'elevator' | 'bar' | 'dj' | 'wheel' | 'snack' | 'karaoke' | 'wolf' | 'mole';
+export type InteractKind = 'kanban' | 'coffee' | 'water' | 'arcade' | 'whiteboard' | 'cinema' | 'popcorn' | 'elevator' | 'bar' | 'dj' | 'wheel' | 'snack' | 'karaoke' | 'wolf' | 'mole' | 'wedding';
 export interface Interactable {
   id: string;
   kind: InteractKind;
@@ -171,8 +193,10 @@ export const GROUND_W = OFFICE_W;
 //   floor 2 (x 120..160) Office Net game room (above the bar) · hall — an L around the cinema roof
 //   floor 3 (x 180..220) karaoke · werewolf village · hall
 //   floor 4 (x 240..280) "Nội Gián": six rooms round a meeting room · hall
-export type Floor = 0 | 1 | 2 | 3 | 4 | 5;
-export const FLOORS = 6;
+//   floor 5 (x 300..340) "Trốn tìm biến hình": a furniture showroom
+//   floor 6 (x 360..400) "Tiệc cưới": the wedding ballroom · reception hall · the bride's room
+export type Floor = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export const FLOORS = 7;
 export const FLOOR_H = 3.4;
 export const UP_DX = 60;
 /** Every room is this tall (the slab between floors is FLOOR_H - WALL_H). */
@@ -210,7 +234,9 @@ export const ROOF5 = { x0: 240, z0: 0, x1: 280, z1: 28 };
 export const HALL5 = { x0: 252, z0: 19, x1: 280, z1: 28 };
 /** Floor 6: the prop-hunt furniture showroom (layout + rules in shared/prophunt.ts). */
 export const ROOF6 = { x0: 300, z0: 0, x1: 340, z1: 28 };
-export const WORLD_W = ROOF6.x1;
+/** Floor 7: the wedding hall (layout + programme in shared/wedding.ts). */
+export const ROOF7 = { x0: 360, z0: 0, x1: 400, z1: 28 };
+export const WORLD_W = ROOF7.x1;
 export const WORLD_D = OFFICE_D;
 export const WALL_T = 0.2;
 export const PLAYER_RADIUS = 0.28;
@@ -233,7 +259,7 @@ export const COYOTE_TIME = 0.12;
 export const JUMP_BUFFER = 0.18;
 
 export function floorOf(x: number): Floor {
-  return x >= 290 ? 5 : x >= 230 ? 4 : x >= 170 ? 3 : x >= 110 ? 2 : x >= 50 ? 1 : 0;
+  return x >= 350 ? 6 : x >= 290 ? 5 : x >= 230 ? 4 : x >= 170 ? 3 : x >= 110 ? 2 : x >= 50 ? 1 : 0;
 }
 /** Where a logical x is drawn. */
 export function visualX(x: number): number {
@@ -247,7 +273,7 @@ export function sameFloorX(x: number, ref: number): number {
 // ---------------------------------------------------------------- stairs
 /** A flight of stairs from floor `lower` to the one above, along the south wall (drawn coords). */
 export interface Stairway {
-  lower: 0 | 1 | 2 | 3 | 4;
+  lower: 0 | 1 | 2 | 3 | 4 | 5;
   x0: number;
   x1: number;
   z0: number;
@@ -261,6 +287,9 @@ export const STAIRWAYS: Stairway[] = [
   { lower: 2, x0: 10.6, x1: 18.6, z0: 26.0, z1: 27.9, dir: -1 }, // hall 3 → hall 4
   { lower: 3, x0: 26.0, x1: 34.0, z0: 26.0, z1: 27.9, dir: 1 }, // hall 4 → hall 5
   { lower: 4, x0: 10.6, x1: 18.6, z0: 26.0, z1: 27.9, dir: -1 }, // hall 5 → hall 6
+  // hall 6 → hall 7: a switchback right beside the flight that comes up into hall 6 (the
+  // south-wall spot an eastward flight would use is the prop-hunt waiting room)
+  { lower: 5, x0: 10.6, x1: 18.6, z0: 24.0, z1: 25.9, dir: 1 },
 ];
 export const STAIRS = STAIRWAYS[0];
 export const STAIR_STEPS = 20;
@@ -313,13 +342,13 @@ const liftAt = (floor: Floor): Lift => {
   const x0 = 22.0 + floor * UP_DX;
   return { floor, x0, x1: x0 + 2.4, z0: 25.8, z1: 28, cx: x0 + 1.2, cz: 26.95 };
 };
-export const LIFTS: Lift[] = [liftAt(0), liftAt(1), liftAt(2), liftAt(3), liftAt(4), liftAt(5)];
+export const LIFTS: Lift[] = [liftAt(0), liftAt(1), liftAt(2), liftAt(3), liftAt(4), liftAt(5), liftAt(6)];
 /** Inside a lift car (standing room). */
 export function liftAtPos(x: number, z: number): Lift | null {
   for (const l of LIFTS) if (x > l.x0 + 0.2 && x < l.x1 - 0.2 && z > l.z0 + 0.3 && z < l.z1) return l;
   return null;
 }
-export const FLOOR_NAMES = ['Tầng 1 · Văn phòng', 'Tầng 2 · Rạp phim & Bar', 'Tầng 3 · Phòng game', 'Tầng 4 · Karaoke & Ma sói', 'Tầng 5 · Nội Gián', 'Tầng 6 · Trốn tìm'];
+export const FLOOR_NAMES = ['Tầng 1 · Văn phòng', 'Tầng 2 · Rạp phim & Bar', 'Tầng 3 · Phòng game', 'Tầng 4 · Karaoke & Ma sói', 'Tầng 5 · Nội Gián', 'Tầng 6 · Trốn tìm', 'Tầng 7 · Tiệc cưới'];
 export const DANCE_FLOOR = { x0: 89, z0: 7.5, x1: 95, z1: 13.5 };
 /** Lucky wheel on the bar's south wall (centre height above the upper floor). */
 export const WHEEL_SPOT = { x: 87.0, y: 1.75, z: 19.82 };
@@ -371,6 +400,11 @@ export const ZONES: Zone[] = [
     const r = PH_ROOMS[k];
     return { id: phZone(k), name: r.name, kind: 'prop', floor: r.floor, x0: F6 + r.x0, z0: r.z0, x1: F6 + r.x1, z1: r.z1 };
   }),
+  // floor 7: the wedding hall
+  ...(Object.keys(WED_ROOMS) as WedRoom[]).map((k): Zone => {
+    const r = WED_ROOMS[k];
+    return { id: r.id, name: r.name, kind: k === 'hall' ? 'lobby' : 'wedding', floor: r.floor, x0: F7 + r.x0, z0: r.z0, x1: F7 + r.x1, z1: r.z1 };
+  }),
 ];
 
 const PI = Math.PI;
@@ -417,6 +451,15 @@ export const WALLS: Wall[] = [
   { x0: STAIRWAYS[4].x0 + 4 * UP_DX, z0: 26.0, x1: STAIRWAYS[4].x0 + 4 * UP_DX, z1: OFFICE_D, kind: 'hidden' },
   { x0: STAIRWAYS[4].x0 + 5 * UP_DX, z0: 26.0, x1: STAIRWAYS[4].x1 + 5 * UP_DX, z1: 26.0, kind: 'rail' },
   { x0: STAIRWAYS[4].x1 + 5 * UP_DX, z0: 26.0, x1: STAIRWAYS[4].x1 + 5 * UP_DX, z1: OFFICE_D, kind: 'rail' },
+  // sixth flight (hall 6 → hall 7, rising east beside the fifth): its north side and high end on
+  // floor 6 (the fifth flight's rail is its south side), a rail round its stairwell on floor 7
+  { x0: STAIRWAYS[5].x0 + 1.0 + 5 * UP_DX, z0: 24.0, x1: STAIRWAYS[5].x1 + 5 * UP_DX, z1: 24.0, kind: 'hidden' },
+  { x0: STAIRWAYS[5].x1 + 5 * UP_DX, z0: 24.0, x1: STAIRWAYS[5].x1 + 5 * UP_DX, z1: 26.0, kind: 'hidden' },
+  { x0: STAIRWAYS[5].x0 + 6 * UP_DX, z0: 24.0, x1: STAIRWAYS[5].x1 + 6 * UP_DX, z1: 24.0, kind: 'rail' },
+  { x0: STAIRWAYS[5].x0 + 6 * UP_DX, z0: 26.0, x1: STAIRWAYS[5].x1 + 6 * UP_DX, z1: 26.0, kind: 'rail' },
+  { x0: STAIRWAYS[5].x0 + 6 * UP_DX, z0: 24.0, x1: STAIRWAYS[5].x0 + 6 * UP_DX, z1: 26.0, kind: 'rail' },
+  // ---- floor 7 (wedding hall): ballroom | hall + the bride's room (shared/wedding.ts)
+  ...WED_WALLS,
   // ---- floor 6 (prop hunt showroom): rooms with wide doorways (shared/prophunt.ts)
   ...PH_WALLS,
   // ---- floor 5 ("Nội Gián"): generated from the floor plan grid (shared/mole.ts), doorways cut out
@@ -613,6 +656,7 @@ export function groundAt(x: number, z: number): number {
     return FLOOR_H + Math.max(0, Math.min(CINEMA_ROWS_Z.length - 1, Math.floor((BAND_FRONT - z) / BAND))) * ROW_RISE;
   }
   if (f === 3 && onStage(x, z)) return 3 * FLOOR_H + KARA_STAGE.h;
+  if (f === 6 && onWedStage(x, z)) return 6 * FLOOR_H + WED_STAGE.h;
   return f * FLOOR_H;
 }
 
@@ -1084,6 +1128,101 @@ for (const l of LIFTS) {
   f('trashBin', 29.0, 27.5, 0.4, 0.4, 0, 'cage');
 }
 
+// ------------------------------------------------------------------ floor 7: the wedding hall
+{
+  const X = (lx: number) => F7 + lx;
+  const BALL = WED_ROOMS.ballroom.id;
+  const HALL7 = WED_ROOMS.hall.id;
+  const BRIDE = WED_ROOMS.bridal.id;
+  const put = (kind: FurnitureKind, x: number, z: number, w: number, d: number, ry: number, solid: boolean, zone: string, extra: Partial<Furniture> = {}) => {
+    const id = `${kind}-${FURNITURE.length}`;
+    FURNITURE.push({ id, kind, x, z, ry, w, d, solid, zone, ...extra });
+    return id;
+  };
+  const SH = WED_STAGE.h;
+  // stage along the north wall: LED wall between two flower walls, the arch, the ring stand, the MC
+  put('wedStage', (WED_STAGE.x0 + WED_STAGE.x1) / 2, (WED_STAGE.z0 + WED_STAGE.z1) / 2, WED_STAGE.x1 - WED_STAGE.x0, WED_STAGE.z1 - WED_STAGE.z0, 0, false, BALL, { h: SH });
+  FURNITURE.push({ id: 'wedScreen-0', kind: 'wedScreen', x: WED_SCREEN.x, z: 0.16, ry: 0, w: WED_SCREEN.w + 0.36, d: 0.2, h: WED_SCREEN.h + 0.3, solid: true, zone: BALL });
+  put('flowerWall', X(14.6), 0.3, 3.2, 0.36, 0, true, BALL, { y: SH });
+  put('flowerWall', X(25.4), 0.3, 3.2, 0.36, 0, true, BALL, { y: SH });
+  put('flowerArch', X(20), 2.3, 3.0, 0.5, 0, false, BALL, { y: SH });
+  put('ringStand', WED_RINGS.x, WED_RINGS.z, 0.4, 0.4, 0, false, BALL, { y: SH });
+  put('mcPodium', WED_PODIUM.x, WED_PODIUM.z, 0.7, 0.5, -0.45, true, BALL, { y: SH });
+  put('bigPlant', X(11.7), 0.7, 0.7, 0.7, 0, true, BALL);
+  put('bigPlant', X(28.3), 0.7, 0.7, 0.7, 0, true, BALL);
+  // the aisle: petal carpet, flower stands, an arch where it starts
+  put('aisleCarpet', (WED_AISLE.x0 + WED_AISLE.x1) / 2, (WED_AISLE.z0 + WED_AISLE.z1) / 2, WED_AISLE.x1 - WED_AISLE.x0, WED_AISLE.z1 - WED_AISLE.z0, 0, false, BALL);
+  for (const z of [9.2, 11.6, 14.0, 16.4]) for (const x of [18.15, 21.85]) put('flowerStand', X(x), z, 0.42, 0.42, 0, true, BALL);
+  put('flowerArch', X(20), 18.25, 3.8, 0.5, 0, false, BALL);
+  // the cake and the champagne tower either side of the dance floor
+  put('weddingCake', WED_CAKE.x, WED_CAKE.z, 1.0, 1.0, 0, true, BALL);
+  put('champagneTable', WED_TOWER.x, WED_TOWER.z, 1.1, 1.1, 0, true, BALL);
+  // round banquet tables, eight chairs each, all facing the table
+  WED_TABLES.forEach((t, i) => {
+    FURNITURE.push({ id: `wedTable-${i + 1}`, kind: 'banquetTable', x: t.x, z: t.z, ry: 0, w: 1.8, d: 1.8, solid: true, zone: BALL });
+    for (let c = 0; c < WED_CHAIRS; c++) {
+      const a = (c / WED_CHAIRS) * Math.PI * 2 + Math.PI / WED_CHAIRS;
+      const x = t.x + Math.sin(a) * WED_CHAIR_R;
+      const z = t.z + Math.cos(a) * WED_CHAIR_R;
+      SEATS.push({ id: `wed-${i + 1}-${c + 1}`, kind: 'banquet', x, z, ry: Math.atan2(t.x - x, t.z - z), zone: BALL, label: `Bàn tiệc ${i + 1}` });
+    }
+  });
+  for (const c of WED_CHANDELIERS) put('chandelier', c.x, c.z, 1.3, 1.3, 0, false, BALL);
+  // chiffon drapes and candle sconces on the walls
+  for (const z of [2.6, 6.8, 11.0, 15.2]) {
+    put('drape', X(0.16), z, 1.7, 0.2, Math.PI / 2, false, BALL);
+    put('drape', X(39.84), z, 1.7, 0.2, -Math.PI / 2, false, BALL);
+    put('sconce', X(0.14), z + 2.1, 0.3, 0.2, Math.PI / 2, false, BALL);
+    put('sconce', X(39.86), z + 2.1, 0.3, 0.2, -Math.PI / 2, false, BALL);
+  }
+  for (const x of [3.6, 8.7, 31.3, 36.4]) put('drape', X(x), 0.16, 1.7, 0.2, 0, false, BALL);
+  for (const x of [3.6, 8.7, 13.8, 26.2, 31.3, 36.4]) put('drape', X(x), 18.84, 1.7, 0.2, Math.PI, false, BALL);
+  for (const x of [6.15, 33.85]) {
+    put('sconce', X(x), 0.14, 0.3, 0.2, 0, false, BALL);
+    put('sconce', X(x), 18.86, 0.3, 0.2, Math.PI, false, BALL);
+  }
+  put('bigPlant', X(0.7), 18.3, 0.7, 0.7, 0, true, BALL);
+  put('bigPlant', X(39.3), 18.3, 0.7, 0.7, 0, true, BALL);
+  put('bigPlant', X(0.7), 0.7, 0.7, 0.7, 0, true, BALL);
+  put('bigPlant', X(39.3), 0.7, 0.7, 0.7, 0, true, BALL);
+  INTERACTABLES.push({ id: 'wed-mc', kind: 'wedding', x: WED_PODIUM.x - 0.3, z: WED_PODIUM.z + 0.75, radius: 1.3, label: '🎙️ Bục MC · điều khiển lễ cưới' });
+  INTERACTABLES.push({ id: 'wed-cake', kind: 'wedding', x: WED_CAKE.x, z: WED_CAKE.z + 1.15, radius: 1.3, label: '🎂 Bánh cưới' });
+  INTERACTABLES.push({ id: 'wed-tower', kind: 'wedding', x: WED_TOWER.x, z: WED_TOWER.z + 1.2, radius: 1.3, label: '🥂 Lấy một ly sâm panh' });
+
+  // reception hall: gift table, welcome sign, photo wall, somewhere to sit
+  put('giftTable', WED_GIFT.x, WED_GIFT.z, 1.8, 0.6, 0, true, HALL7);
+  INTERACTABLES.push({ id: 'wed-gift', kind: 'wedding', x: WED_GIFT.x, z: WED_GIFT.z + 1.1, radius: 1.5, label: '💌 Mừng cưới & ghi lưu bút' });
+  FURNITURE.push({ id: 'wedSign-0', kind: 'wedSign', x: WED_SIGN.x, z: WED_SIGN.z, ry: 0, w: 1.2, d: 0.5, solid: true, zone: HALL7 });
+  INTERACTABLES.push({ id: 'wed-board', kind: 'wedding', x: WED_SIGN.x, z: WED_SIGN.z + 1.1, radius: 1.5, label: '💒 Bảng đám cưới · làm cô dâu / chú rể' });
+  put('photoWall', WED_PHOTO.x, WED_PHOTO.z, 4.0, 0.3, Math.PI / 2, true, HALL7);
+  INTERACTABLES.push({ id: 'wed-photo', kind: 'wedding', x: WED_PHOTO.x + 1.8, z: WED_PHOTO.z, radius: 1.7, label: '📸 Chụp ảnh cưới' });
+  for (const x of [17.9, 22.1]) put('flowerStand', X(x), 19.6, 0.42, 0.42, 0, true, HALL7);
+  put('sofa', X(27.0), 27.45, 2.4, 0.9, Math.PI, true, HALL7);
+  addSeat('sofa', X(26.45), 27.35, Math.PI, HALL7, 'Ghế chờ', 'hall7-1');
+  addSeat('sofa', X(27.55), 27.35, Math.PI, HALL7, 'Ghế chờ', 'hall7-2');
+  put('bigPlant', X(0.65), 19.65, 0.7, 0.7, 0, true, HALL7);
+  put('bigPlant', X(0.65), 27.35, 0.7, 0.7, 0, true, HALL7);
+  put('bigPlant', X(29.35), 19.65, 0.7, 0.7, 0, true, HALL7);
+  put('plant', X(9.6), 27.5, 0.5, 0.5, 0, true, HALL7);
+
+  // the bride's room: vanity, gowns on mannequins, wardrobes, a loveseat
+  put('vanity', WED_VANITY.x, WED_VANITY.z, 1.4, 0.5, -Math.PI / 2, true, BRIDE);
+  addSeat('stool', WED_VANITY.x - 0.75, WED_VANITY.z, Math.PI / 2, BRIDE, 'Ghế trang điểm', 'bridal-vanity');
+  put('mannequinDress', WED_DRESSES.x - 0.75, WED_DRESSES.z, 0.7, 0.7, 0, true, BRIDE);
+  put('mannequinSuit', WED_DRESSES.x + 0.75, WED_DRESSES.z, 0.6, 0.6, 0, true, BRIDE);
+  INTERACTABLES.push({ id: 'wed-dress', kind: 'wedding', x: WED_DRESSES.x, z: WED_DRESSES.z + 1.2, radius: 1.5, label: '👗 Thay trang phục cưới' });
+  put('wardrobe', X(32.3), 19.45, 1.0, 0.55, 0, true, BRIDE);
+  put('wardrobe', X(37.6), 19.45, 1.0, 0.55, 0, true, BRIDE);
+  put('rug', X(35.0), 24.6, 4.2, 3.0, 0, false, BRIDE);
+  put('coffeeTable', X(35.0), 25.9, 1.2, 0.6, 0, true, BRIDE);
+  put('sofa', X(35.0), 27.45, 2.4, 0.9, Math.PI, true, BRIDE);
+  addSeat('sofa', X(34.45), 27.35, Math.PI, BRIDE, 'Sofa phòng cô dâu', 'bridal-1');
+  addSeat('sofa', X(35.55), 27.35, Math.PI, BRIDE, 'Sofa phòng cô dâu', 'bridal-2');
+  put('bigPlant', X(39.35), 27.35, 0.7, 0.7, 0, true, BRIDE);
+  put('bigPlant', X(30.7), 27.35, 0.7, 0.7, 0, true, BRIDE);
+  put('lamp', X(39.5), 25.4, 0.4, 0.4, 0, true, BRIDE);
+}
+
 /**
  * Height of the surface you land on when you jump onto a piece of furniture, in metres above the
  * floor it stands on. Only things you can actually climb are listed: anything missing here, or
@@ -1127,6 +1266,10 @@ export const FURN_TOP: Partial<Record<FurnitureKind, number>> = {
   fireExt: 0.6,
   teddy: 0.5,
   toyBall: 0.4,
+  // the wedding hall
+  banquetTable: 0.76,
+  giftTable: 0.8,
+  vanity: 0.78,
 };
 
 /** Top of a piece of furniture in world height, or Infinity when it can't be climbed. */
@@ -1286,6 +1429,8 @@ export function inRange(a: Presence, b: Presence, kind: MediaKind, slack = 0): b
   const za = zoneAt(a.x, a.z);
   const zb = zoneAt(b.x, b.z);
   if (roomVoice(za) || roomVoice(zb)) return za.id === zb.id;
+  // the wedding stage carries a microphone: whoever stands on it is heard all over the ballroom
+  if (kind !== 'screen' && za.id === 'wedding' && zb.id === 'wedding' && (onWedStage(a.x, a.z) || onWedStage(b.x, b.z))) return true;
   if (voiceMode(za) === 'none' || voiceMode(zb) === 'none') return false;
   if (kind !== 'screen' && (a.status === 'focus' || b.status === 'focus' || a.status === 'away' || b.status === 'away')) return false;
   const r = (kind === 'screen' ? 8 : VOICE_RADIUS) + slack;

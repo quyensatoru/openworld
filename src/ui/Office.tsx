@@ -20,6 +20,7 @@ import { MoleActions, MoleCams, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeetin
 import { MoleTaskModal } from './MoleTasks';
 import { PropActions, PropBlind, PropCrosshair, PropHud, PropHurt, PropPanel, PropResult, PropSplash } from './PropHunt';
 import { PH_ROOM_IDS, phZone } from '../../shared/prophunt';
+import { WeddingActions, WeddingBanner, WeddingPanel, WeddingPops } from './Wedding';
 import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
 import { MeetingTvButton } from './MeetingTv';
 import { VoiceStatus } from './VoiceStatus';
@@ -99,6 +100,8 @@ export function Office() {
         <Safe><PropPanel /></Safe>
         <Safe><PropHud /></Safe>
         <Safe><PropActions /></Safe>
+        <Safe><WeddingPanel /></Safe>
+        <Safe><WeddingActions /></Safe>
         <Safe><LiftPanel /></Safe>
         <Safe><Prompt /></Safe>
         <Safe><VoiceStatus /></Safe>
@@ -121,6 +124,8 @@ export function Office() {
       <Safe><PropHurt /></Safe>
       <Safe><PropSplash /></Safe>
       <Safe><PropResult /></Safe>
+      <Safe><WeddingBanner /></Safe>
+      <Safe><WeddingPops /></Safe>
       <Safe><KaraScore /></Safe>
       <Safe><KaraPhonesAsk /></Safe>
       <Safe><WolfEnd /></Safe>
@@ -171,6 +176,7 @@ const PLACES = [
   { id: 'wolfroom', floor: 3, icon: '🐺', name: 'Ma Sói', hint: '5–12 người · cần mic', zones: ['wolfroom'] },
   { id: 'mole', floor: 4, icon: '🕵️', name: 'Nội Gián', hint: '4–12 người · làm nhiệm vụ, tìm kẻ phá', zones: MOLE_ROOMS.map((r) => `f5-${r}`) },
   { id: 'prophunt', floor: 5, icon: '🪑', name: 'Trốn tìm biến hình', hint: '3–16 người · biến thành đồ vật để trốn', zones: PH_ROOM_IDS.map((r) => phZone(r)) },
+  { id: 'wedding', floor: 6, icon: '💒', name: 'Tiệc cưới', hint: 'Làm cô dâu chú rể · mừng cưới · tung hoa', zones: ['wedding', 'hall7', 'bridal'] },
 ] as const;
 
 /** Top-left: where you are + how many people are online; click to go somewhere else. */
@@ -238,8 +244,9 @@ function PlacesMenu({ zone, onPick }: { zone: string; onPick(): void }) {
   const players = useStore((s) => s.players);
   const meZone = useStore((s) => s.me?.zone);
   const kara = useStore((s) => s.kara.now);
+  const wed = useStore((s) => s.wed);
   const count = (zones: readonly string[]) => Object.values(players).filter((p) => zones.includes(p.zone)).length + (meZone && zones.includes(meZone) ? 1 : 0);
-  const floors = [0, 1, 2, 3, 4, 5];
+  const floors = [0, 1, 2, 3, 4, 5, 6];
   return (
     <div className="places glass">
       <div className="places-title">Đi tới</div>
@@ -250,7 +257,12 @@ function PlacesMenu({ zone, onPick }: { zone: string; onPick(): void }) {
             {PLACES.filter((p) => p.floor === f).map((p) => {
               const here = (p.zones as readonly string[]).includes(zone);
               const n = count(p.zones);
-              const live = p.id === 'karaoke' && kara ? `🎶 ${kara.song.title || 'đang hát'}` : p.hint;
+              const live =
+                p.id === 'karaoke' && kara
+                  ? `🎶 ${kara.song.title || 'đang hát'}`
+                  : p.id === 'wedding' && wed.groom && wed.bride
+                    ? `💍 ${wed.groom.name} & ${wed.bride.name}${wed.step === 'idle' ? ' sắp cưới' : ' đang làm đám cưới'}`
+                    : p.hint;
               return (
                 <button
                   key={p.id}
@@ -650,6 +662,7 @@ function Help() {
     ['🐺 Ma sói', 'Tầng 4: ngồi gốc cây quanh đống lửa (5–12 người), bật mic. Ban đêm chỉ bầy sói nghe được nhau, người chết chỉ nói với người chết'],
     ['🕵️ Nội Gián', 'Tầng 5: tham gia ở bảng trong sảnh (4–12 người). Nhân viên làm nhiệm vụ, nội gián loại người (Q), báo cáo (R), họp và bỏ phiếu'],
     ['🪑 Trốn tìm biến hình', 'Tầng 6 (3–16 người): người trốn biến thành đồ vật (F), khoá góc (R), trêu (T); người tìm bắn bóng — bắn nhầm đồ thật là mất máu'],
+    ['💒 Tiệc cưới', 'Tầng 7: nhận vai cô dâu / chú rể / MC ở bảng ngoài sảnh rồi chạy chương trình — rước dâu, trao nhẫn, hôn, cắt bánh, rót tháp ly, nâng ly, tung hoa, nhảy. Khách mừng phong bì (tiền ảo) kèm lời chúc, bắn pháo giấy, tung hoa; thay đồ ở phòng cô dâu'],
     ['Enter', 'Mở chat'],
     ['K', 'Mở bảng Kanban'],
     ['Esc', 'Đóng cửa sổ / huỷ đi tới'],

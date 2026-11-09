@@ -29,6 +29,8 @@ import {
   ROOF4,
   ROOF5,
   ROOF6,
+  ROOF7,
+  FLOORS,
   WOLF,
   NET_SCREEN,
   STAIRWAYS,
@@ -49,6 +51,8 @@ import { COLUMNS, PRIORITY_META, type Task } from '../../shared/protocol';
 import { ROOM_META, type MoleRoom } from '../../shared/mole';
 import { PH_ROOMS, type PhRoom } from '../../shared/prophunt';
 import { Floor6Fx } from './floor6';
+import { Floor7Fx } from './floor7';
+import { WED_ROOMS, WED_SCREEN } from '../../shared/wedding';
 import { BarFx } from './bar';
 import { KaraokeFx, WolfFx } from './floor4';
 import { Floor5Fx } from './floor5';
@@ -76,8 +80,9 @@ const FLOOR_TINT: Record<string, string> = {
 };
 
 /** Openings in each floor's slab (logical coords of that floor): the stairwell below + the lift. */
-const HOLES: Rect[][] = [0, 1, 2, 3, 4, 5].map((f) => [
-  ...STAIRWAYS.filter((s) => s.lower === f - 1).map((s) => ({ x0: s.x0 + f * UP_DX, z0: s.z0, x1: s.x1 + f * UP_DX, z1: OFFICE_D })),
+const HOLES: Rect[][] = Array.from({ length: FLOORS }, (_, f) => [
+  // (a flight along the south wall opens up to the wall; the floor-7 switchback only its own width)
+  ...STAIRWAYS.filter((s) => s.lower === f - 1).map((s) => ({ x0: s.x0 + f * UP_DX, z0: s.z0, x1: s.x1 + f * UP_DX, z1: s.z1 > OFFICE_D - 0.5 ? OFFICE_D : s.z1 + 0.1 })),
   ...LIFTS.filter((l) => f > 0 && l.floor === f).map((l) => ({ x0: l.x0, z0: l.z0, x1: l.x1, z1: l.z1 })),
 ]);
 /** The openings of the floor above, in this floor's coords (holes in this floor's ceiling). */
@@ -142,6 +147,8 @@ export class OfficeScene {
   readonly roof5 = new THREE.Group();
   /** Floor 6 (the prop-hunt showroom). */
   readonly roof6 = new THREE.Group();
+  /** Floor 7 (the wedding hall). */
+  readonly roof7 = new THREE.Group();
   /** Ground-floor interior (hidden while you are upstairs; stairs, floors and the outside stay). */
   readonly downstairs = new THREE.Group();
   /** Per floor: the group holding its interior. */
@@ -168,7 +175,7 @@ export class OfficeScene {
   private cinemaHole = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0, blending: THREE.NoBlending, fog: false, toneMapped: false });
   private marquees: THREE.MeshBasicMaterial[] = [];
   /** Ceiling + light panels only exist for the first-person view (invisible from above anyway). */
-  private ceilings = [new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group()];
+  private ceilings = Array.from({ length: FLOORS }, () => new THREE.Group());
   /** Lift cars parked on each floor, and the one that carries you during a ride. */
   private cars: THREE.Group[] = [];
   private rideCar: THREE.Group;
@@ -179,11 +186,16 @@ export class OfficeScene {
   private moleBoardMesh: THREE.Mesh | null = null;
   readonly f5: Floor5Fx;
   readonly f6: Floor6Fx;
+  readonly f7: Floor7Fx;
+  private wedScreenMesh: THREE.Mesh | null = null;
+  private wedSignMesh: THREE.Mesh | null = null;
   private shadowFloor = -1;
   /** Lawn, path and trees: they are lit by the sun, so after dark we darken them by hand. */
   private outdoorMats: { m: THREE.MeshStandardMaterial; base: THREE.Color }[] = [];
   private nightK = -1;
   private doors: { door: Door; left: THREE.Mesh; right: THREE.Mesh; open: number }[] = [];
+  /** Shared server clock in ms (the wedding's effects run on it). */
+  serverMs: () => number = () => Date.now();
 
   constructor() {
     this.group.name = 'office';
@@ -197,10 +209,12 @@ export class OfficeScene {
     this.roof5.position.set(-4 * UP_DX, 4 * FLOOR_H, 0);
     this.roof6.name = 'floor-6';
     this.roof6.position.set(-5 * UP_DX, 5 * FLOOR_H, 0);
+    this.roof7.name = 'floor-7';
+    this.roof7.position.set(-6 * UP_DX, 6 * FLOOR_H, 0);
     this.downstairs.name = 'floor-1';
-    this.group.add(this.downstairs, this.upstairs, this.top, this.roof4, this.roof5, this.roof6);
-    this.levels = [this.downstairs, this.upstairs, this.top, this.roof4, this.roof5, this.roof6];
-    const statics = [new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group(), new THREE.Group()];
+    this.group.add(this.downstairs, this.upstairs, this.top, this.roof4, this.roof5, this.roof6, this.roof7);
+    this.levels = [this.downstairs, this.upstairs, this.top, this.roof4, this.roof5, this.roof6, this.roof7];
+    const statics = Array.from({ length: FLOORS }, () => new THREE.Group());
     const staticOut = new THREE.Group(); // always drawn: trees, skirting, the first staircase
     const layer = (x: number) => ({ root: this.levels[floorOf(x)], stat: statics[floorOf(x)] });
 
@@ -220,7 +234,8 @@ export class OfficeScene {
 
     for (const z of ZONES) {
       const zf = floorOf(z.x0);
-      const tint = z.id.startsWith('f5-') ? ROOM_META[z.id.slice(3) as MoleRoom]?.tint : z.id.startsWith('f6-') ? PH_ROOMS[z.id.slice(3) as PhRoom]?.tint : FLOOR_TINT[z.id];
+      const wedTint = Object.values(WED_ROOMS).find((r) => r.id === z.id)?.tint;
+      const tint = z.id.startsWith('f5-') ? ROOM_META[z.id.slice(3) as MoleRoom]?.tint : z.id.startsWith('f6-') ? PH_ROOMS[z.id.slice(3) as PhRoom]?.tint : wedTint ?? FLOOR_TINT[z.id];
       const base = floorTexture(z.floor as FloorKind, tint ?? '#eeeeee');
       for (const r of subtract(z, HOLES[zf])) {
         const w = r.x1 - r.x0;
@@ -228,7 +243,9 @@ export class OfficeScene {
         const tex = base.clone();
         tex.needsUpdate = true;
         tex.repeat.set(w / 2, d / 2);
-        const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial({ map: tex, roughness: z.floor === 'tile' ? 0.45 : z.kind === 'bar' ? 0.55 : 0.85 }));
+        // the ballroom's marble is polished: it catches the chandeliers and the dance floor
+        const rough = z.id === 'wedding' ? 0.32 : z.floor === 'tile' ? 0.45 : z.kind === 'bar' ? 0.55 : 0.85;
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial({ map: tex, roughness: rough, metalness: z.id === 'wedding' ? 0.08 : 0 }));
         m.rotation.x = -Math.PI / 2;
         m.position.set((r.x0 + r.x1) / 2, 0.001, (r.z0 + r.z1) / 2);
         m.receiveShadow = true;
@@ -251,11 +268,12 @@ export class OfficeScene {
     for (const r of subtract(ROOF4, HOLES[3])) addSlab(r, this.roof4, -slabT / 2 - 0.003, slabMat);
     for (const r of subtract(ROOF5, HOLES[4])) addSlab(r, this.roof5, -slabT / 2 - 0.003, slabMat);
     for (const r of subtract(ROOF6, HOLES[5])) addSlab(r, this.roof6, -slabT / 2 - 0.003, slabMat);
+    for (const r of subtract(ROOF7, HOLES[6])) addSlab(r, this.roof7, -slabT / 2 - 0.003, slabMat);
     // the cinema is two storeys tall: its roof sits level with floor 3's slab above the walls. It
     // belongs to floor 3's view (from floor 2 the camera looks down into the cinema).
     addSlab({ ...CINEMA, x0: CINEMA.x0 + UP_DX, x1: CINEMA.x1 + UP_DX }, this.top, WALL_H + slabT / 2, mat('#4a4152', { rough: 0.9 }));
     // Invisible planes used for click-to-move ray casts.
-    for (const f of [0, 1, 2, 3, 4, 5] as const) {
+    for (let f = 0; f < FLOORS; f++) {
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(OFFICE_W, OFFICE_D), new THREE.MeshBasicMaterial({ visible: false }));
       plane.rotation.x = -Math.PI / 2;
       plane.position.set(OFFICE_W / 2 + f * UP_DX, 0, OFFICE_D / 2);
@@ -290,6 +308,12 @@ export class OfficeScene {
       const dyn: Dynamic = {};
       const obj = buildFurniture(f, dyn);
       const L = layer(f.x);
+      if (f.kind === 'chandelier') {
+        // hanging crystal: not merged (it would cast hard shadows over the tables), no shadows
+        obj.traverse((o) => ((o as THREE.Mesh).castShadow = false));
+        L.root.add(obj);
+        continue;
+      }
       L.stat.add(obj);
       // (floor 6: screens stay as built — a hider copying a desk must look exactly like the real ones)
       if (dyn.monitor && floorOf(f.x) !== 5) {
@@ -310,6 +334,8 @@ export class OfficeScene {
         if (f.kind === 'karaScreen') this.setupKaraScreen(dyn.screen);
         if (f.kind === 'wolfBoard') this.wolfBoardMesh = dyn.screen;
         if (f.kind === 'moleBoard') this.moleBoardMesh = dyn.screen;
+        if (f.kind === 'wedScreen') this.wedScreenMesh = dyn.screen;
+        if (f.kind === 'wedSign') this.wedSignMesh = dyn.screen;
       }
     }
     SEATS.forEach((s, i) => {
@@ -356,7 +382,14 @@ export class OfficeScene {
           (it.id === 'mole-board' && x.kind === 'moleBoard') ||
           (it.id === 'mole-fuse' && x.kind === 'fuseBox') ||
           (it.id === 'mole-bell' && x.kind === 'moleTable') ||
-          (it.id.startsWith('mole-crit') && x.id === it.id.replace('mole-', '')),
+          (it.id.startsWith('mole-crit') && x.id === it.id.replace('mole-', '')) ||
+          (it.id === 'wed-gift' && x.kind === 'giftTable') ||
+          (it.id === 'wed-board' && x.kind === 'wedSign') ||
+          (it.id === 'wed-photo' && x.kind === 'photoWall') ||
+          (it.id === 'wed-dress' && x.kind === 'mannequinDress') ||
+          (it.id === 'wed-mc' && x.kind === 'mcPodium') ||
+          (it.id === 'wed-cake' && x.kind === 'weddingCake') ||
+          (it.id === 'wed-tower' && x.kind === 'champagneTable'),
       );
       const proxy = new THREE.Mesh(new THREE.BoxGeometry(f ? Math.max(f.w, 0.6) : 1, 2.2, f ? Math.max(f.d, 0.6) : 1), new THREE.MeshBasicMaterial({ visible: false }));
       proxy.position.set(f?.x ?? it.x, it.kind === 'wheel' ? 1.75 : 1.1, f?.z ?? it.z);
@@ -389,6 +422,9 @@ export class OfficeScene {
     this.f5 = new Floor5Fx(this.roof5);
     if (this.moleBoardMesh) this.f5.setupBoard(this.moleBoardMesh);
     this.f6 = new Floor6Fx(this.roof6);
+    this.f7 = new Floor7Fx(this.roof7);
+    if (this.wedScreenMesh) this.f7.setupScreen(this.wedScreenMesh, WED_SCREEN);
+    if (this.wedSignMesh) this.f7.setupSign(this.wedSignMesh);
     this.setMonitorsFrom(new Set());
   }
 
@@ -523,6 +559,7 @@ export class OfficeScene {
         g.add(m);
       };
       wall(len, 0.06, cx, st.z0 - 0.03); // inner side (toward the hall)
+      if (st.z1 < OFFICE_D - 1) wall(len, 0.06, cx, st.z1 + 0.13); // the switchback's other side
       wall(0.06, depth + 0.1, high, cz); // under the landing at the top
       // past the open foot of the flight you can see under the slab: close that part of the
       // storey below too (its outer walls are not drawn either), or the lawn shows again
@@ -576,6 +613,15 @@ export class OfficeScene {
     rail.rotation.z = Math.PI / 2 - ang;
     rail.castShadow = true;
     root.add(rail);
+    if (st.z1 < OFFICE_D - 1) {
+      // the floor-7 switchback: open on both sides (the other flight's stairwell is beside it)
+      const g2 = glass.clone();
+      g2.position.z = st.z1 - 0.04;
+      root.add(g2);
+      const r2 = rail.clone();
+      r2.position.z = st.z1 - 0.04;
+      root.add(r2);
+    }
     for (let i = 0; i <= 5; i++) {
       const vx = st.x0 + 0.2 + (i / 5) * (st.x1 - st.x0 - 0.4);
       const k = st.dir < 0 ? (st.x1 - vx) / (st.x1 - st.x0) : (vx - st.x0) / (st.x1 - st.x0);
@@ -681,7 +727,13 @@ export class OfficeScene {
                   ? '#2c2230'
                   : fl === 4
                     ? '#5a6479'
-                    : C.wall;
+                    : fl === 6
+                      ? cz < 19.05 && Math.abs(cz - 19) > 0.01
+                        ? '#f5ece1' // ballroom: warm ivory
+                        : Math.abs(cz - 19) < 0.01 || lx > 389.99
+                          ? '#f3e4e2' // the ballroom's south wall + the bride's room: blush
+                          : '#efe7dc'
+                      : C.wall;
       this.addFadeWall(new THREE.BoxGeometry(sx, UP_WALL_H, sz), color, cx, UP_WALL_H / 2, cz, root);
       rbox(stat, alongX ? len : WALL_T + 0.04, 0.12, alongX ? WALL_T + 0.04 : len, C.wallTrim, cx, 0.06, cz, 0.01);
       return;
@@ -725,7 +777,7 @@ export class OfficeScene {
         ceil.position.set((r.x0 + r.x1) / 2, h, (r.z0 + r.z1) / 2);
         parent.add(ceil);
       }
-      if (z.kind === 'bar' || z.kind === 'karaoke' || z.kind === 'wolf') continue;
+      if (z.kind === 'bar' || z.kind === 'karaoke' || z.kind === 'wolf' || z.id === 'wedding') continue;
       const step = z.kind === 'cinema' ? 4 : 3.2;
       for (let x = z.x0 + step / 2; x < z.x1; x += step) {
         for (let zz = z.z0 + step / 2; zz < z.z1; zz += step) {
@@ -856,6 +908,52 @@ export class OfficeScene {
     up6.position.set(STAIRWAYS[4].x0 + 4 * UP_DX + 4.0, 2.5, OFFICE_D - 0.13);
     up6.rotation.y = Math.PI;
     this.roof5.add(up6);
+    // hall 6 → floor 7: a two-sided sign hanging over the foot of the switchback
+    const up7Tex = canvasTexture(1024, 192, (g, w) => {
+      const gr = g.createLinearGradient(0, 0, w, 0);
+      gr.addColorStop(0, '#fff4ee');
+      gr.addColorStop(1, '#f7dbe1');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, 192);
+      g.strokeStyle = '#d8b26e';
+      g.lineWidth = 8;
+      g.strokeRect(6, 6, w - 12, 180);
+      g.textAlign = 'center';
+      g.font = '800 64px "Be Vietnam Pro", sans-serif';
+      g.fillStyle = '#b4476a';
+      g.fillText('⬆ TẦNG 7 · 💒 TIỆC CƯỚI', w / 2, 120);
+    });
+    const up7Mat = new THREE.MeshBasicMaterial({ map: up7Tex, toneMapped: false, side: THREE.DoubleSide });
+    const up7 = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.6), up7Mat);
+    up7.position.set(STAIRWAYS[5].x0 + 5 * UP_DX + 2.4, 2.75, STAIRWAYS[5].z0 - 0.02);
+    this.roof6.add(up7);
+    // floor 7: a warm neon over the ballroom's entrance (hall side) and a "Love" sign inside
+    const wedNeon = (text: string, glow: string, fill: string, font: string) =>
+      new THREE.MeshBasicMaterial({
+        map: canvasTexture(1024, 256, (g, w, h) => {
+          g.clearRect(0, 0, w, h);
+          g.textAlign = 'center';
+          g.font = font;
+          g.shadowColor = glow;
+          g.shadowBlur = 30;
+          g.lineWidth = 6;
+          g.strokeStyle = glow;
+          g.strokeText(text, w / 2, 172);
+          g.shadowBlur = 12;
+          g.fillStyle = fill;
+          g.fillText(text, w / 2, 172);
+        }),
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+      });
+    const wedSign = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 0.75), wedNeon('💒 Wedding Hall', '#ffb3c6', '#fff6f8', 'italic 700 120px "Be Vietnam Pro", serif'));
+    wedSign.position.set(380, 2.78, 19.13);
+    this.roof7.add(wedSign);
+    const love = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.55), wedNeon('Love ♡ Forever', '#ffd58a', '#fffaf0', 'italic 700 120px "Be Vietnam Pro", serif'));
+    love.position.set(380, 2.72, 18.87);
+    love.rotation.y = Math.PI;
+    this.roof7.add(love);
 
     const lobby = new THREE.MeshBasicMaterial({ map: this.marqueeTexture(null, true), toneMapped: false, transparent: true, opacity: 1 });
     const m1 = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 0.75), lobby);
@@ -1299,6 +1397,7 @@ export class OfficeScene {
     }
     if (floor === 4) this.f5.tick(dt);
     if (floor === 5) this.f6.tick(dt);
+    if (floor === 6) this.f7.tick(dt, this.serverMs());
     // attract-mode screens: ~20 redraws a second is smooth for pixel art (each one re-uploads a texture)
     this.arcAcc += dt;
     const arcDt = this.arcAcc;

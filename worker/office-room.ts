@@ -7,6 +7,8 @@ import { sanitizeAvatar } from '../shared/avatar';
 import { BUILD_ID } from '../shared/build';
 import { Arcade } from './arcade';
 import { Karaoke } from './karaoke';
+import { Wedding } from './wedding';
+import { inWedZone, type WedState } from '../shared/wedding';
 import { Werewolf } from './werewolf';
 import { MoleGame } from './mole';
 import { PropHuntGame } from './prophunt';
@@ -135,6 +137,17 @@ export class OfficeRoom extends DurableObject<Env> {
       if (c) this.send(c.ws, { t: 'err', msg: text });
     },
   });
+  /** The wedding hall (floor 7). */
+  private wed = new Wedding({
+    people: () => [...this.conns.values()].map((c) => c.p),
+    broadcast: (msg) => this.broadcast(msg),
+    chat: (text) => void this.systemChat(text),
+    err: (id, text) => {
+      const c = this.conns.get(id);
+      if (c) this.send(c.ws, { t: 'err', msg: text });
+    },
+    save: (state) => void this.ctx.storage.put('wed', state).catch(() => {}),
+  });
   private activityRate = new Map<string, { t: number; n: number }>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -150,6 +163,7 @@ export class OfficeRoom extends DurableObject<Env> {
       this.cinema = (await ctx.storage.get<CinemaState>('cinema')) ?? null;
       this.jukebox = (await ctx.storage.get<CinemaState>('jukebox')) ?? null;
       this.kara.restore((await ctx.storage.get<KaraState>('kara')) ?? undefined);
+      this.wed.restore((await ctx.storage.get<WedState>('wed')) ?? undefined);
       const v = await ctx.storage.get<number>('schemaVersion');
       if (v !== SCHEMA_VERSION) {
         await db.ensureSchema(env.DB);
@@ -375,6 +389,7 @@ export class OfficeRoom extends DurableObject<Env> {
     this.wolf.leave(id);
     this.mole.leave(id);
     this.ph.leave(id);
+    this.wed.left(id, true);
     const now = Date.now();
     if (c.workSince != null) {
       await db.addWorklog(this.env.DB, this.day(now), id, { workMs: now - c.workSince });
@@ -476,6 +491,7 @@ export class OfficeRoom extends DurableObject<Env> {
     if (f5(zone) && !f5(prev)) this.mole.arrived(c.p.id);
     const f6 = (z: string) => z.startsWith('f6-');
     if (f6(zone) && !f6(prev)) this.ph.arrived(c.p.id);
+    if (inWedZone(prev) && !inWedZone(zone)) this.wed.left(c.p.id, false);
   }
 
   // ------------------------------------------------------------------ voice / camera / screen relay
@@ -641,6 +657,7 @@ export class OfficeRoom extends DurableObject<Env> {
       cinema: this.cinema,
       jukebox: this.jukebox,
       kara: this.kara.state,
+      wed: this.wed.state,
       activity,
     });
     this.broadcast({ t: 'join', p }, id);
@@ -875,6 +892,10 @@ export class OfficeRoom extends DurableObject<Env> {
 
       case 'prop':
         if (msg.m && typeof msg.m === 'object') this.ph.handle(p, msg.m);
+        return;
+
+      case 'wed':
+        if (msg.m && typeof msg.m === 'object') this.wed.handle(p, msg.m);
         return;
 
       case 'activity:token': {

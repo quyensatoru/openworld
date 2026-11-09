@@ -8,7 +8,7 @@ import type { FurnitureKind, Wall } from './map';
 export const F6 = 300; // logical x of floor 6's west wall
 export const PH_FLOOR = 5;
 /** Logical x → is it on floor 6. */
-export const onPropFloor = (x: number) => x >= F6 - 10;
+export const onPropFloor = (x: number) => x >= F6 - 10 && x < F6 + 50;
 
 // ------------------------------------------------------------------ floor plan (local x 0..40, z 0..28)
 export type PhRoom = 'living' | 'bedroom' | 'kitchen' | 'office' | 'storage' | 'kids' | 'hall' | 'cage';
@@ -75,7 +75,7 @@ export const PH_CAGE_SPOTS = [
 ].map(([x, z]) => ({ x: F6 + x, z }));
 export const PH_START_SPOTS = [
   [2.5, 20.8], [5, 21.5], [7.5, 20.8], [10, 21.8], [12.5, 20.8], [15, 21.8], [17.5, 20.8], [20, 21.8],
-  [22.5, 20.8], [25, 21.8], [3.5, 23.6], [8, 23.8], [13, 23.6], [18, 23.8], [25.5, 23.6], [6, 25.2],
+  [22.5, 20.8], [25, 21.8], [3.5, 23.6], [8, 23.8], [13, 23.2], [18, 23.2], [25.5, 23.6], [6, 25.2],
 ].map(([x, z]) => ({ x: F6 + x, z }));
 
 // ------------------------------------------------------------------ props
