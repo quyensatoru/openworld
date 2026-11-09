@@ -455,11 +455,13 @@ class Game {
       this.world?.office.setF5Lamps(!(mv && mv.phase === 'play' && mv.lights > serverNow()));
     }
     // floor 7: a candle-lit ballroom; darker for the first dance, party colours when it kicks off
+    // (a banquet hall is dim: the light comes from the chandeliers, candles, uplights and the stage)
     if (this.zoneId === 'wedding') {
       const st = getState().wed.step;
-      const dark = st === 'party' ? 0.74 : st === 'dance' ? 0.64 : st === 'idle' || st === 'feast' ? 0.24 : 0.42;
+      const dark = st === 'party' || st === 'dance' ? 0.985 : 0.97;
       this.world?.setDim(0, dark, st === 'party' ? 'wedParty' : 'wedding');
-    }
+    } else if (this.zoneId === 'hall7') this.world?.setDim(0, 0.5, 'wedding');
+    else if (this.zoneId === 'bridal') this.world?.setDim(0, 0.3, 'wedding');
     const onWed = inWedZone(this.zoneId);
     if (onWed !== this.wasOnWed) {
       this.wasOnWed = onWed;

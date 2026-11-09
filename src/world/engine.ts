@@ -2268,14 +2268,14 @@ export class World {
         this.moodCol.set('#3d55b8');
         add = 0.12;
       } else if (this.mood === 'wedding') {
-        // candle-lit ballroom: warm rose gold, breathing very slowly
-        this.moodCol.set('#ffc9a6');
-        add = 0.42 + 0.04 * Math.sin(t * 0.6);
+        // candle-lit ballroom: warm amber with a touch of rose, breathing very slowly
+        this.moodCol.set('#ffa27e');
+        add = 0.095 + 0.008 * Math.sin(t * 0.6);
       } else if (this.mood === 'wedParty') {
         const k = t / 3;
         const i = Math.floor(k) % WED_HUES.length;
         this.moodCol.copy(WED_HUES[i]).lerp(WED_HUES[(i + 1) % WED_HUES.length], k % 1);
-        add = 0.3;
+        add = 0.16;
       } else if (this.mood === 'facility') {
         // cold, dim and unsteady: the lights dip now and then
         this.moodCol.set('#6f86c8');
@@ -2291,7 +2291,10 @@ export class World {
     }
     this.sun.intensity = this.look.keyI * (1 - 0.8 * this.dim) * lit;
     this.windowLight.intensity = this.look.winI * (1 - 0.85 * this.dim) * lit;
-    this.scene.environmentIntensity = this.look.env * (1 - 0.9 * this.dark);
+    // (the environment map is the strongest fill in a dark room: the wedding hall dims it more,
+    // so the candles, chandeliers and uplights do the lighting)
+    const wed = this.mood === 'wedding' || this.mood === 'wedParty';
+    this.scene.environmentIntensity = this.look.env * (1 - (wed ? 0.94 : 0.9) * this.dark);
     VrmAvatar.glow = 0.05 + 0.37 * Math.max(this.dark, this.dim * 0.6);
 
     // walls between camera and me fade out

@@ -11,6 +11,7 @@
 //  - the rings flying to the couple, the champagne tower filling, the feast on every table, the
 //    bouquet flying to whoever catches it, gift envelopes flying into the gift box
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   STEP_META,
   WED_CAKE,
@@ -29,7 +30,7 @@ import {
   type WedState,
   type WedStep,
 } from '../../shared/wedding';
-import { WALL_H } from '../../shared/map';
+import { FURNITURE, WALL_H, floorOf } from '../../shared/map';
 import { canvasTexture } from './materials';
 import { CAKE_TOP_Y, CHAMPAGNE_GLASSES } from './wedding-furniture';
 
@@ -143,6 +144,132 @@ function emoji(e: string): THREE.CanvasTexture {
     emojiTex.set(e, t);
   }
   return t;
+}
+
+/** Uplight: a cone of light rising up a wall from a fixture on the floor (bright at the bottom). */
+let upT: THREE.CanvasTexture | null = null;
+function uplightTex() {
+  upT ??= canvasTexture(64, 256, (g, w, h) => {
+    const img = g.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const yn = 1 - y / (h - 1); // 0 at the floor, 1 at the ceiling
+      const inten = 0.12 * (1 - yn) + 0.88 * Math.pow(1 - yn, 1.6);
+      const spread = 0.16 + 0.5 * yn;
+      for (let x = 0; x < w; x++) {
+        const dx = (x / (w - 1)) * 2 - 1;
+        const a = inten * Math.exp(-((dx / spread) ** 2)) * Math.min(1, (1 - yn) * 30);
+        const i = (y * w + x) * 4;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+        img.data[i + 3] = Math.round(255 * Math.min(1, a));
+      }
+    }
+    g.putImageData(img, 0, 0);
+  });
+  return upT;
+}
+/** Gobo: soft dots and little hearts thrown on the dance floor by a rotating projector. */
+let goboT: THREE.CanvasTexture | null = null;
+function goboTex() {
+  goboT ??= canvasTexture(512, 512, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const cx = w / 2;
+    const cy = h / 2;
+    for (let i = 0; i < 150; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = Math.sqrt(rnd()) * w * 0.47;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      const fade = 1 - r / (w * 0.5);
+      if (i % 9 === 0) drawHeart(g, x, y, 7 + rnd() * 5, `rgba(255,255,255,${0.75 * fade})`);
+      else {
+        const s = 3 + rnd() * 6;
+        const gr = g.createRadialGradient(x, y, 0, x, y, s);
+        gr.addColorStop(0, `rgba(255,255,255,${0.9 * fade})`);
+        gr.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = gr;
+        g.fillRect(x - s, y - s, s * 2, s * 2);
+      }
+    }
+  });
+  return goboT;
+}
+
+const v2 = new THREE.Vector2();
+/** Pixels per metre at 1 m for the camera rendering a point cloud (for real-size glows). */
+function pointScale(r: THREE.WebGLRenderer, cam: THREE.Camera): number {
+  const h = r.getDrawingBufferSize(v2).y;
+  const fov = (cam as THREE.PerspectiveCamera).fov ?? 50;
+  return h / (2 * Math.tan(((fov * Math.PI) / 180) / 2));
+}
+
+/** One draw call for every little light of the room: each point a soft flickering glow of its own size and colour. */
+function glowCloud(pts: { x: number; y: number; z: number; size: number; color: THREE.Color }[]): { obj: THREE.Points; mat: THREE.ShaderMaterial } {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts.flatMap((p) => [p.x, p.y, p.z]), 3));
+  geo.setAttribute('gcol', new THREE.Float32BufferAttribute(pts.flatMap((p) => [p.color.r, p.color.g, p.color.b]), 3));
+  geo.setAttribute('gsize', new THREE.Float32BufferAttribute(pts.map((p) => p.size), 1));
+  geo.setAttribute('phase', new THREE.Float32BufferAttribute(pts.map(() => Math.random() * 100), 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0 }, scale: { value: 800 }, boost: { value: 1 }, map: { value: glowTex() } },
+    vertexShader: `
+      attribute vec3 gcol;
+      attribute float gsize;
+      attribute float phase;
+      uniform float time;
+      uniform float scale;
+      varying vec3 vC;
+      void main() {
+        // candles flicker, bigger glows (halos, washes) just breathe
+        float k = gsize > 1.2 ? 0.06 : 0.2;
+        float fl = 1.0 - k + k * sin(time * (3.0 + fract(phase * 7.1) * 6.0) + phase) * sin(time * 1.7 + phase * 3.0);
+        vC = gcol * fl;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = min(gsize * scale / -mv.z, 900.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform sampler2D map;
+      uniform float boost;
+      varying vec3 vC;
+      void main() {
+        float a = texture2D(map, gl_PointCoord).a;
+        gl_FragColor = vec4(vC * a * boost, 1.0);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const obj = new THREE.Points(geo, mat);
+  obj.frustumCulled = false;
+  obj.onBeforeRender = (r, _s, cam) => (mat.uniforms.scale.value = pointScale(r, cam));
+  return { obj, mat };
+}
+
+/** Flat quads (floor pools, wall washes) merged into one mesh, each with its own colour. */
+function quadBatch(quads: { c: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; color: THREE.Color }[], map: THREE.Texture, opacity: number): THREE.Mesh {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const col: number[] = [];
+  const idx: number[] = [];
+  quads.forEach((q, i) => {
+    for (const [a, b, s, t] of [[-1, -1, 0, 0], [1, -1, 1, 0], [1, 1, 1, 1], [-1, 1, 0, 1]]) {
+      pos.push(q.c.x + q.u.x * a + q.v.x * b, q.c.y + q.u.y * a + q.v.y * b, q.c.z + q.u.z * a + q.v.z * b);
+      uv.push(s, t);
+      col.push(q.color.r, q.color.g, q.color.b);
+    }
+    const k = i * 4;
+    idx.push(k, k + 1, k + 2, k, k + 2, k + 3);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map, vertexColors: true, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide, fog: false }));
+  m.frustumCulled = false;
+  return m;
 }
 
 const add = (color: string | THREE.Color, opacity = 1, map: THREE.Texture | null = null) =>
@@ -441,8 +568,13 @@ export class Floor7Fx {
   private spots: { cone: THREE.Mesh; pool: THREE.Mesh; on: number; x: number; z: number }[] = [];
   private beams: THREE.Mesh[] = [];
   private beamOn = 0;
-  private pools: THREE.Mesh[] = [];
-  private candles: THREE.Sprite[] = [];
+  private glowMat: THREE.ShaderMaterial;
+  private motesMat: THREE.ShaderMaterial;
+  private pools: THREE.Mesh;
+  private uplights: THREE.Mesh;
+  private stageWash: THREE.Mesh;
+  private gobo: THREE.Mesh;
+  private trussBeams: THREE.Mesh;
 
   // particles
   private petals: Flakes;
@@ -489,15 +621,16 @@ export class Floor7Fx {
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('phase', new THREE.Float32BufferAttribute(ph, 1));
       this.fairyMat = new THREE.ShaderMaterial({
-        uniforms: { time: { value: 0 }, map: { value: glowTex() }, color: { value: new THREE.Color('#ffe2b3') }, boost: { value: 1 } },
+        uniforms: { time: { value: 0 }, scale: { value: 800 }, map: { value: glowTex() }, color: { value: new THREE.Color('#ffe2b3') }, boost: { value: 1 } },
         vertexShader: `
           attribute float phase;
           uniform float time;
+          uniform float scale;
           varying float vA;
           void main() {
             vA = 0.55 + 0.45 * sin(time * (1.3 + fract(phase * 3.7) * 1.9) + phase);
             vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = 0.11 * 900.0 / -mv.z;
+            gl_PointSize = min(0.1 * scale / -mv.z, 256.0);
             gl_Position = projectionMatrix * mv;
           }`,
         fragmentShader: `
@@ -515,6 +648,7 @@ export class Floor7Fx {
       });
       this.fairy = new THREE.Points(geo, this.fairyMat);
       this.fairy.frustumCulled = false;
+      this.fairy.onBeforeRender = (r, _s, cam) => (this.fairyMat.uniforms.scale.value = pointScale(r, cam));
       root.add(this.fairy);
     }
 
@@ -566,20 +700,143 @@ export class Floor7Fx {
       root.add(beam);
       this.beams.push(beam);
     }
-    // ---- warm light under the chandeliers, candle glow on every table
-    for (const c of WED_CHANDELIERS) {
-      const pool = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), add('#ffcf96', 0.16, glowTex()));
-      pool.rotation.x = -Math.PI / 2;
-      pool.position.set(c.x, 0.012, c.z);
-      root.add(pool);
-      this.pools.push(pool);
-    }
-    for (const t of WED_TABLES) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: '#ffc77a', transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-      s.position.set(t.x, 1.02, t.z);
-      s.scale.setScalar(0.9);
-      root.add(s);
-      this.candles.push(s);
+    // ---- the room's own light (the hall is kept dim, like a real banquet hall: what you see glowing
+    // is the candles, the chandeliers, the uplights on the walls and the stage)
+    {
+      const warm = new THREE.Color('#ffc98a');
+      const pts: { x: number; y: number; z: number; size: number; color: THREE.Color }[] = [];
+      const P = (x: number, y: number, z: number, size: number, c: string | THREE.Color, k: number) => pts.push({ x, y, z, size, color: new THREE.Color(c).multiplyScalar(k) });
+      for (const c of WED_CHANDELIERS) {
+        P(c.x, 2.74, c.z, 2.6, '#ffcf96', 0.3); // halo round the whole chandelier
+        P(c.x, 2.8, c.z, 0.95, '#fff0d6', 0.75); // its bright heart
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          P(c.x + Math.cos(a) * 0.55, 2.78, c.z + Math.sin(a) * 0.55, 0.32, '#ffe1b0', 0.8); // candle bulbs on the ring
+        }
+      }
+      for (const t of WED_TABLES) {
+        P(t.x, 0.98, t.z, 0.9, '#ffb760', 0.7); // the centrepiece candles
+        for (let i = 0; i < 3; i++) {
+          const a = (i / 3) * Math.PI * 2 + t.x;
+          P(t.x + Math.cos(a) * 0.22, 0.86, t.z + Math.sin(a) * 0.22, 0.24, '#ffd08a', 0.9);
+        }
+      }
+      for (const f of FURNITURE) {
+        if (f.kind !== 'sconce' || floorOf(f.x) !== 6) continue;
+        P(f.x + Math.sin(f.ry) * 0.11, 2.1, f.z + Math.cos(f.ry) * 0.11, 0.9, '#ffc27a', 0.75);
+      }
+      // tea lights lining the aisle
+      for (let z = 8.6; z < 18.5; z += 0.8) for (const x of [18.72, 21.28]) P(F7 + x, 0.06, z, 0.3, '#ffb050', 0.95);
+      // the stage truss: a row of warm lamps over the front of the stage
+      for (let i = 0; i < 9; i++) P(F7 + 13.6 + i * 1.6, 3.0, 3.45, 0.5, '#fff1dc', 0.9);
+      // footlights along the stage edge, washing its skirt pink and lilac
+      for (let i = 0; i < 10; i++) P(F7 + 13.25 + i * 1.5, 0.08, WED_STAGE.z1 + 0.25, 0.7, i % 2 ? '#ff7fb5' : '#b58cff', 0.55);
+      // uplights: coloured cones of light rising up the walls
+      const UPC = ['#ff6fa8', '#a07cff', '#ffb04f'];
+      const quads: { c: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; color: THREE.Color }[] = [];
+      let n = 0;
+      const up = (x: number, z: number, nx: number, nz: number) => {
+        const col = new THREE.Color(UPC[n++ % UPC.length]);
+        const h = WALL_H - 0.05;
+        quads.push({ c: new THREE.Vector3(x + nx * 0.3, h / 2, z + nz * 0.3), u: new THREE.Vector3(Math.abs(nz) * 0.85, 0, Math.abs(nx) * 0.85), v: new THREE.Vector3(0, h / 2, 0), color: col });
+        P(x + nx * 0.34, 0.07, z + nz * 0.34, 0.6, col, 0.8); // the fixture on the floor
+      };
+      for (const z of [2.6, 6.8, 11.0, 15.2]) {
+        up(F7 + 0.1, z, 1, 0);
+        up(F7 + 39.9, z, -1, 0);
+      }
+      for (const x of [3.6, 8.7, 31.3, 36.4]) up(F7 + x, 0.1, 0, 1);
+      for (const x of [3.6, 8.7, 13.8, 26.2, 31.3, 36.4]) up(F7 + x, 18.9, 0, -1);
+      // the two flower walls on the stage get a soft rose light washed up their faces
+      for (const x of [14.6, 25.4]) {
+        const h = 2.7;
+        quads.push({ c: new THREE.Vector3(F7 + x, WED_STAGE.h + h / 2, 0.52), u: new THREE.Vector3(1.6, 0, 0), v: new THREE.Vector3(0, h / 2, 0), color: new THREE.Color('#ff9cc4') });
+        P(F7 + x, WED_STAGE.h + 0.06, 0.62, 0.7, '#ff9cc4', 0.7);
+      }
+      this.uplights = quadBatch(quads, uplightTex(), 0.62);
+      root.add(this.uplights);
+      const glowAll = glowCloud(pts);
+      this.glowMat = glowAll.mat;
+      root.add(glowAll.obj);
+      void warm;
+      // warm pools: under each chandelier on the floor, on every table top
+      const pq: { c: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; color: THREE.Color }[] = [];
+      for (const c of WED_CHANDELIERS) pq.push({ c: new THREE.Vector3(c.x, 0.013, c.z), u: new THREE.Vector3(2.9, 0, 0), v: new THREE.Vector3(0, 0, 2.9), color: new THREE.Color('#ffc58a') });
+      // the stage floor in a warm glow, and the dance floor in front of it
+      pq.push({ c: new THREE.Vector3(F7 + 20, WED_STAGE.h + 0.006, 1.9), u: new THREE.Vector3(8.5, 0, 0), v: new THREE.Vector3(0, 0, 2.6), color: new THREE.Color('#ffd2b0') });
+      pq.push({ c: new THREE.Vector3(F7 + 20, 0.02, 6.0), u: new THREE.Vector3(5.2, 0, 0), v: new THREE.Vector3(0, 0, 3.4), color: new THREE.Color('#ffb59a') });
+      // and a little light on the walkways between the tables
+      for (const x of [11.25, 28.75]) for (const z of [9.9, 15.2]) pq.push({ c: new THREE.Vector3(F7 + x, 0.013, z), u: new THREE.Vector3(1.8, 0, 0), v: new THREE.Vector3(0, 0, 1.8), color: new THREE.Color('#ffbb8a') });
+      for (const t of WED_TABLES) pq.push({ c: new THREE.Vector3(t.x, 0.777, t.z), u: new THREE.Vector3(1.05, 0, 0), v: new THREE.Vector3(0, 0, 1.05), color: new THREE.Color('#ffb46a') });
+      this.pools = quadBatch(pq, glowTex(), 0.3);
+      root.add(this.pools);
+      // a soft rose backlight on the wall behind the stage set
+      this.stageWash = new THREE.Mesh(new THREE.PlaneGeometry(19, 3.3), add('#ff8fc4', 0.42, glowTex()));
+      this.stageWash.position.set(F7 + 20, 1.7, 0.12);
+      root.add(this.stageWash);
+      // the gobo projector's pattern turning slowly on the dance floor
+      this.gobo = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), add('#fff0dc', 0.3, goboTex()));
+      this.gobo.rotation.x = -Math.PI / 2;
+      this.gobo.position.set(F7 + 20, 0.016, 6.0);
+      root.add(this.gobo);
+      // the truss itself, and faint beams from its lamps down onto the stage
+      const truss = new THREE.Mesh(new THREE.BoxGeometry(14.4, 0.07, 0.07), new THREE.MeshStandardMaterial({ color: '#c9a35b', metalness: 0.85, roughness: 0.3 }));
+      truss.position.set(F7 + 20, 3.08, 3.45);
+      root.add(truss);
+      const cones: THREE.BufferGeometry[] = [];
+      for (let i = 0; i < 9; i++) {
+        const h = 2.75;
+        const g = new THREE.CylinderGeometry(0.05, 0.5, h, 18, 1, true);
+        g.translate(F7 + 13.6 + i * 1.6, 3.0 - h / 2, 3.2);
+        cones.push(g);
+      }
+      this.trussBeams = new THREE.Mesh(mergeGeometries(cones), add('#fff3e0', 0.035));
+      root.add(this.trussBeams);
+      // glitter in the air: motes catching the light now and then
+      const mp: number[] = [];
+      const mph: number[] = [];
+      for (let i = 0; i < 300; i++) {
+        mp.push(F7 + 1 + Math.random() * 38, 0.9 + Math.random() * 2.2, 1 + Math.random() * 17.5);
+        mph.push(Math.random() * 50);
+      }
+      const mg = new THREE.BufferGeometry();
+      mg.setAttribute('position', new THREE.Float32BufferAttribute(mp, 3));
+      mg.setAttribute('phase', new THREE.Float32BufferAttribute(mph, 1));
+      this.motesMat = new THREE.ShaderMaterial({
+        uniforms: { time: { value: 0 }, scale: { value: 800 }, map: { value: glowTex() }, color: { value: new THREE.Color('#ffe7b8') }, boost: { value: 1 } },
+        vertexShader: `
+          attribute float phase;
+          uniform float time;
+          uniform float scale;
+          varying float vA;
+          void main() {
+            vec3 p = position;
+            p.x += sin(time * 0.11 + phase * 5.0) * 0.5;
+            p.y += sin(time * 0.17 + phase * 3.0) * 0.3;
+            p.z += cos(time * 0.09 + phase * 4.0) * 0.5;
+            float tw = sin(time * (0.8 + fract(phase * 13.0) * 1.6) + phase * 20.0);
+            vA = 0.06 + 0.94 * pow(max(tw, 0.0), 10.0);
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
+            gl_PointSize = min(0.045 * scale / -mv.z, 22.0);
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: `
+          uniform sampler2D map;
+          uniform vec3 color;
+          uniform float boost;
+          varying float vA;
+          void main() {
+            float a = texture2D(map, gl_PointCoord).a;
+            gl_FragColor = vec4(color * a * vA * boost, 1.0);
+          }`,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const motes = new THREE.Points(mg, this.motesMat);
+      motes.frustumCulled = false;
+      motes.onBeforeRender = (r, _s, cam) => (this.motesMat.uniforms.scale.value = pointScale(r, cam));
+      root.add(motes);
     }
 
     // ---- particles
@@ -1243,8 +1500,23 @@ export class Floor7Fx {
     this.fairyMat.uniforms.boost.value = party ? 1.25 : 1;
     if (party) this.edgeMat.color.copy(PARTY_HUES[Math.floor(t / 1.2) % PARTY_HUES.length]).lerp(PARTY_HUES[(Math.floor(t / 1.2) + 1) % PARTY_HUES.length], (t / 1.2) % 1);
     else this.edgeMat.color.copy(GOLD).multiplyScalar(0.75 + 0.25 * Math.sin(t * 1.4));
-    for (let i = 0; i < this.pools.length; i++) (this.pools[i].material as THREE.MeshBasicMaterial).opacity = (party || romance ? 0.06 : 0.16) * (0.92 + 0.08 * Math.sin(t * 2.1 + i));
-    for (let i = 0; i < this.candles.length; i++) (this.candles[i].material as THREE.SpriteMaterial).opacity = 0.42 + 0.12 * Math.sin(t * 7.3 + i * 1.9) * Math.sin(t * 3.1 + i);
+    this.glowMat.uniforms.time.value = t;
+    this.motesMat.uniforms.time.value = t;
+    this.motesMat.uniforms.boost.value = party ? 1.4 : 1;
+    (this.pools.material as THREE.MeshBasicMaterial).opacity = (party ? 0.16 : 0.34) * (0.94 + 0.06 * Math.sin(t * 2.1));
+    // uplights breathe; in the party they chase through the colours
+    const upM = this.uplights.material as THREE.MeshBasicMaterial;
+    upM.opacity = 0.55 + 0.1 * Math.sin(t * 0.7);
+    if (party) upM.color.copy(PARTY_HUES[Math.floor(t / 1.6) % PARTY_HUES.length]).lerp(WARM, 0.35);
+    else upM.color.set('#ffffff');
+    (this.stageWash.material as THREE.MeshBasicMaterial).opacity = (romance ? 0.55 : 0.42) * (0.85 + 0.15 * Math.sin(t * 0.5));
+    // the gobo turns slowly (spins and changes colour in the party)
+    this.gobo.rotation.z += dt * (party ? 0.35 : 0.06);
+    const gm = this.gobo.material as THREE.MeshBasicMaterial;
+    if (party) gm.color.copy(PARTY_HUES[Math.floor(t / 0.8) % PARTY_HUES.length]);
+    else gm.color.copy(romance ? BLUSH : WARM);
+    gm.opacity = party ? 0.45 : romance ? 0.4 : 0.26;
+    (this.trussBeams.material as THREE.MeshBasicMaterial).opacity = step !== 'idle' && step !== 'feast' && !party ? 0.085 : 0.05;
 
     // dance floor (20 Hz is plenty)
     this.tileAcc += dt;

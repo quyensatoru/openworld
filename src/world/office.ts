@@ -764,6 +764,8 @@ export class OfficeScene {
     const panelGeo = new THREE.PlaneGeometry(1.2, 0.3);
     const f5Mat = this.f5PanelMat;
     const moleCeil = new THREE.MeshStandardMaterial({ color: '#4a5263', roughness: 1 });
+    // the ballroom: a deep plum ceiling, so the fairy lights and chandeliers read like a night sky
+    const wedCeil = new THREE.MeshStandardMaterial({ color: '#2b1f2a', roughness: 1 });
     for (const z of ZONES) {
       const zf = floorOf(z.x0);
       const above = holesAbove(zf).map((h) => ({ ...h, x0: h.x0 + zf * UP_DX, x1: h.x1 + zf * UP_DX }));
@@ -772,7 +774,7 @@ export class OfficeScene {
       const h = z.kind === 'cinema' ? CINEMA_WALL_H : WALL_H;
       const dark = z.kind === 'cinema' || z.kind === 'bar' || z.kind === 'game' || z.kind === 'karaoke' || z.kind === 'wolf' || z.kind === 'mole';
       for (const r of subtract(z, above)) {
-        const ceil = new THREE.Mesh(new THREE.PlaneGeometry(r.x1 - r.x0, r.z1 - r.z0), z.kind === 'mole' ? moleCeil : dark ? darkMat : ceilMat);
+        const ceil = new THREE.Mesh(new THREE.PlaneGeometry(r.x1 - r.x0, r.z1 - r.z0), z.kind === 'mole' ? moleCeil : z.id === 'wedding' ? wedCeil : dark ? darkMat : ceilMat);
         ceil.rotation.x = Math.PI / 2; // faces down: visible from inside, culled from the camera above
         ceil.position.set((r.x0 + r.x1) / 2, h, (r.z0 + r.z1) / 2);
         parent.add(ceil);
