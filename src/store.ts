@@ -148,7 +148,11 @@ export interface OfficeStore {
   /** Tiệc cưới (floor 7) */
   wed: WedState;
   wedPanel: boolean;
-  wedTab: 'program' | 'music' | 'gift' | 'dress';
+  wedTab: 'program' | 'music' | 'gift' | 'dress' | 'photos';
+  /** The album open full screen (index into wed.photos), or null. */
+  wedView: number | null;
+  /** Photos still being shrunk / uploaded by me. */
+  wedUploading: number;
   /** A big title for a moment when a step of the programme starts. */
   wedBanner: { step: WedStep; at: number } | null;
   /** Someone's gift and wish, popping up for a moment. */
@@ -274,6 +278,8 @@ export const useStore = create<OfficeStore>(() => ({
   wed: emptyWed(),
   wedPanel: !IS_TOUCH,
   wedTab: 'program',
+  wedView: null,
+  wedUploading: 0,
   wedBanner: null,
   wedGift: null,
   wedCatch: null,

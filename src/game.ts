@@ -19,6 +19,7 @@ import {
   WED_SPOTS,
   WED_T,
   WED_TABLES,
+  WED_MAX_PHOTOS,
   DZO_MS,
   attireOf,
   inCatchZone,
@@ -56,6 +57,7 @@ import {
 import { Net, wsUrl } from './net/socket';
 import { bootTrouble, loadPref, loadProfile, saveProfile, savePref } from './profile';
 import { RelayMedia } from './rtc/relay';
+import { shrinkPhoto } from './wedphoto';
 import { getState, nameOf, playerById, serverNow, setState, toast, type FpLook, type FpsCap, type Quality } from './store';
 import { askNotificationPermission, chime, flashTitle, notify } from './ui/notify';
 import { World } from './world/engine';
@@ -1086,6 +1088,10 @@ class Game {
       case 'wed-dress':
         setState({ wedPanel: true, wedTab: 'dress' });
         break;
+      case 'wed-album':
+        if (getState().wed.photos.length) setState({ wedView: 0 });
+        else setState({ wedPanel: true, wedTab: 'photos' });
+        break;
       case 'wed-photo':
         void this.takePhoto();
         break;
@@ -1508,6 +1514,9 @@ class Game {
         if (me && fx.ids.includes(me)) toast(fx.ids.length > 1 ? `🍻 DZÔ! ${fx.ids.length} ly chạm nhau — trăm phần trăm!` : '🍻 Dô! (một mình cũng uống 😄 — rủ cả bàn cùng bấm nhé)', 'success', 2400);
         break;
       }
+      case 'photo':
+        if (w.myFloor === 6 && fx.id !== me) toast(`📷 ${fx.name} vừa đăng ảnh cưới mới (${fx.n} ảnh) — xem ở tường ảnh ngoài sảnh hoặc 💒 › 📷 Ảnh`, 'info', 3500);
+        break;
       case 'song':
         if (w.myFloor === 6) toast(`🎵 ${fx.id === me ? 'Bạn' : fx.name} ${fx.skip ? 'đã chuyển bài' : 'đã chọn bài'}: “${fx.title}”`, 'info', 3200);
         break;
@@ -1646,6 +1655,42 @@ class Game {
 
   wedSkip() {
     this.wed({ a: 'skip' });
+  }
+
+  /** Add photos to the wedding album (the couple and the MC): shrunk here, then one by one to the server. */
+  async wedUpload(files: File[]) {
+    const me = getState().me;
+    if (!me) return;
+    const room = WED_MAX_PHOTOS - getState().wed.photos.length;
+    const list = files.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|avif)$/i.test(f.name)).slice(0, Math.max(0, room));
+    if (!list.length) return toast(room <= 0 ? `Album đầy rồi (${WED_MAX_PHOTOS} ảnh) — xoá bớt ảnh cũ nhé` : 'Chọn file ảnh (JPG, PNG…) nhé 📷', 'warn');
+    if (files.length > list.length && room > 0) toast(`Album chỉ còn chỗ cho ${room} ảnh — đăng ${list.length} ảnh đầu tiên.`, 'info', 4000);
+    setState({ wedUploading: getState().wedUploading + list.length });
+    let done = 0;
+    for (const f of list) {
+      try {
+        const { blob, w, h } = await shrinkPhoto(f);
+        const res = await fetch('/api/wed/photo', {
+          method: 'POST',
+          body: blob,
+          headers: { 'Content-Type': 'image/jpeg', 'x-cid': me.id, 'x-w': String(w), 'x-h': String(h) },
+        });
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || !body.ok) {
+          toast(`📷 ${body.error ?? `Không đăng được ảnh (lỗi ${res.status})`}`, 'warn', 4500);
+          if (res.status === 403) break;
+        } else done++;
+      } catch {
+        toast(`📷 Không đọc được ảnh “${f.name}” — thử ảnh khác nhé`, 'warn', 4500);
+      } finally {
+        setState({ wedUploading: Math.max(0, getState().wedUploading - 1) });
+      }
+    }
+    if (done) toast(`📷 Đã đăng ${done} ảnh — đang hiện trên biển cưới, màn hình sân khấu và tường ảnh ngoài sảnh 💕`, 'success', 4500);
+  }
+
+  wedPhoto(id: string, op: 'cover' | 'del' | 'left' | 'right') {
+    this.wed({ a: 'photo', id, op });
   }
 
   setWedVolume(v: number) {

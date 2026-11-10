@@ -14,7 +14,11 @@ import {
   WED_REACTS,
   WED_T,
   WED_WISH_MAX,
+  WED_MAX_PHOTOS,
+  WED_PHOTO_ID,
   autoMusic,
+  canEditPhotos,
+  coupleKey,
   emptyWed,
   inCatchZone,
   inWedZone,
@@ -37,6 +41,8 @@ export interface WedHost {
   chat(text: string): void;
   err(id: string, text: string): void;
   save(state: WedState): void;
+  /** Delete every stored photo that is not in `keep`. */
+  dropPhotos(keep: string[]): void;
 }
 
 const ATTIRES: WedAttire[] = ['bride', 'groom', 'bridesmaid', 'groomsman'];
@@ -65,7 +71,18 @@ export class Wedding {
   restore(s: WedState | undefined) {
     if (!s || typeof s !== 'object') return;
     const music = s.music && typeof s.music.id === 'string' ? s.music : autoMusic(STEP_SET[s.step] ?? 'lounge', s.count ?? 0, Date.now());
-    this.state = { ...emptyWed(), ...s, attire: s.attire ?? {}, gifts: s.gifts ?? [], lights: s.lights ?? 'auto', music, kiss: s.kiss ?? null };
+    this.state = {
+      ...emptyWed(),
+      ...s,
+      attire: s.attire ?? {},
+      gifts: s.gifts ?? [],
+      lights: s.lights ?? 'auto',
+      music,
+      kiss: s.kiss ?? null,
+      photos: Array.isArray(s.photos) ? s.photos : [],
+      cover: s.cover ?? null,
+      photosOf: s.photosOf ?? null,
+    };
     // a toss in the air / a kiss being chanted for when the room went to sleep: finish it now
     this.arm();
   }
@@ -121,6 +138,9 @@ export class Wedding {
         s[role] = { id: p.id, name: p.name };
         // the couple's outfit comes with the role
         delete s.attire[p.id];
+        // a different couple starts with an empty album (the old one's photos are deleted)
+        const key = coupleKey(s);
+        if (key && s.photosOf && key !== s.photosOf) this.clearPhotos();
         this.publish();
         if (role !== 'mc' && s.groom && s.bride && s.step === 'idle') this.host.chat(`💍 ${s.groom.name} và ${s.bride.name} sắp làm đám cưới ở tầng 7 — chuẩn bị phong bì nhé! 💌`);
         return;
@@ -239,6 +259,24 @@ export class Wedding {
         this.host.broadcast({ t: 'wedFx', fx: { k: 'dzo', t, at, ids } });
         return;
       }
+      case 'photo': {
+        if (!onFloor || typeof m.id !== 'string') return;
+        if (!canEditPhotos(s, p.id)) return this.host.err(p.id, 'Chỉ cô dâu, chú rể hoặc MC mới sửa album ảnh cưới được 📷');
+        const i = s.photos.findIndex((x) => x.id === m.id);
+        if (i < 0) return;
+        if (m.op === 'cover') s.cover = m.id;
+        else if (m.op === 'del') {
+          s.photos.splice(i, 1);
+          if (s.cover === m.id) s.cover = null;
+          this.host.dropPhotos(s.photos.map((x) => x.id));
+        } else if (m.op === 'left' || m.op === 'right') {
+          const j = i + (m.op === 'left' ? -1 : 1);
+          if (j < 0 || j >= s.photos.length) return;
+          [s.photos[i], s.photos[j]] = [s.photos[j], s.photos[i]];
+        } else return;
+        this.publish();
+        return;
+      }
       case 'catch': {
         if (s.step !== 'bouquet' || s.bouquet || p.zone !== 'wedding') return;
         if (s.groom?.id === p.id || s.bride?.id === p.id || this.grabs.has(p.id)) return;
@@ -252,6 +290,41 @@ export class Wedding {
         return;
       }
     }
+  }
+
+  /**
+   * May `id` add a photo to the album right now? (The bytes are checked and stored by the caller.)
+   * Returns an error message, or null when it may.
+   */
+  canAddPhoto(id: string): string | null {
+    const s = this.state;
+    const p = this.person(id);
+    if (!p || !inWedZone(p.zone)) return 'Lên tầng 7 (sảnh tiệc cưới) rồi mới đăng ảnh được nhé 💒';
+    if (!s.groom || !s.bride) return 'Cần có đủ cô dâu và chú rể trước, rồi mới đăng ảnh cưới 💑';
+    if (!canEditPhotos(s, id)) return 'Chỉ cô dâu, chú rể hoặc MC mới đăng ảnh cưới được 📷';
+    // (no throttle: the client sends a multi-photo pick one after another, and the album is capped)
+    if (s.photos.length >= WED_MAX_PHOTOS) return `Album đầy rồi (${WED_MAX_PHOTOS} ảnh) — xoá bớt ảnh cũ nhé`;
+    return null;
+  }
+
+  /** A photo was stored: add it to the album (the first one is the cover). */
+  addPhoto(id: string, photo: { id: string; w: number; h: number }) {
+    const s = this.state;
+    const p = this.person(id);
+    if (!p || !WED_PHOTO_ID.test(photo.id) || s.photos.length >= WED_MAX_PHOTOS) return false;
+    s.photosOf = coupleKey(s);
+    s.photos.push({ id: photo.id, w: photo.w, h: photo.h, by: p.name, at: Date.now() });
+    this.host.broadcast({ t: 'wedFx', fx: { k: 'photo', id, name: p.name, n: s.photos.length } });
+    this.publish();
+    return true;
+  }
+
+  private clearPhotos() {
+    const s = this.state;
+    s.photos = [];
+    s.cover = null;
+    s.photosOf = null;
+    this.host.dropPhotos([]);
   }
 
   /** The meter is full (or the guests were shy): they kiss. */
@@ -360,7 +433,18 @@ export class Wedding {
       this.host.chat(`🎊 Đám cưới của ${s.groom.name} & ${s.bride.name} đã kết thúc tốt đẹp${gifts}. Chúc hai bạn trăm năm hạnh phúc! 💕`);
     }
     const count = s.count + 1;
-    this.state = { ...emptyWed(), count, attire: s.attire, mc: s.mc, lights: s.lights, music: autoMusic('lounge', count, Date.now()) };
+    // the album stays up (on the sign and the wall) until the next couple brings their own
+    this.state = {
+      ...emptyWed(),
+      count,
+      attire: s.attire,
+      mc: s.mc,
+      lights: s.lights,
+      music: autoMusic('lounge', count, Date.now()),
+      photos: s.photos,
+      cover: s.cover,
+      photosOf: s.photosOf,
+    };
     for (const d of this.dzo.values()) clearTimeout(d.timer);
     this.dzo.clear();
     this.grabs.clear();

@@ -3,7 +3,7 @@
 // (throw petals for the march, "Hôn đi!" for the kiss, "Dô!" at your table, a phone torch for the
 // first dance, dance in the party), the bouquet grab, the big title when a step starts, and the
 // little pop-ups for gifts and the bouquet.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { YtHit } from '../../shared/karaoke';
 import {
   ATTIRE_META,
@@ -19,7 +19,11 @@ import {
   WED_SONGS,
   WED_T,
   WED_WISH_MAX,
+  WED_MAX_PHOTOS,
   attireOf,
+  canEditPhotos,
+  coverPhoto,
+  wedPhotoUrl,
   inWedZone,
   money,
   nextStep,
@@ -76,6 +80,7 @@ export function WeddingPanel() {
             ['music', '🎵 Nhạc'],
             ['gift', '💌 Mừng'],
             ['dress', '👗 Đồ'],
+            ['photos', s.photos.length ? `📷 ${s.photos.length}` : '📷 Ảnh'],
           ] as const
         ).map(([id, label]) => (
           <button key={id} className={tab === id ? 'on' : ''} onClick={() => setState({ wedTab: id })}>
@@ -83,7 +88,9 @@ export function WeddingPanel() {
           </button>
         ))}
       </div>
-      <div className="wed-body">{tab === 'program' ? <Program s={s} /> : tab === 'music' ? <Music s={s} /> : tab === 'gift' ? <Gifts s={s} /> : <Dress s={s} zone={zone ?? ''} />}</div>
+      <div className="wed-body">
+        {tab === 'program' ? <Program s={s} /> : tab === 'music' ? <Music s={s} /> : tab === 'gift' ? <Gifts s={s} /> : tab === 'photos' ? <Photos s={s} /> : <Dress s={s} zone={zone ?? ''} />}
+      </div>
     </div>
   );
 }
@@ -367,6 +374,152 @@ function Gifts({ s }: { s: WedState }) {
         ))}
         {!s.gifts.length && <li className="empty">Chưa có phong bì nào — hãy là người đầu tiên 💌</li>}
       </ul>
+    </div>
+  );
+}
+
+/** The couple's album: the couple and the MC upload, pick the cover, order and remove; everyone looks. */
+function Photos({ s }: { s: WedState }) {
+  const me = useStore((st) => st.me?.id ?? '');
+  const uploading = useStore((st) => st.wedUploading);
+  const input = useRef<HTMLInputElement>(null);
+  const [drag, setDrag] = useState(false);
+  const can = canEditPhotos(s, me);
+  const cover = coverPhoto(s)?.id;
+  const room = WED_MAX_PHOTOS - s.photos.length;
+  const pick = (files: FileList | null) => {
+    if (files?.length) void game.wedUpload([...files]);
+  };
+  return (
+    <div className="wed-photos">
+      {can ? (
+        <div
+          className={`wp-drop${drag ? ' drag' : ''}${room <= 0 ? ' full' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDrag(true);
+          }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDrag(false);
+            pick(e.dataTransfer.files);
+          }}
+        >
+          <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => (pick(e.target.files), (e.target.value = ''))} />
+          <button className="wed-big" disabled={room <= 0 || uploading > 0} onClick={() => input.current?.click()}>
+            {uploading ? `⏳ Đang đăng ${uploading} ảnh…` : room <= 0 ? `Album đầy (${WED_MAX_PHOTOS} ảnh)` : '📷 Đăng ảnh cô dâu chú rể'}
+          </button>
+          <small>
+            Chọn nhiều ảnh một lúc (hoặc kéo thả vào đây) · còn chỗ cho {Math.max(0, room)} ảnh. Ảnh được thu nhỏ trước khi gửi.
+          </small>
+        </div>
+      ) : (
+        <p className="wed-note">
+          {s.groom && s.bride
+            ? `Album của ${s.groom.name} & ${s.bride.name} — chỉ cô dâu, chú rể và MC đăng được ảnh.`
+            : 'Khi có cô dâu và chú rể, họ (hoặc MC) đăng ảnh cưới ở đây 💕'}
+        </p>
+      )}
+      {s.photos.length ? (
+        <ul className="wp-grid">
+          {s.photos.map((p, i) => (
+            <li key={p.id} className={p.id === cover ? 'cover' : ''}>
+              <button className="wp-thumb" onClick={() => setState({ wedView: i })} title="Xem lớn">
+                <img src={wedPhotoUrl(p.id)} alt={`Ảnh cưới ${i + 1}`} loading="lazy" decoding="async" />
+                {p.id === cover && <span className="wp-badge">Ảnh bìa</span>}
+              </button>
+              {can && (
+                <div className="wp-tools">
+                  <button title="Đưa lên biển cưới (ảnh bìa)" disabled={p.id === cover} onClick={() => game.wedPhoto(p.id, 'cover')}>
+                    ⭐
+                  </button>
+                  <button title="Lên trước" disabled={i === 0} onClick={() => game.wedPhoto(p.id, 'left')}>
+                    ◀
+                  </button>
+                  <button title="Xuống sau" disabled={i === s.photos.length - 1} onClick={() => game.wedPhoto(p.id, 'right')}>
+                    ▶
+                  </button>
+                  <button title="Xoá ảnh" className="del" onClick={() => confirm('Xoá ảnh này khỏi album?') && game.wedPhoto(p.id, 'del')}>
+                    🗑
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+          {can && uploading > 0 && Array.from({ length: Math.min(uploading, room) }, (_, i) => <li key={`up${i}`} className="wp-ghost" />)}
+        </ul>
+      ) : (
+        !uploading && <div className="wp-empty">Chưa có ảnh nào 🌸</div>
+      )}
+      <p className="wed-tip">
+        🖼️ Ảnh bìa (⭐) hiện trên biển cưới ngoài sảnh; cả album chạy trên màn hình sân khấu lúc đón khách và treo trên tường ảnh cạnh bàn mừng cưới. Cặp đôi mới nhận vai sẽ bắt đầu album mới.
+      </p>
+    </div>
+  );
+}
+
+/** One photo full screen (← → to flip through, Esc to close). */
+export function WeddingLightbox() {
+  const view = useStore((st) => st.wedView);
+  const photos = useStore((st) => st.wed.photos);
+  const s = useStore((st) => st.wed);
+  const n = photos.length;
+  const i = view === null || !n ? -1 : Math.min(n - 1, Math.max(0, view));
+  useEffect(() => {
+    if (i < 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      const go = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+      if (e.key === 'Escape') setState({ wedView: null });
+      else if (go) setState({ wedView: (i + go + n) % n });
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [i, n]);
+  if (i < 0) return null;
+  const p = photos[i];
+  const names = s.groom && s.bride ? `${s.groom.name} & ${s.bride.name}` : 'Album ảnh cưới';
+  return (
+    <div className="wed-lightbox" onClick={() => setState({ wedView: null })}>
+      <figure onClick={(e) => e.stopPropagation()}>
+        <img key={p.id} src={wedPhotoUrl(p.id)} alt={`Ảnh cưới ${i + 1}`} />
+        <figcaption>
+          <b>{names}</b>
+          <span>
+            {i + 1} / {n} · {p.by} đăng
+          </span>
+        </figcaption>
+      </figure>
+      {n > 1 && (
+        <>
+          <button
+            className="wl-nav prev"
+            onClick={(e) => {
+              e.stopPropagation();
+              setState({ wedView: (i - 1 + n) % n });
+            }}
+            aria-label="Ảnh trước"
+          >
+            ‹
+          </button>
+          <button
+            className="wl-nav next"
+            onClick={(e) => {
+              e.stopPropagation();
+              setState({ wedView: (i + 1) % n });
+            }}
+            aria-label="Ảnh sau"
+          >
+            ›
+          </button>
+        </>
+      )}
+      <button className="wl-close" onClick={() => setState({ wedView: null })} aria-label="Đóng">
+        ✕
+      </button>
     </div>
   );
 }

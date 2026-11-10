@@ -256,7 +256,21 @@ function skirt(): THREE.CanvasTexture {
 
 let photoTex: THREE.CanvasTexture | null = null;
 function photoBackdrop(): THREE.CanvasTexture {
-  return (photoTex ??= canvasTexture(1024, 672, (g, w, h) => {
+  return (photoTex ??= canvasTexture(1024, 672, drawBackdrop));
+}
+
+/** The script font arrived after the hall was built: draw the canvases that use it again. */
+export function redrawWeddingCanvases() {
+  if (!photoTex) return;
+  const c = photoTex.image as HTMLCanvasElement;
+  const g = c.getContext('2d')!;
+  g.clearRect(0, 0, c.width, c.height);
+  drawBackdrop(g, c.width, c.height);
+  photoTex.needsUpdate = true;
+}
+
+function drawBackdrop(g: CanvasRenderingContext2D, w: number, h: number) {
+  {
     const bg = g.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, '#fdf6f1');
     bg.addColorStop(1, '#f3d9da');
@@ -302,7 +316,7 @@ function photoBackdrop(): THREE.CanvasTexture {
     g.fillText('Hạnh phúc trăm năm', w / 2, h * 0.76);
     g.fillStyle = gold;
     g.fillRect(w / 2 - 170, h * 0.835, 340, 3);
-  }));
+  }
 }
 
 let hyTex: THREE.CanvasTexture | null = null;

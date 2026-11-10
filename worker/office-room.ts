@@ -8,7 +8,7 @@ import { BUILD_ID } from '../shared/build';
 import { Arcade } from './arcade';
 import { Karaoke } from './karaoke';
 import { Wedding } from './wedding';
-import { inWedZone, type WedState } from '../shared/wedding';
+import { WED_PHOTO_BYTES, inWedZone, type WedState } from '../shared/wedding';
 import { Werewolf } from './werewolf';
 import { MoleGame } from './mole';
 import { PropHuntGame } from './prophunt';
@@ -147,6 +147,7 @@ export class OfficeRoom extends DurableObject<Env> {
       if (c) this.send(c.ws, { t: 'err', msg: text });
     },
     save: (state) => void this.ctx.storage.put('wed', state).catch(() => {}),
+    dropPhotos: (keep) => void db.keepWedPhotos(this.env.DB, keep).catch((err) => console.error('wed photos sweep failed', err)),
   });
   private activityRate = new Map<string, { t: number; n: number }>();
 
@@ -180,6 +181,7 @@ export class OfficeRoom extends DurableObject<Env> {
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === '/activity' && req.method === 'POST') return this.onActivity(req);
+    if (url.pathname === '/wed-photo' && req.method === 'POST') return this.onWedPhoto(req);
     if (url.pathname === '/nudge-status') {
       // why the room did or did not wake anybody — the gates are invisible from outside otherwise
       const [from, to] = this.nudgeHours;
@@ -201,6 +203,35 @@ export class OfficeRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({} satisfies Attachment);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** A photo for the wedding album (the worker checked the session; we check the role and the bytes). */
+  private async onWedPhoto(req: Request): Promise<Response> {
+    await this.schemaReady;
+    const cid = req.headers.get('x-cid') ?? '';
+    const no = (error: string, status = 400) => Response.json({ ok: false, error }, { status });
+    const why = this.wed.canAddPhoto(cid);
+    if (why) return no(why, 403);
+    const data = await req.arrayBuffer();
+    if (!data.byteLength || data.byteLength > WED_PHOTO_BYTES) return no('Ảnh quá lớn — tối đa 1,5 MB', 413);
+    const b = new Uint8Array(data, 0, Math.min(12, data.byteLength));
+    const mime =
+      b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff
+        ? 'image/jpeg'
+        : b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47
+          ? 'image/png'
+          : String.fromCharCode(...b.slice(0, 4)) === 'RIFF' && String.fromCharCode(...b.slice(8, 12)) === 'WEBP'
+            ? 'image/webp'
+            : null;
+    if (!mime) return no('Chỉ nhận ảnh JPEG, PNG hoặc WebP');
+    const dim = (h: string) => Math.max(1, Math.min(8192, Math.round(Number(req.headers.get(h)) || 0)));
+    const id = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    await db.putWedPhoto(this.env.DB, id, data, mime, Date.now());
+    if (!this.wed.addPhoto(cid, { id, w: dim('x-w'), h: dim('x-h') })) {
+      await db.keepWedPhotos(this.env.DB, this.wed.state.photos.map((x) => x.id));
+      return no('Không thêm được ảnh vào album', 409);
+    }
+    return Response.json({ ok: true, id });
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {

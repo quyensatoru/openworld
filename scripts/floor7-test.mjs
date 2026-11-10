@@ -139,6 +139,52 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   X.send(wed({ a: 'role', role: 'groom', on: true }));
   ok(!!(await X.wait((m) => m.t === 'err' && /Đã có chú rể/.test(m.msg))), 'a role someone holds cannot be taken');
 
+  // ---- the couple's photo album (uploads over HTTP, the room checks who may)
+  {
+    const latest = () => [...G.inbox].reverse().find((m) => m.t === 'wed')?.s;
+    for (const p of latest()?.photos ?? []) G.send(wed({ a: 'photo', id: p.id, op: 'del' })); // a previous run's album
+    if (latest()?.photos?.length) ok(!!(await G.wait(state((s) => !s.photos.length))), 'old album cleared');
+    const sharp = (await import('sharp')).default;
+    const jpeg = async (w, h, r) => sharp({ create: { width: w, height: h, channels: 3, background: { r, g: 120, b: 160 } } }).jpeg().toBuffer();
+    const up = (who, body, w = 30, h = 40, c = cookie) =>
+      fetch(`${BASE}/api/wed/photo`, { method: 'POST', body, headers: { Cookie: c, Origin: BASE, 'Content-Type': 'image/jpeg', 'x-cid': who.cid, 'x-w': String(w), 'x-h': String(h) } });
+    const img1 = await jpeg(30, 40, 230);
+    let r = await up(X, img1);
+    ok(r.status === 403 && /Chỉ cô dâu/.test((await r.json()).error), 'a guest cannot upload to the album');
+    r = await up(G, img1, 30, 40, 'office_session=nope');
+    ok(r.status === 401, 'no session, no upload');
+    r = await up(G, new TextEncoder().encode('<html>not a photo</html>'));
+    ok(r.status === 400, 'only real image bytes are accepted');
+    for (const c of P) c.clear();
+    r = await up(G, img1);
+    const j1 = await r.json();
+    ok(r.ok && j1.ok && /^[a-z0-9]{12,24}$/.test(j1.id), 'the groom uploads a photo');
+    const fx = await X.wait((m) => m.t === 'wedFx' && m.fx.k === 'photo');
+    ok(!!fx && fx.fx.name === 'Chú Rể' && fx.fx.n === 1, 'everyone hears about the new photo');
+    const s1 = await X.wait(state((s) => s.photos.length === 1));
+    ok(!!s1 && s1.s.photos[0].id === j1.id && s1.s.photos[0].w === 30 && s1.s.photos[0].h === 40 && s1.s.photos[0].by === 'Chú Rể', 'the album lists it (size, who)');
+    const got = await fetch(`${BASE}/api/wed/photo/${j1.id}`, { headers: { Cookie: cookie } });
+    const bytes = new Uint8Array(await got.arrayBuffer());
+    ok(got.ok && got.headers.get('content-type') === 'image/jpeg' && bytes.length === img1.length && bytes[0] === 0xff, 'the photo is served back byte for byte');
+    ok(/immutable/.test(got.headers.get('cache-control') || ''), 'and cached for good (a new upload gets a new id)');
+    ok((await fetch(`${BASE}/api/wed/photo/${j1.id}`)).status === 401, 'photos need the office passcode');
+    r = await up(M, await jpeg(64, 36, 40), 64, 36);
+    const j2 = await r.json();
+    ok(r.ok && j2.ok, 'the MC uploads one too');
+    await X.wait(state((s) => s.photos.length === 2));
+    X.send(wed({ a: 'photo', id: j2.id, op: 'cover' }));
+    ok(!!(await X.wait((m) => m.t === 'err' && /album/.test(m.msg))), 'a guest cannot change the album');
+    B.send(wed({ a: 'photo', id: j2.id, op: 'cover' }));
+    ok(!!(await X.wait(state((s) => s.cover === j2.id))), 'the bride puts the second on the welcome sign');
+    G.send(wed({ a: 'photo', id: j2.id, op: 'left' }));
+    ok(!!(await X.wait(state((s) => s.photos[0]?.id === j2.id && s.photos[1]?.id === j1.id))), 'photos can be reordered');
+    B.send(wed({ a: 'photo', id: j1.id, op: 'del' }));
+    ok(!!(await X.wait(state((s) => s.photos.length === 1 && s.photos[0].id === j2.id))), 'and taken down');
+    await sleep(400);
+    ok((await fetch(`${BASE}/api/wed/photo/${j1.id}`, { headers: { Cookie: cookie } })).status === 404, 'a removed photo is deleted from storage');
+    globalThis.__album = j2.id;
+  }
+
   // only the couple / MC run the show
   X.send(wed({ a: 'next' }));
   ok(!!(await X.wait((m) => m.t === 'err' && /Chỉ cô dâu/.test(m.msg))), 'a guest cannot run the programme');
@@ -280,12 +326,23 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   ok(!!(await X.wait((m) => m.t === 'chat' && /kết thúc tốt đẹp/.test(m.m.text), 3000)), 'thanks everyone in the chat');
   ok(done?.s.music.set === 'lounge' && !done.s.music.by && !done.s.kiss, 'the band goes back to the lounge');
   ok(done?.s.lights === 'off', 'the lights stay as they were after the party');
+  ok(done?.s.photos.length === 1 && done.s.photos[0].id === globalThis.__album, 'the album stays up after the party');
   X.send(wed({ a: 'lights', lights: 'auto' }));
   ok(!!(await G.wait(state((s) => s.lights === 'auto'))), 'with no ceremony on, any guest can work the switch');
 
   // a role is freed when you leave the floor while the hall is quiet; outfits go when you leave the office
   G.send(wed({ a: 'role', role: 'groom', on: true }));
   ok(!!(await X.wait(state((s) => s.groom?.id === G.cid))), 'groom again');
+  B.send(wed({ a: 'role', role: 'bride', on: true }));
+  ok(!!(await X.wait(state((s) => s.bride?.id === B.cid && s.photos.length === 1))), 'the same couple again: their album is still there');
+  B.send(wed({ a: 'role', role: 'bride', on: false }));
+  await X.wait(state((s) => !s.bride));
+  X.send(wed({ a: 'role', role: 'bride', on: true }));
+  ok(!!(await X.wait(state((s) => s.bride?.id === X.cid && !s.photos.length && !s.photosOf))), 'a new couple starts with an empty album');
+  await sleep(400);
+  ok((await fetch(`${BASE}/api/wed/photo/${globalThis.__album}`, { headers: { Cookie: cookie } })).status === 404, "the old couple's photos are deleted");
+  X.send(wed({ a: 'role', role: 'bride', on: false }));
+  await X.wait(state((s) => !s.bride));
   G.move(20, 21);
   ok(!!(await X.wait(state((s) => !s.groom), 3000)), 'leaving floor 7 frees the role');
   X.close();

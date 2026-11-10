@@ -1,6 +1,6 @@
 // Office layout shared by the client (3D build, collision, path finding) and the server (zones).
 import { F6, PH_BOARD, PH_ROOMS, PH_ROOM_IDS, PH_WALLS, phZone, type PhRoom } from './prophunt';
-import { F7, WED_AISLE, WED_CAKE, WED_CHAIRS, WED_CHAIR_R, WED_CHANDELIERS, WED_DRESSES, WED_GIFT, WED_PHOTO, WED_PODIUM, WED_RINGS, WED_ROOMS, WED_SCREEN, WED_SIGN, WED_STAGE, WED_TABLES, WED_TOWER, WED_VANITY, WED_WALLS, WED_SWITCH, onWedStage, type WedRoom } from './wedding';
+import { F7, WED_AISLE, WED_CAKE, WED_CHAIRS, WED_CHAIR_R, WED_CHANDELIERS, WED_DRESSES, WED_GIFT, WED_ALBUM, WED_PHOTO, WED_PODIUM, WED_RINGS, WED_ROOMS, WED_SCREEN, WED_SIGN, WED_STAGE, WED_TABLES, WED_TOWER, WED_VANITY, WED_WALLS, WED_SWITCH, onWedStage, type WedRoom } from './wedding';
 import { BELL, CAM_DESK, CRIT, FUSE, FUSE_SPOT, MOLE_BOARD, MOLE_DOORS, MOLE_ROOMS, MOLE_VENTS, MOLE_WALLS, ROOM_META, STATIONS, TASK_META, doorMid, type MoleTaskKind } from './mole';
 // Units are metres. x grows to the east, z grows to the south, y is up.
 // Character yaw `ry`: 0 = facing +z (south), PI/2 = facing +x (east).
@@ -1198,6 +1198,8 @@ for (const l of LIFTS) {
   FURNITURE.push({ id: 'wedSign-0', kind: 'wedSign', x: WED_SIGN.x, z: WED_SIGN.z, ry: 0, w: 1.2, d: 0.5, solid: true, zone: HALL7 });
   INTERACTABLES.push({ id: 'wed-board', kind: 'wedding', x: WED_SIGN.x, z: WED_SIGN.z + 1.1, radius: 1.5, label: '💒 Bảng đám cưới · làm cô dâu / chú rể' });
   put('photoWall', WED_PHOTO.x, WED_PHOTO.z, 4.0, 0.3, Math.PI / 2, true, HALL7);
+  // the couple's album: framed photos along the hall's north wall (drawn by src/world/floor7.ts)
+  INTERACTABLES.push({ id: 'wed-album', kind: 'wedding', x: WED_ALBUM.x, z: WED_ALBUM.z + 1.2, radius: 2.6, label: '🖼️ Xem album ảnh cưới' });
   INTERACTABLES.push({ id: 'wed-photo', kind: 'wedding', x: WED_PHOTO.x + 1.8, z: WED_PHOTO.z, radius: 1.7, label: '📸 Chụp ảnh cưới' });
   for (const x of [17.9, 22.1]) put('flowerStand', X(x), 19.6, 0.42, 0.42, 0, true, HALL7);
   put('sofa', X(27.0), 27.45, 2.4, 0.9, Math.PI, true, HALL7);

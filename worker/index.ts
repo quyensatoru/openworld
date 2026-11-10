@@ -2,7 +2,8 @@
 // Static files (the game client) are served by Workers Static Assets before this runs.
 
 import { summarizeHook } from './activity';
-import { deletePushSub, dropPushSubs as dropSubs, savePushSub, subsForUser as mySubs, userForToken } from './db';
+import { deletePushSub, dropPushSubs as dropSubs, getWedPhoto, savePushSub, subsForUser as mySubs, userForToken } from './db';
+import { WED_PHOTO_ID } from '../shared/wedding';
 import { checkPasscode, clearCookie, isAuthed, loginBlocked, passcodeRequired, recordLoginFailure, sessionCookie } from './auth';
 import { sendPush, vapidFrom } from './push';
 import { hanoiWeather } from './weather';
@@ -112,7 +113,29 @@ export default {
     const url = new URL(req.url);
     const secure = url.protocol === 'https:';
 
+    // The wedding album's photos: immutable (a new upload gets a new id).
+    if (url.pathname.startsWith('/api/wed/photo/') && req.method === 'GET') {
+      if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
+      const id = url.pathname.slice('/api/wed/photo/'.length);
+      if (!WED_PHOTO_ID.test(id)) return json({ error: 'not found' }, { status: 404 });
+      const photo = await getWedPhoto(env.DB, id).catch(() => null);
+      if (!photo) return json({ error: 'not found' }, { status: 404 });
+      return new Response(photo.data, {
+        headers: { 'Content-Type': photo.mime, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' },
+      });
+    }
+
     switch (url.pathname) {
+      // Upload a photo to the wedding album (the room checks the uploader is the groom, bride or MC).
+      case '/api/wed/photo': {
+        if (req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
+        if (!(await isAuthed(env, req))) return json({ error: 'unauthorized' }, { status: 401 });
+        const origin = req.headers.get('Origin');
+        if (origin && new URL(origin).host !== url.host) return json({ error: 'bad origin' }, { status: 403 });
+        const stub = env.OFFICE.get(env.OFFICE.idFromName('main'));
+        return stub.fetch('https://office/wed-photo', { method: 'POST', headers: req.headers, body: req.body });
+      }
+
       case '/api/session':
         return json({
           authed: await isAuthed(env, req),

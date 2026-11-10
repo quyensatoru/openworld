@@ -25,12 +25,14 @@ import {
   WED_GIFT,
   WED_PROGRAM,
   WED_RINGS,
+  WED_SCREEN,
   WED_SPOTS,
   WED_STAGE,
   WED_T,
   WED_TABLES,
   WED_TOWER,
   F7,
+  coverPhoto,
   money,
   type WedLights,
   type WedState,
@@ -38,7 +40,27 @@ import {
 } from '../../shared/wedding';
 import { FURNITURE, WALL_H, floorOf } from '../../shared/map';
 import { canvasTexture } from './materials';
-import { CAKE_TOP_Y, CHAMPAGNE_GLASSES } from './wedding-furniture';
+import { CAKE_TOP_Y, CHAMPAGNE_GLASSES, redrawWeddingCanvases } from './wedding-furniture';
+import { LED_PHOTO, SLIDE_MS, WedPhotos } from './wed-photos';
+
+/** The script face for the English flourishes ("Our Love Story", "Just Married") — loaded on demand. */
+const SCRIPT_FONT = '"Great Vibes", "Allura", "Segoe Script", "Brush Script MT", Georgia, cursive';
+let scriptFont: Promise<void> | null = null;
+function loadScriptFont(): Promise<void> {
+  return (scriptFont ??= (async () => {
+    if (!document.querySelector('link[data-font="great-vibes"]')) {
+      const l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = 'https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap';
+      l.dataset.font = 'great-vibes';
+      document.head.appendChild(l);
+      await new Promise((r) => {
+        l.onload = l.onerror = r;
+      });
+    }
+    await Promise.all([document.fonts.load('400 64px "Great Vibes"'), document.fonts.load('700 40px "Be Vietnam Pro"'), document.fonts.load('italic 700 40px "Be Vietnam Pro"')]);
+  })().catch(() => {}));
+}
 
 export type WedCue =
   | 'march'
@@ -575,6 +597,10 @@ export class Floor7Fx {
   onCue: (cue: WedCue, s: WedState) => void = () => {};
 
   private s: WedState | null = null;
+  /** The couple's photos: the LED slideshow, the album wall, the cover on the sign. */
+  readonly photos: WedPhotos;
+  /** The cover on the sign right now (redrawn when it changes or arrives). */
+  private signCover: string | null = null;
   /** The house lights (the switch): glows read softer with the lights up, brighter with them off. */
   private lights: WedLights = 'auto';
   private fired = new Set<string>();
@@ -642,6 +668,17 @@ export class Floor7Fx {
 
   constructor(private root: THREE.Group) {
     const SH = WED_STAGE.h;
+    this.photos = new WedPhotos(root);
+    this.photos.onLoad = (id) => {
+      if (id === this.signCover) this.drawSign();
+    };
+    this.photos.drawTitle(null);
+    void loadScriptFont().then(() => {
+      this.drawSign();
+      this.photos.redrawTitle(this.names());
+      redrawWeddingCanvases();
+      this.screenKey = '';
+    });
     // ---- fairy-light strands across the ceiling (each bulb twinkles on its own)
     {
       const pos: number[] = [];
@@ -1027,6 +1064,7 @@ export class Floor7Fx {
     hole.visible = false;
     (mesh.parent ?? this.root).add(hole);
     this.videoHole = hole;
+    this.photos.setupLed(mesh.parent ?? this.root);
   }
 
   /** The band's YouTube player exists (CSS3D, behind the canvas): the wall can show it. */
@@ -1040,7 +1078,7 @@ export class Floor7Fx {
   }
 
   setupSign(mesh: THREE.Mesh) {
-    const tex = canvasTexture(512, 712, () => {});
+    const tex = canvasTexture(SIGN_W, SIGN_H, () => {});
     mesh.material = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
     this.sign = { mesh, tex, g: (tex.image as HTMLCanvasElement).getContext('2d')! };
     this.drawSign();
@@ -1052,80 +1090,182 @@ export class Floor7Fx {
     return { a: s.groom.name, b: s.bride.name };
   }
 
+  /** The welcome sign on its easel in the hall: the couple's cover photo under an arch, their names, the date. */
   private drawSign() {
     if (!this.sign) return;
     const { g, tex } = this.sign;
-    const w = 512;
-    const h = 712;
+    const w = SIGN_W;
+    const h = SIGN_H;
+    const pic = this.photos.image(this.signCover);
+    g.save();
+    g.clearRect(0, 0, w, h);
     const gr = g.createLinearGradient(0, 0, 0, h);
     gr.addColorStop(0, '#fffaf3');
     gr.addColorStop(1, '#f8e4e6');
     g.fillStyle = gr;
     g.fillRect(0, 0, w, h);
-    g.strokeStyle = '#d8b26e';
-    g.lineWidth = 6;
-    g.strokeRect(18, 18, w - 36, h - 36);
-    g.lineWidth = 2;
-    g.strokeRect(30, 30, w - 60, h - 60);
-    // flower corners
-    const bloom = (x: number, y: number, r: number, c: string) => {
-      for (let i = 0; i < 6; i++) {
-        g.fillStyle = c;
-        g.beginPath();
-        g.ellipse(x + Math.cos(i) * r * 0.5, y + Math.sin(i) * r * 0.5, r * 0.6, r * 0.45, i, 0, Math.PI * 2);
-        g.fill();
-      }
-      g.fillStyle = '#f6d58a';
-      g.beginPath();
-      g.arc(x, y, r * 0.25, 0, Math.PI * 2);
-      g.fill();
+    // a few soft watercolour blushes
+    const blot = (x: number, y: number, r: number, c: string) => {
+      const b = g.createRadialGradient(x, y, 0, x, y, r);
+      b.addColorStop(0, c);
+      b.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = b;
+      g.fillRect(x - r, y - r, r * 2, r * 2);
     };
-    for (const [x, y] of [[44, 44], [w - 44, 44], [44, h - 44], [w - 44, h - 44]]) {
-      g.fillStyle = '#9dbb92';
-      g.beginPath();
-      g.ellipse(x + (x < w / 2 ? 30 : -30), y, 26, 9, 0.4, 0, Math.PI * 2);
-      g.fill();
-      bloom(x, y, 26, '#f4b8c4');
-      bloom(x + (x < w / 2 ? 18 : -18), y + (y < h / 2 ? 22 : -22), 16, '#ffffff');
-    }
-    g.textAlign = 'center';
-    g.fillStyle = '#b08a4a';
-    g.font = '600 26px "Be Vietnam Pro", sans-serif';
-    g.fillText('WELCOME TO OUR WEDDING', w / 2, 128);
-    g.font = 'italic 500 26px "Be Vietnam Pro", sans-serif';
-    g.fillStyle = '#9b6b78';
-    g.fillText('Chào mừng đến lễ thành hôn của', w / 2, 168);
-    const n = this.names();
-    g.fillStyle = '#7a3b4d';
-    if (n) {
-      g.font = 'italic 700 58px "Be Vietnam Pro", serif';
-      fitText(g, n.a, w / 2, 290, w - 90);
-      g.fillStyle = '#e06c88';
-      g.font = '700 46px "Be Vietnam Pro", sans-serif';
-      g.fillText('&', w / 2, 362);
-      g.fillStyle = '#7a3b4d';
-      g.font = 'italic 700 58px "Be Vietnam Pro", serif';
-      fitText(g, n.b, w / 2, 440, w - 90);
-    } else {
-      g.font = 'italic 700 46px "Be Vietnam Pro", serif';
-      g.fillText('Cô dâu & Chú rể', w / 2, 330);
-      g.font = '500 24px "Be Vietnam Pro", sans-serif';
-      g.fillStyle = '#9b6b78';
-      g.fillText('Bấm vào bảng này để nhận vai', w / 2, 390);
-      g.fillText('cô dâu, chú rể hoặc MC 💍', w / 2, 424);
-    }
+    blot(70, 90, 190, 'rgba(244,184,196,0.35)');
+    blot(w - 60, h - 110, 220, 'rgba(244,184,196,0.32)');
+    blot(w - 90, 160, 140, 'rgba(216,178,110,0.16)');
     g.strokeStyle = '#d8b26e';
+    g.lineWidth = 7;
+    g.strokeRect(22, 22, w - 44, h - 44);
     g.lineWidth = 2;
-    g.beginPath();
-    g.moveTo(140, 500);
-    g.lineTo(w - 140, 500);
-    g.stroke();
-    g.fillStyle = '#b08a4a';
-    g.font = '600 26px "Be Vietnam Pro", sans-serif';
-    g.fillText(dateLine(), w / 2, 548);
-    g.font = '500 22px "Be Vietnam Pro", sans-serif';
-    g.fillStyle = '#9b6b78';
-    g.fillText('Tầng 7 · Sảnh tiệc cưới', w / 2, 590);
+    g.strokeRect(37, 37, w - 74, h - 74);
+    const corners = (bottomOnly: boolean) => {
+      for (const [x, y] of [
+        [55, 55],
+        [w - 55, 55],
+        [55, h - 55],
+        [w - 55, h - 55],
+      ]) {
+        if (bottomOnly && y < h / 2) continue;
+        g.fillStyle = '#9dbb92';
+        g.beginPath();
+        g.ellipse(x + (x < w / 2 ? 38 : -38), y, 32, 11, 0.4, 0, Math.PI * 2);
+        g.fill();
+        bloom(g, x, y, 32, '#f4b8c4');
+        bloom(g, x + (x < w / 2 ? 22 : -22), y + (y < h / 2 ? 28 : -28), 20, '#ffffff');
+      }
+    };
+    const n = this.names();
+    g.textAlign = 'center';
+    g.textBaseline = 'alphabetic';
+    if (pic) {
+      corners(true);
+      g.fillStyle = '#b08a4a';
+      g.font = `400 70px ${SCRIPT_FONT}`;
+      g.fillText('Welcome', w / 2, 96);
+      g.font = '600 19px "Be Vietnam Pro", sans-serif';
+      spaced(g, n ? 'TO THE WEDDING OF' : 'HAPPY WEDDING DAY', w / 2, 126, 5);
+      // the photo under an arch, a gold line and an ivory inner edge
+      const x0 = 100;
+      const x1 = w - 100;
+      const top = 146;
+      const bottom = 556;
+      const r = (x1 - x0) / 2;
+      const arch = (inset: number) => {
+        g.beginPath();
+        g.moveTo(x0 + inset, bottom - inset);
+        g.lineTo(x0 + inset, top + r);
+        g.arc(w / 2, top + r, r - inset, Math.PI, 0);
+        g.lineTo(x1 - inset, bottom - inset);
+        g.closePath();
+      };
+      g.save();
+      g.shadowColor = 'rgba(122,59,77,0.35)';
+      g.shadowBlur = 22;
+      g.shadowOffsetY = 8;
+      arch(-6);
+      g.fillStyle = '#d8b26e';
+      g.fill();
+      g.restore();
+      g.save();
+      arch(0);
+      g.clip();
+      coverDraw(g, pic, x0, top, x1 - x0, bottom - top, 0.5, 0.36);
+      g.restore();
+      g.strokeStyle = 'rgba(255,250,243,0.9)';
+      g.lineWidth = 3;
+      arch(9);
+      g.stroke();
+      // roses where the arch meets its sides
+      for (const [x, y, k] of [
+        [x0 + 6, top + r + 10, 1],
+        [x1 - 6, bottom - 12, 0.8],
+      ]) {
+        g.fillStyle = '#9dbb92';
+        g.beginPath();
+        g.ellipse(x + 20, y + 18, 26 * k, 9 * k, 0.6, 0, Math.PI * 2);
+        g.fill();
+        bloom(g, x, y, 28 * k, '#f4b8c4');
+        bloom(g, x + 18, y - 22, 18 * k, '#ffffff');
+        bloom(g, x - 16, y + 20, 15 * k, '#e79aa8');
+      }
+      if (n) {
+        g.fillStyle = '#7a3b4d';
+        g.font = 'italic 700 52px "Be Vietnam Pro", serif';
+        fitText(g, n.a, w / 2, 624, w - 120);
+        g.fillStyle = '#e06c88';
+        g.font = `400 54px ${SCRIPT_FONT}`;
+        g.fillText('&', w / 2, 670);
+        g.fillStyle = '#7a3b4d';
+        g.font = 'italic 700 52px "Be Vietnam Pro", serif';
+        fitText(g, n.b, w / 2, 724, w - 120);
+      } else {
+        g.fillStyle = '#7a3b4d';
+        g.font = `400 76px ${SCRIPT_FONT}`;
+        g.fillText('Happy Wedding', w / 2, 652);
+        g.font = '500 22px "Be Vietnam Pro", sans-serif';
+        g.fillStyle = '#9b6b78';
+        g.fillText('Bấm vào bảng này để nhận vai cô dâu, chú rể 💍', w / 2, 704);
+      }
+      g.strokeStyle = '#d8b26e';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(170, 758);
+      g.lineTo(w / 2 - 22, 758);
+      g.moveTo(w / 2 + 22, 758);
+      g.lineTo(w - 170, 758);
+      g.stroke();
+      drawHeart(g, w / 2, 758, 9, '#e06c88');
+      g.fillStyle = '#b08a4a';
+      g.font = '600 25px "Be Vietnam Pro", sans-serif';
+      g.fillText(dateLine(), w / 2, 798);
+      g.font = '500 20px "Be Vietnam Pro", sans-serif';
+      g.fillStyle = '#9b6b78';
+      g.fillText('Tầng 7 · Sảnh tiệc cưới', w / 2, 830);
+    } else {
+      corners(false);
+      // the classic board, no photo yet (laid out on 512 × 712)
+      g.scale(w / 512, h / 712);
+      const W = 512;
+      g.fillStyle = '#b08a4a';
+      g.font = '600 26px "Be Vietnam Pro", sans-serif';
+      g.fillText('WELCOME TO OUR WEDDING', W / 2, 128);
+      g.font = 'italic 500 26px "Be Vietnam Pro", sans-serif';
+      g.fillStyle = '#9b6b78';
+      g.fillText('Chào mừng đến lễ thành hôn của', W / 2, 168);
+      g.fillStyle = '#7a3b4d';
+      if (n) {
+        g.font = 'italic 700 58px "Be Vietnam Pro", serif';
+        fitText(g, n.a, W / 2, 290, W - 90);
+        g.fillStyle = '#e06c88';
+        g.font = `400 64px ${SCRIPT_FONT}`;
+        g.fillText('&', W / 2, 364);
+        g.fillStyle = '#7a3b4d';
+        g.font = 'italic 700 58px "Be Vietnam Pro", serif';
+        fitText(g, n.b, W / 2, 440, W - 90);
+      } else {
+        g.font = 'italic 700 46px "Be Vietnam Pro", serif';
+        g.fillText('Cô dâu & Chú rể', W / 2, 330);
+        g.font = '500 24px "Be Vietnam Pro", sans-serif';
+        g.fillStyle = '#9b6b78';
+        g.fillText('Bấm vào bảng này để nhận vai', W / 2, 390);
+        g.fillText('cô dâu, chú rể hoặc MC 💍', W / 2, 424);
+      }
+      g.strokeStyle = '#d8b26e';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(140, 500);
+      g.lineTo(W - 140, 500);
+      g.stroke();
+      g.fillStyle = '#b08a4a';
+      g.font = '600 26px "Be Vietnam Pro", sans-serif';
+      g.fillText(dateLine(), W / 2, 548);
+      g.font = '500 22px "Be Vietnam Pro", sans-serif';
+      g.fillStyle = '#9b6b78';
+      g.fillText('Tầng 7 · Sảnh tiệc cưới', W / 2, 590);
+    }
+    g.restore();
     tex.needsUpdate = true;
   }
 
@@ -1141,7 +1281,11 @@ export class Floor7Fx {
     if (step === 'bouquet' && el > WED_T.bouquetCount && el < WED_T.bouquetThrow) count = String(3 - Math.floor((el - WED_T.bouquetCount) / 1000));
     if (step === 'bouquet' && el >= WED_T.bouquetThrow && el < WED_T.bouquetResolve + 4500) count = s?.bouquet?.name ? `💐 ${s.bouquet.name}!` : s?.bouquet ? '💐' : 'CHỘP! 🙌';
     const chanting = step === 'kiss' && !!s?.kiss && s.kiss.at === null && s.kiss.goal > 0;
-    const key = `${step}|${s?.stepAt}|${s?.groom?.name}|${s?.bride?.name}|${count}|${wish?.until ?? ''}|${chanting ? this.chant.n : ''}`;
+    // the couple's photos as a slideshow while the guests arrive (and through the feast when no video plays)
+    const slides = !!s && this.photos.count > 0 && !chanting && !count && !wish && (step === 'idle' || (step === 'feast' && !this.videoShows(step)));
+    this.photos.setLed(slides);
+    const slide = slides ? Math.floor(now / SLIDE_MS) % this.photos.count : -1;
+    const key = `${step}|${s?.stepAt}|${s?.groom?.name}|${s?.bride?.name}|${count}|${wish?.until ?? ''}|${chanting ? this.chant.n : ''}|${slide}/${this.photos.count}`;
     const animated = step === 'party' || step === 'dance' || !!count || chanting;
     if (!force && key === this.screenKey && !animated) return;
     this.screenKey = key;
@@ -1217,6 +1361,54 @@ export class Floor7Fx {
       g.fillStyle = party ? '#ffffff' : '#c2185b';
       g.font = `800 ${count.length > 6 ? 92 : 190}px "Be Vietnam Pro", sans-serif`;
       fitText(g, count, W / 2, H / 2 + (count.length > 6 ? 40 : 75), W - 80);
+    } else if (slides) {
+      // the names beside the slideshow (the photo itself is a mesh in front of the wall's left part)
+      const x0 = ((LED_PHOTO.cx + LED_PHOTO.w / 2 + WED_SCREEN.w / 2) / WED_SCREEN.w) * W + 14;
+      const cx = (x0 + W - 34) / 2;
+      const cw = W - 34 - x0 - 20;
+      g.fillStyle = soft;
+      g.font = '700 22px "Be Vietnam Pro", sans-serif';
+      spaced(g, step === 'feast' ? 'CHÚC MỪNG HẠNH PHÚC' : 'LỄ THÀNH HÔN', cx, 78, 4);
+      if (n) {
+        g.fillStyle = ink;
+        g.font = 'italic 700 54px "Be Vietnam Pro", serif';
+        fitText(g, n.a, cx, 160, cw);
+        g.fillStyle = '#e06c88';
+        g.font = `400 58px ${SCRIPT_FONT}`;
+        g.fillText('&', cx, 214);
+        g.fillStyle = ink;
+        g.font = 'italic 700 54px "Be Vietnam Pro", serif';
+        fitText(g, n.b, cx, 274, cw);
+      } else {
+        g.fillStyle = ink;
+        g.font = `400 66px ${SCRIPT_FONT}`;
+        fitText(g, 'Happy Wedding', cx, 200, cw);
+      }
+      g.strokeStyle = soft;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(cx - cw * 0.36, 306);
+      g.lineTo(cx - 16, 306);
+      g.moveTo(cx + 16, 306);
+      g.lineTo(cx + cw * 0.36, 306);
+      g.stroke();
+      drawHeart(g, cx, 306, 8, '#e06c88');
+      g.fillStyle = '#9b6b78';
+      g.font = '500 23px "Be Vietnam Pro", sans-serif';
+      fitText(g, dateLine(), cx, 346, cw);
+      g.font = '500 19px "Be Vietnam Pro", sans-serif';
+      fitText(g, step === 'feast' ? 'Chúc quý khách ngon miệng 🍽️' : 'Mời ghi lưu bút ở bàn ngoài sảnh 💌', cx, 378, cw);
+      // which photo of how many
+      const k = this.photos.count;
+      if (k > 1) {
+        const gap = Math.min(20, (cw * 0.8) / k);
+        for (let i = 0; i < k; i++) {
+          g.fillStyle = i === slide ? '#e06c88' : 'rgba(155,107,120,0.35)';
+          g.beginPath();
+          g.arc(cx + (i - (k - 1) / 2) * gap, 412, i === slide ? 5 : 3.5, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
     } else if (wish) {
       g.fillStyle = soft;
       g.font = '700 32px "Be Vietnam Pro", sans-serif';
@@ -1277,7 +1469,13 @@ export class Floor7Fx {
       this.fired.clear();
       this.chant = { n: s.kiss?.n ?? 0, goal: s.kiss?.goal ?? 0 };
     } else if (s.kiss) this.chant = { n: Math.max(this.chant.n, s.kiss.n), goal: s.kiss.goal };
-    if (!prev || prev.groom?.name !== s.groom?.name || prev.bride?.name !== s.bride?.name) this.drawSign();
+    this.photos.apply(s.photos ?? []);
+    const cover = coverPhoto(s)?.id ?? null;
+    if (!prev || prev.groom?.name !== s.groom?.name || prev.bride?.name !== s.bride?.name || cover !== this.signCover) {
+      this.signCover = cover;
+      this.drawSign();
+    }
+    this.photos.drawTitle(this.names());
     this.screenKey = '';
   }
 
@@ -1890,10 +2088,53 @@ export class Floor7Fx {
       this.screenAcc = 0;
       this.drawScreen(now);
     }
+    // ---------- the couple's photos (slideshow, album wall; loads them while you are up here)
+    this.photos.tick(dt, now, this.signCover);
   }
 }
 
 // ------------------------------------------------------------------ canvas helpers
+const SIGN_W = 640;
+const SIGN_H = 890;
+
+/** A little six-petal flower with a gold heart. */
+function bloom(g: CanvasRenderingContext2D, x: number, y: number, r: number, c: string) {
+  for (let i = 0; i < 6; i++) {
+    g.fillStyle = c;
+    g.beginPath();
+    g.ellipse(x + Math.cos(i) * r * 0.5, y + Math.sin(i) * r * 0.5, r * 0.6, r * 0.45, i, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.fillStyle = '#f6d58a';
+  g.beginPath();
+  g.arc(x, y, r * 0.25, 0, Math.PI * 2);
+  g.fill();
+}
+
+/** Text with letter spacing (drawn letter by letter where the canvas has no letterSpacing). */
+function spaced(g: CanvasRenderingContext2D, text: string, x: number, y: number, px: number) {
+  const ls = g as CanvasRenderingContext2D & { letterSpacing?: string };
+  if ('letterSpacing' in ls) {
+    ls.letterSpacing = `${px}px`;
+    // the spacing trails the last letter too: shift back by half of it
+    g.fillText(text, x + px / 2, y);
+    ls.letterSpacing = '0px';
+    return;
+  }
+  g.fillText(text, x, y);
+}
+
+/** Draw `img` to fill the box (cropping what overflows), keeping the point (fx, fy) of it in view. */
+function coverDraw(g: CanvasRenderingContext2D, img: HTMLCanvasElement, x: number, y: number, w: number, h: number, fx: number, fy: number) {
+  const k = Math.max(w / img.width, h / img.height);
+  const sw = w / k;
+  const sh = h / k;
+  const sx = Math.max(0, Math.min(img.width - sw, img.width * fx - sw / 2));
+  const sy = Math.max(0, Math.min(img.height - sh, img.height * fy - sh / 2));
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+}
+
 function fitText(g: CanvasRenderingContext2D, text: string, x: number, y: number, max: number) {
   const w = g.measureText(text).width;
   if (w <= max) return g.fillText(text, x, y);

@@ -81,6 +81,8 @@ export const WED_CHANDELIERS: { x: number; z: number }[] = [
 export const WED_GIFT = { x: X(15.8), z: 19.5 };
 export const WED_SIGN = { x: X(23.6), z: 19.75 };
 export const WED_PHOTO = { x: X(0.25), z: 23.0 };
+/** The couple's album: framed photos on the hall side of the ballroom's south wall (centre, wall face). */
+export const WED_ALBUM = { x: X(8.2), z: 19.1 };
 export const WED_VANITY = { x: X(39.65), z: 22.0 };
 export const WED_DRESSES = { x: X(34.9), z: 19.55 };
 
@@ -332,6 +334,25 @@ export interface WedKiss {
   at: number | null;
 }
 
+/** A photo of the couple (the bytes live in D1, served at /api/wed/photo/<id>). */
+export interface WedPhoto {
+  id: string;
+  w: number;
+  h: number;
+  /** Who uploaded it. */
+  by: string;
+  at: number;
+}
+export const WED_MAX_PHOTOS = 12;
+/** Upload limit (bytes) — the client shrinks pictures to ~1600 px JPEG first, far below this. */
+export const WED_PHOTO_BYTES = 1_500_000;
+export const WED_PHOTO_ID = /^[a-z0-9]{12,24}$/;
+export const wedPhotoUrl = (id: string) => `/api/wed/photo/${id}`;
+/** Who the album belongs to: a new couple starts with an empty one. */
+export const coupleKey = (s: Pick<WedState, 'groom' | 'bride'>) => (s.groom && s.bride ? `${s.groom.id}|${s.bride.id}` : null);
+/** The couple and the MC look after the album. */
+export const canEditPhotos = (s: WedState, id: string) => !!s.groom && !!s.bride && (s.groom.id === id || s.bride.id === id || s.mc?.id === id);
+
 export interface WedState {
   groom: WedPerson | null;
   bride: WedPerson | null;
@@ -355,6 +376,12 @@ export interface WedState {
   music: WedMusic;
   /** The "Hôn đi!" meter during the kiss step. */
   kiss: WedKiss | null;
+  /** The couple's photos (slideshow on the LED wall, the welcome sign, the album wall in the hall). */
+  photos: WedPhoto[];
+  /** The one on the welcome sign (null = the first). */
+  cover: string | null;
+  /** coupleKey() of the couple the album belongs to. */
+  photosOf: string | null;
 }
 
 export const emptyWed = (): WedState => ({
@@ -373,7 +400,15 @@ export const emptyWed = (): WedState => ({
   lights: 'auto',
   music: autoMusic('lounge', 0, 0),
   kiss: null,
+  photos: [],
+  cover: null,
+  photosOf: null,
 });
+
+/** The photo on the welcome sign. */
+export function coverPhoto(s: WedState): WedPhoto | null {
+  return s.photos.find((p) => p.id === s.cover) ?? s.photos[0] ?? null;
+}
 
 /** What someone wears: the couple always dress for it. */
 export function attireOf(s: WedState, id: string): WedAttire | null {
@@ -414,7 +449,9 @@ export type WedMsg =
   /** Raise a glass at my table ("Một, hai, ba — dô!"); joins the table's toast if one is counting. */
   | { a: 'dzo' }
   /** Reach for the bouquet (`el` = ms after the step began, on the sender's synced clock — fair whatever the latency). */
-  | { a: 'catch'; el?: number };
+  | { a: 'catch'; el?: number }
+  /** The album (uploads go over HTTP: POST /api/wed/photo): put one on the sign, move it, or take it down. */
+  | { a: 'photo'; id: string; op: 'cover' | 'del' | 'left' | 'right' };
 
 export type WedFx =
   | { k: 'gift'; id: string; name: string; amount: number; wish: string }
@@ -426,7 +463,8 @@ export type WedFx =
   /** A table's toast is counting (`at` = the clink), `ids` = who raised a glass so far. */
   | { k: 'dzo'; t: number; at: number; ids: string[] }
   | { k: 'dzoGo'; t: number; ids: string[] }
-  | { k: 'song'; id: string; name: string; title: string; skip: boolean };
+  | { k: 'song'; id: string; name: string; title: string; skip: boolean }
+  | { k: 'photo'; id: string; name: string; n: number };
 
 /** Next step in the programme (party is the last one). */
 export function nextStep(s: WedStep): WedStep {

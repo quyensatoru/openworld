@@ -254,3 +254,28 @@ export async function subsForUser(db: D1Database, userId: string): Promise<PushR
   const r = await db.prepare(`SELECT endpoint, user_id, p256dh, auth, last_sent FROM push_subs WHERE user_id = ?`).bind(userId).all<PushRow>();
   return r.results ?? [];
 }
+
+// ---------------------------------------------------------------- wedding photos
+export async function putWedPhoto(db: D1Database, id: string, data: ArrayBuffer, mime: string, now: number): Promise<void> {
+  await db.prepare('INSERT INTO wed_photos (id, data, mime, created_at) VALUES (?, ?, ?, ?)').bind(id, data, mime, now).run();
+}
+
+export async function getWedPhoto(db: D1Database, id: string): Promise<{ data: ArrayBuffer; mime: string } | null> {
+  const row = await db.prepare('SELECT data, mime FROM wed_photos WHERE id = ?').bind(id).first<{ data: ArrayBuffer | number[]; mime: string }>();
+  if (!row) return null;
+  // D1 hands BLOBs back as an array of numbers
+  const data = row.data instanceof ArrayBuffer ? row.data : new Uint8Array(row.data).buffer;
+  return { data, mime: row.mime };
+}
+
+/** Delete every photo not in `keep` (the album is small, so this is the simplest correct sweep). */
+export async function keepWedPhotos(db: D1Database, keep: string[]): Promise<void> {
+  if (!keep.length) {
+    await db.prepare('DELETE FROM wed_photos').run();
+    return;
+  }
+  await db
+    .prepare(`DELETE FROM wed_photos WHERE id NOT IN (${keep.map(() => '?').join(',')})`)
+    .bind(...keep)
+    .run();
+}

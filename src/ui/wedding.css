@@ -110,9 +110,10 @@
 }
 .wed-tabs button {
   flex: 1;
-  padding: 7px 4px;
+  padding: 7px 3px;
   border-radius: 10px;
-  font-size: 12.5px;
+  font-size: 12px;
+  white-space: nowrap;
   font-weight: 600;
   color: #8a5866;
   background: transparent;
@@ -963,6 +964,214 @@ button.wed-hero:active {
   height: 116px;
 }
 
+/* ---------------------------------------------------------------- the album (📷 tab + full screen) */
+.wp-drop {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  border: 1.5px dashed rgba(196, 138, 58, 0.55);
+  background: rgba(255, 255, 255, 0.5);
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.wp-drop.drag {
+  border-color: #d4567c;
+  background: rgba(255, 228, 236, 0.85);
+}
+.wp-drop .wed-big {
+  margin: 0;
+}
+.wp-drop small {
+  font-size: 11.5px;
+  color: #9b6b78;
+  line-height: 1.4;
+  text-align: center;
+}
+.wp-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.wp-grid li {
+  position: relative;
+  display: grid;
+  gap: 4px;
+}
+.wp-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 3px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #f1d48f, #d8b26e);
+  box-shadow: 0 4px 12px rgba(90, 30, 50, 0.18);
+  transition: transform 0.15s;
+}
+.wp-thumb:hover {
+  transform: translateY(-2px);
+}
+.wp-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 9px;
+  display: block;
+  background: #f6e1e4;
+}
+.wp-grid li.cover .wp-thumb {
+  background: linear-gradient(135deg, #ff8fb1, #d4567c);
+}
+.wp-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(212, 86, 124, 0.92);
+}
+.wp-tools {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+}
+.wp-tools button {
+  flex: 1;
+  padding: 3px 0;
+  border-radius: 7px;
+  font-size: 11px;
+  color: #8a5866;
+  background: rgba(212, 86, 124, 0.08);
+}
+.wp-tools button:disabled {
+  opacity: 0.35;
+}
+.wp-tools button.del:hover {
+  background: rgba(200, 40, 70, 0.18);
+}
+.wp-ghost {
+  aspect-ratio: 1;
+  border-radius: 12px;
+  background: linear-gradient(110deg, #f6e1e4 30%, #fff6f0 50%, #f6e1e4 70%);
+  background-size: 300% 100%;
+  animation: wp-shimmer 1.2s linear infinite;
+}
+@keyframes wp-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.wp-empty {
+  padding: 22px 0;
+  text-align: center;
+  color: #9b6b78;
+  font-size: 13px;
+}
+.wed-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px 64px;
+  background: radial-gradient(circle at 50% 40%, rgba(60, 22, 40, 0.88), rgba(14, 6, 12, 0.96));
+  animation: wl-in 0.22s ease-out;
+}
+@keyframes wl-in {
+  from {
+    opacity: 0;
+  }
+}
+.wed-lightbox figure {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+.wed-lightbox img {
+  max-width: min(100%, 1400px);
+  max-height: calc(100vh - 130px);
+  object-fit: contain;
+  border: 8px solid #fffaf3;
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 2px #d8b26e,
+    0 30px 80px rgba(0, 0, 0, 0.55);
+  animation: wl-pop 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes wl-pop {
+  from {
+    transform: scale(0.96);
+    opacity: 0;
+  }
+}
+.wed-lightbox figcaption {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: #fff4f7;
+}
+.wed-lightbox figcaption b {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: 20px;
+  color: #f1d48f;
+}
+.wed-lightbox figcaption span {
+  font-size: 12.5px;
+  opacity: 0.75;
+}
+.wl-nav,
+.wl-close {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(241, 212, 143, 0.4);
+  border-radius: 50%;
+}
+.wl-nav {
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin-top: -23px;
+  font-size: 30px;
+  line-height: 1;
+}
+.wl-nav.prev {
+  left: 12px;
+}
+.wl-nav.next {
+  right: 12px;
+}
+.wl-close {
+  top: 14px;
+  right: 14px;
+  width: 38px;
+  height: 38px;
+  font-size: 16px;
+}
+.wl-nav:hover,
+.wl-close:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
 /* phones */
 @media (max-width: 600px) {
   .wed-panel {
@@ -989,6 +1198,14 @@ button.wed-hero:active {
   }
   .wed-hero {
     bottom: 160px;
+  }
+  .wed-lightbox {
+    padding: 56px 8px 24px;
+  }
+  .wl-nav {
+    top: auto;
+    bottom: 18px;
+    margin-top: 0;
   }
 }
 @media (max-height: 500px) {
