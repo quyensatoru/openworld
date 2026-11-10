@@ -1,26 +1,37 @@
-// Floor 7, the wedding hall: the panel (roles, the programme, gift envelopes + wishes, outfits),
-// the guests' quick actions (cheers, party poppers, petals), the big title when a step starts,
-// and the little pop-ups for gifts and the bouquet.
+// Floor 7, the wedding hall: the panel (roles, the programme, the band, gift envelopes + wishes,
+// outfits), the guests' quick actions (cheers, party poppers, petals), the big contextual button
+// (throw petals for the march, "Hôn đi!" for the kiss, "Dô!" at your table, a phone torch for the
+// first dance, dance in the party), the bouquet grab, the big title when a step starts, and the
+// little pop-ups for gifts and the bouquet.
 import { useEffect, useState } from 'react';
+import type { YtHit } from '../../shared/karaoke';
 import {
   ATTIRE_META,
+  BOUQUET_OPEN,
   GIFT_AMOUNTS,
   LIGHTS_META,
   LIGHTS_ORDER,
+  SET_NAME,
   STEP_META,
+  STEP_SET,
   WED_PROGRAM,
-  WED_REACTS,
+  WED_REACT_ROW,
+  WED_SONGS,
+  WED_T,
   WED_WISH_MAX,
   attireOf,
   inWedZone,
   money,
   nextStep,
+  parseLen,
   type WedAttire,
   type WedRole,
+  type WedSet,
   type WedState,
 } from '../../shared/wedding';
+import { parseYouTube } from '../../shared/protocol';
 import { game } from '../game';
-import { setState, useStore } from '../store';
+import { serverNow, setState, useStore } from '../store';
 import './wedding.css';
 
 function useTick(ms: number) {
@@ -62,8 +73,9 @@ export function WeddingPanel() {
         {(
           [
             ['program', '💍 Hôn lễ'],
-            ['gift', '💌 Mừng cưới'],
-            ['dress', '👗 Trang phục'],
+            ['music', '🎵 Nhạc'],
+            ['gift', '💌 Mừng'],
+            ['dress', '👗 Đồ'],
           ] as const
         ).map(([id, label]) => (
           <button key={id} className={tab === id ? 'on' : ''} onClick={() => setState({ wedTab: id })}>
@@ -71,7 +83,7 @@ export function WeddingPanel() {
           </button>
         ))}
       </div>
-      <div className="wed-body">{tab === 'program' ? <Program s={s} /> : tab === 'gift' ? <Gifts s={s} /> : <Dress s={s} zone={zone ?? ''} />}</div>
+      <div className="wed-body">{tab === 'program' ? <Program s={s} /> : tab === 'music' ? <Music s={s} /> : tab === 'gift' ? <Gifts s={s} /> : <Dress s={s} zone={zone ?? ''} />}</div>
     </div>
   );
 }
@@ -187,6 +199,118 @@ function Program({ s }: { s: WedState }) {
   );
 }
 
+/** Steps where anyone may change the music (during the ceremony it belongs to whoever runs it). */
+const OPEN_MIC = new Set(['idle', 'feast', 'party']);
+const SET_ORDER: WedSet[] = ['lounge', 'march', 'vows', 'toast', 'feast', 'bouquet', 'waltz', 'party'];
+
+function Music({ s }: { s: WedState }) {
+  const me = useStore((st) => st.me?.id ?? '');
+  const players = useStore((st) => st.players);
+  const vol = useStore((st) => st.wedVolume);
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState<YtHit[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const here = (id: string | undefined) => !!id && (id === me || onFloor(players[id]?.zone));
+  const runner = [s.groom, s.bride, s.mc].some((p) => p?.id === me);
+  const nobodyRuns = ![s.groom, s.bride, s.mc].some((p) => p && here(p.id));
+  const can = OPEN_MIC.has(s.step) || runner || nobodyRuns;
+  const m = s.music;
+  const set = STEP_SET[s.step];
+  const search = async () => {
+    const text = q.trim();
+    if (!text) return;
+    if (parseYouTube(text)) {
+      if (game.wedSongLink(text)) setQ('');
+      return;
+    }
+    setBusy(true);
+    setErr('');
+    try {
+      setHits(await game.karaSearch(`${text}`));
+    } catch {
+      setErr('Không tìm được — thử lại hoặc dán link YouTube nhé');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="wed-music">
+      <div className="wm-now">
+        <span className="wm-disc">🎵</span>
+        <span className="wm-text">
+          <small>{m.by ? `${m.by} chọn` : `Theo chương trình · ${SET_NAME[m.set]}`}</small>
+          <b>{m.title}</b>
+        </span>
+        <button className="wr-btn" disabled={!can} onClick={() => game.wedSkip()} title="Chuyển sang bài khác">
+          ⏭
+        </button>
+      </div>
+      <label className="wm-vol">
+        <span>{vol ? '🔊' : '🔇'}</span>
+        <input type="range" min={0} max={100} value={vol} onChange={(e) => game.setWedVolume(Number(e.target.value))} />
+        <b>{vol}</b>
+      </label>
+      {!can && <p className="wed-note">Đang làm lễ — chỉ cô dâu, chú rể hoặc MC mới đổi nhạc được 🎵</p>}
+      <div className="wm-search">
+        <input
+          value={q}
+          placeholder="Tìm bài trên YouTube hoặc dán link…"
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') void search();
+          }}
+        />
+        <button className="wr-btn" disabled={busy || !q.trim()} onClick={() => void search()}>
+          {busy ? '…' : 'Tìm'}
+        </button>
+      </div>
+      {err && <p className="wed-note">{err}</p>}
+      {hits && (
+        <ul className="wm-list">
+          {hits.slice(0, 8).map((h) => (
+            <li key={h.id}>
+              <span className="wml-t">
+                <b>{h.title}</b>
+                <small>
+                  {h.channel} · {h.len}
+                </small>
+              </span>
+              <button className="wr-btn" disabled={!can} onClick={() => game.wedSong(h.id, h.title, parseLen(h.len))}>
+                ▶
+              </button>
+            </li>
+          ))}
+          {!hits.length && <li className="empty">Không thấy bài nào 😅</li>}
+        </ul>
+      )}
+      <div className="wm-label">Nhạc cưới gợi ý</div>
+      {SET_ORDER.map((k) => (
+        <div key={k} className={`wm-set${k === set ? ' cur' : ''}`}>
+          <div className="wms-name">
+            {SET_NAME[k]}
+            {k === set && <em> · đang tới phần này</em>}
+          </div>
+          <ul className="wm-list">
+            {WED_SONGS[k].map((song) => (
+              <li key={`${k}-${song.id}`} className={m.id === song.id ? 'on' : ''}>
+                <span className="wml-t">
+                  <b>{song.title}</b>
+                </span>
+                <button className="wr-btn" disabled={!can || m.id === song.id} onClick={() => game.wedSong(song.id, song.title, song.dur)}>
+                  {m.id === song.id ? '♪' : '▶'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <p className="wed-tip">Nhạc phát từ YouTube, cả sảnh nghe cùng một lúc. Chuyển phần lễ là ban nhạc tự đổi bài; trong lúc làm lễ chỉ cô dâu, chú rể, MC đổi được.</p>
+    </div>
+  );
+}
+
 function Gifts({ s }: { s: WedState }) {
   const [amount, setAmount] = useState<number>(500_000);
   const [wish, setWish] = useState('');
@@ -282,7 +406,7 @@ export function WeddingActions() {
   const zone = useStore((st) => st.me?.zone);
   const touch = useStore((st) => st.touch);
   if (!onFloor(zone)) return null;
-  const reacts = touch ? (['👏', '❤️', '🎉'] as const) : WED_REACTS;
+  const reacts = touch ? (['👏', '❤️', '🎉'] as const) : WED_REACT_ROW;
   return (
     <div className="wed-actions">
       {reacts.map((e) => (
@@ -296,6 +420,166 @@ export function WeddingActions() {
       <button className="wa-big" onClick={() => game.wed({ a: 'petals' })} title="Tung cánh hoa">
         🌸
       </button>
+    </div>
+  );
+}
+
+interface Hero {
+  icon: string;
+  label: string;
+  sub?: string;
+  go?: () => void;
+  /** 0..1: a progress bar under the label. */
+  meter?: number;
+  hot?: boolean;
+}
+
+/** The one thing to do right now, big, in the middle (it changes with the programme and where you stand). */
+export function WeddingHero() {
+  const zone = useStore((st) => st.me?.zone);
+  const s = useStore((st) => st.wed);
+  const me = useStore((st) => st.me?.id ?? '');
+  const chant = useStore((st) => st.wedChant);
+  const dzo = useStore((st) => st.wedDzo);
+  useTick(250);
+  if (zone !== 'wedding') return null;
+  const where = game.wedWhere();
+  const now = serverNow();
+  const el = now - s.stepAt;
+  const couple = s.groom?.id === me || s.bride?.id === me;
+  let h: Hero | null = null;
+  const chanting = s.step === 'kiss' && !!s.kiss && s.kiss.at === null && s.kiss.goal > 0;
+  if (chanting && s.kiss) {
+    const k = Math.min(1, (chant && chant.stepAt === s.stepAt ? chant.n : s.kiss.n) / s.kiss.goal);
+    h = couple
+      ? { icon: '💋', label: 'Khách đang hô “Hôn đi!”', sub: 'Đầy thanh là… hôn thôi 😘', meter: k }
+      : { icon: '💋', label: 'Hôn đi! Hôn đi!', sub: 'Bấm liên tục cho đầy thanh!', meter: k, go: () => game.wedChant(), hot: true };
+  } else if (s.step === 'bouquet' && !couple && el > WED_T.bouquetCount - 2500 && !s.bouquet) {
+    return null; // the bouquet grab takes the stage
+  } else if (couple && s.step !== 'idle' && s.step !== 'party') {
+    const nx = nextStep(s.step);
+    h = { icon: STEP_META[nx].emoji, label: `Tiếp: ${STEP_META[nx].name}`, sub: 'Bấm khi sẵn sàng ▶', go: () => game.wed({ a: 'next' }) };
+  } else if (where.table >= 0 && !couple) {
+    const d = dzo[where.table];
+    const counting = !!d && d.at > now;
+    const joined = counting && d.ids.includes(me);
+    h = counting
+      ? joined
+        ? { icon: '🍻', label: `Chờ cả bàn… ${Math.max(1, Math.ceil((d.at - now) / 1000))}`, sub: `${d.ids.length} ly đang nâng` }
+        : { icon: '🍻', label: `Cùng dô! (${d.ids.length})`, sub: 'Bàn bạn đang nâng ly — nhanh lên!', go: () => game.wedDzo(), hot: true }
+      : { icon: '🍻', label: 'Một, hai, ba — Dô!', sub: 'Rủ cả bàn cùng cụng ly', go: () => game.wedDzo() };
+  } else if (!couple) {
+    switch (s.step) {
+      case 'march':
+        h = { icon: '🌸', label: 'Tung hoa', sub: 'khi cô dâu chú rể đi qua', go: () => game.wed({ a: 'petals' }), hot: el > WED_T.marchGo };
+        break;
+      case 'vows':
+      case 'rings':
+        h = {
+          icon: '👏',
+          label: 'Vỗ tay chúc phúc',
+          go: () => {
+            game.wedReact('👏');
+            game.emote('clap');
+          },
+        };
+        break;
+      case 'kiss':
+        h = { icon: '🎊', label: 'Bắn pháo giấy', go: () => game.wed({ a: 'popper' }) };
+        break;
+      case 'cake':
+        h = {
+          icon: '🎉',
+          label: 'Hò reo',
+          go: () => {
+            game.wedReact('🎉');
+            game.emote('cheer');
+          },
+        };
+        break;
+      case 'champagne':
+      case 'toast':
+        h = {
+          icon: '🥂',
+          label: 'Nâng ly chúc mừng',
+          go: () => {
+            game.wedReact('🥂');
+            game.emote('toast');
+          },
+        };
+        break;
+      case 'feast':
+        h = { icon: '🍽️', label: 'Vào bàn tiệc', sub: 'ngồi vào ghế rồi bấm “Dô!” cùng cả bàn' };
+        break;
+      case 'dance':
+        h = { icon: '📱', label: 'Bật đèn điện thoại', sub: 'lung linh cho điệu nhảy đầu tiên', go: () => game.wedGlow() };
+        break;
+      case 'party':
+        h = where.onDance
+          ? { icon: '💃', label: 'Quẩy lên!', sub: 'đứng trên sàn là tự nhảy theo nhạc', go: () => game.wedDance() }
+          : { icon: '🕺', label: 'Nhảy!', sub: 'ra sàn nhảy giữa sảnh cho máu', go: () => game.wedDance() };
+        break;
+      case 'idle':
+        if (s.groom && s.bride) h = { icon: '💌', label: 'Mừng cưới', sub: 'bỏ phong bì + lời chúc', go: () => setState({ wedPanel: true, wedTab: 'gift' }) };
+        break;
+    }
+  }
+  if (!h) return null;
+  const Tag = h.go ? 'button' : 'div';
+  return (
+    <Tag className={`wed-hero${h.hot ? ' hot' : ''}${h.go ? '' : ' info'}`} onClick={h.go} {...(h.go ? { type: 'button' as const } : {})}>
+      <span className="wh-icon">{h.icon}</span>
+      <span className="wh-text">
+        <b>{h.label}</b>
+        {h.sub && <small>{h.sub}</small>}
+        {h.meter !== undefined && (
+          <span className="wh-meter">
+            <i style={{ width: `${Math.round(h.meter * 100)}%` }} />
+          </span>
+        )}
+      </span>
+    </Tag>
+  );
+}
+
+/** The bouquet toss: a big "CHỘP!" button with a ring that closes on the best moment to grab. */
+export function WeddingGrab() {
+  const zone = useStore((st) => st.me?.zone);
+  const s = useStore((st) => st.wed);
+  const me = useStore((st) => st.me?.id ?? '');
+  const grab = useStore((st) => st.wedGrab);
+  useTick(40);
+  if (zone !== 'wedding' || s.step !== 'bouquet' || s.bouquet) return null;
+  if (s.groom?.id === me || s.bride?.id === me) return null;
+  const el = serverNow() - s.stepAt;
+  if (el < WED_T.bouquetCount - 2500 || el > WED_T.bouquetResolve + 300) return null;
+  const where = game.wedWhere();
+  const open = el >= BOUQUET_OPEN;
+  const mine = !!grab && grab.stepAt === s.stepAt;
+  // the ring closes from 2.4× onto the button at the perfect moment, then opens again (too late)
+  const k = (WED_T.bouquetPerfect - el) / (WED_T.bouquetPerfect - BOUQUET_OPEN);
+  const ring = open ? 1 + 1.4 * Math.abs(k) : 2.4;
+  const late = open && k < 0;
+  const off = mine && grab ? (grab.el - WED_T.bouquetPerfect) / 1000 : 0;
+  let hint = '';
+  if (!where.catchZone) hint = '💐 Ra trước sân khấu (quanh sàn nhảy) mới giành được hoa cưới!';
+  else if (!open) hint = el < WED_T.bouquetThrow ? `Cô dâu sắp tung hoa… bấm CHỘP! đúng lúc vòng tròn khép lại` : 'Chuẩn bị…';
+  return (
+    <div className="wed-grab">
+      {hint && <div className="wgr-hint">{hint}</div>}
+      <button
+        type="button"
+        className={`wgr-btn${mine ? ' done' : ''}${open && !mine && where.catchZone ? ' live' : ''}`}
+        disabled={!open || mine || !where.catchZone}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          game.wedGrab();
+        }}
+      >
+        {open && !mine && <span className={`wgr-ring${late ? ' late' : ''}`} style={{ transform: `scale(${ring.toFixed(3)})` }} />}
+        <span className="wgr-label">{mine ? (Math.abs(off) < 0.08 ? '✨ Chuẩn từng li!' : `${off < 0 ? 'Sớm' : 'Trễ'} ${Math.abs(off).toFixed(2)} giây`) : '🙌 CHỘP!'}</span>
+      </button>
+      {mine && <div className="wgr-hint">Đã vươn tay — chờ xem hoa rơi vào ai… 🤞</div>}
     </div>
   );
 }
@@ -338,6 +622,10 @@ export function WeddingPops() {
           {c.name ? (
             <>
               <div className="wc-name">{c.me ? 'Bạn' : c.name} đã bắt được hoa cưới!</div>
+              {c.off !== null && (
+                <div className="wc-how">{c.tries > 1 ? `Nhanh tay nhất trong ${c.tries} người · lệch ${(c.off / 1000).toFixed(2)} giây` : `Chộp gọn — lệch ${(c.off / 1000).toFixed(2)} giây`}</div>
+              )}
+              {c.off === null && <div className="wc-how">Không ai kịp vươn tay — hoa rơi trúng người gần nhất 🍀</div>}
               <div className="wc-sub">{c.me ? 'Sắp tới lượt bạn lên xe hoa rồi 😉' : 'Đám cưới tiếp theo là của ai đây? 😉'}</div>
             </>
           ) : (

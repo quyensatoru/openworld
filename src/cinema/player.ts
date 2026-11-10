@@ -103,6 +103,15 @@ export class CinemaPlayer {
     return !!this.state && this.state.pausedAt == null;
   }
 
+  /** The video is actually playing here with its sound on (not blocked, buffering or broken). */
+  audible(): boolean {
+    try {
+      return !!this.player && this.ready && this.player.getPlayerState() === PLAYING && !this.player.isMuted() && this.volume * this.level > 0;
+    } catch {
+      return false;
+    }
+  }
+
   /** Seconds into the film right now according to the shared state. */
   position(): number {
     const s = this.state;

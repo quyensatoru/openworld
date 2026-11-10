@@ -614,6 +614,355 @@
   margin-top: 4px;
 }
 
+/* the band (🎵 tab) */
+.wm-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 224, 234, 0.9), rgba(255, 240, 214, 0.9));
+  border: 1px solid rgba(216, 178, 110, 0.5);
+}
+.wm-disc {
+  font-size: 22px;
+  animation: wm-spin 3.2s linear infinite;
+}
+@keyframes wm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.wm-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.wm-text small {
+  font-size: 11px;
+  color: #a98290;
+}
+.wm-text b {
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wm-vol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.wm-vol input {
+  flex: 1;
+  accent-color: #d4567c;
+}
+.wm-vol b {
+  width: 26px;
+  text-align: right;
+  color: #9b4a62;
+}
+.wm-search {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.wm-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(216, 178, 110, 0.6);
+  background: rgba(255, 255, 255, 0.85);
+  color: #5b2a3a;
+  font: inherit;
+  font-size: 13px;
+}
+.wm-label {
+  margin-top: 14px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #b08a4a;
+}
+.wm-set {
+  margin-top: 8px;
+}
+.wms-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9b4a62;
+}
+.wms-name em {
+  font-weight: 500;
+  color: #d4567c;
+}
+.wm-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.wm-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.7);
+}
+.wm-list li.on {
+  background: linear-gradient(135deg, #ffe0ea, #ffeec9);
+  box-shadow: inset 0 0 0 1px rgba(216, 178, 110, 0.6);
+}
+.wm-list li.empty {
+  color: #a98290;
+  font-size: 12.5px;
+}
+.wml-t {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.wml-t b {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wml-t small {
+  font-size: 11px;
+  color: #a98290;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the one thing to do now: a big button above the toolbar */
+.wed-hero {
+  position: absolute;
+  left: 50%;
+  bottom: 168px; /* clear of the interaction prompt and the "Đang nghe" pill above it */
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 230px;
+  max-width: calc(100vw - 28px);
+  padding: 10px 22px 10px 14px;
+  border-radius: 999px;
+  color: #5b2a3a;
+  text-align: left;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(255, 214, 226, 0.95), transparent 60%),
+    linear-gradient(170deg, rgba(255, 252, 247, 0.97), rgba(252, 232, 238, 0.97));
+  border: 1px solid rgba(216, 178, 110, 0.75);
+  box-shadow:
+    0 16px 40px rgba(90, 30, 50, 0.3),
+    inset 0 0 0 3px rgba(255, 255, 255, 0.6);
+  transition: transform 0.1s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+button.wed-hero {
+  cursor: pointer;
+  font: inherit;
+}
+button.wed-hero:active {
+  transform: translateX(-50%) scale(0.95);
+}
+.wed-hero.info {
+  pointer-events: none;
+  opacity: 0.92;
+}
+.wed-hero.hot {
+  animation: wh-pulse 0.9s ease-in-out infinite;
+  border-color: #e8577f;
+}
+@keyframes wh-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 16px 40px rgba(90, 30, 50, 0.3),
+      0 0 0 0 rgba(232, 87, 127, 0.55),
+      inset 0 0 0 3px rgba(255, 255, 255, 0.6);
+  }
+  50% {
+    box-shadow:
+      0 16px 40px rgba(90, 30, 50, 0.3),
+      0 0 0 10px rgba(232, 87, 127, 0),
+      inset 0 0 0 3px rgba(255, 255, 255, 0.6);
+  }
+}
+.wh-icon {
+  font-size: 30px;
+  line-height: 1;
+}
+.wh-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.wh-text b {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 800;
+  font-size: 18px;
+  white-space: nowrap;
+}
+.wh-text small {
+  font-size: 12px;
+  color: #8a5866;
+}
+.wh-meter {
+  display: block;
+  margin-top: 5px;
+  width: 200px;
+  max-width: 52vw;
+  height: 9px;
+  border-radius: 9px;
+  background: rgba(122, 59, 77, 0.15);
+  overflow: hidden;
+}
+.wh-meter i {
+  display: block;
+  height: 100%;
+  border-radius: 9px;
+  background: linear-gradient(90deg, #ff8fb1, #e8325c);
+  transition: width 0.15s;
+}
+
+/* the bouquet grab */
+.wed-grab {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+.wgr-hint {
+  padding: 8px 16px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #5b2a3a;
+  background: rgba(255, 251, 246, 0.94);
+  border: 1px solid rgba(216, 178, 110, 0.6);
+  box-shadow: 0 10px 28px rgba(90, 30, 50, 0.25);
+  text-align: center;
+  max-width: calc(100vw - 40px);
+}
+.wgr-btn {
+  position: relative;
+  pointer-events: auto;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+  background: radial-gradient(circle at 35% 30%, #ff9cbb, #d81b60 70%);
+  box-shadow:
+    0 18px 44px rgba(150, 20, 70, 0.45),
+    inset 0 -6px 14px rgba(90, 0, 40, 0.35);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.wgr-btn:disabled {
+  cursor: default;
+  filter: saturate(0.6) brightness(0.95);
+}
+.wgr-btn.live {
+  animation: wgr-wobble 0.45s ease-in-out infinite alternate;
+}
+.wgr-btn.done {
+  background: radial-gradient(circle at 35% 30%, #ffe7a6, #d4a03c 70%);
+  color: #5b2a3a;
+  filter: none;
+}
+@keyframes wgr-wobble {
+  from {
+    transform: rotate(-3deg) scale(1);
+  }
+  to {
+    transform: rotate(3deg) scale(1.04);
+  }
+}
+.wgr-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 5px solid #ffd58a;
+  box-shadow: 0 0 18px rgba(255, 213, 138, 0.9);
+  pointer-events: none;
+}
+.wgr-ring.late {
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: none;
+}
+.wgr-label {
+  position: relative;
+  font-size: 21px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 6px rgba(90, 0, 40, 0.45);
+}
+.wgr-btn.done .wgr-label {
+  font-size: 16px;
+  text-shadow: none;
+}
+.wc-how {
+  font-size: 13px;
+  font-weight: 700;
+  color: #c2185b;
+  margin-top: 4px;
+}
+
+/* phones: the big button sits beside the actions column, clear of both thumbs */
+.office.touch .wed-hero {
+  left: auto;
+  right: 54px;
+  top: 120px;
+  bottom: auto;
+  transform: none;
+  min-width: 0;
+  max-width: calc(100vw - 70px);
+  padding: 8px 16px 8px 10px;
+  gap: 8px;
+}
+.office.touch button.wed-hero:active {
+  transform: scale(0.95);
+}
+.office.touch .wh-icon {
+  font-size: 24px;
+}
+.office.touch .wh-text b {
+  font-size: 15px;
+}
+.office.touch .wh-meter {
+  width: 150px;
+}
+.office.touch .wed-grab {
+  bottom: 26%;
+}
+.office.touch .wgr-btn {
+  width: 116px;
+  height: 116px;
+}
+
 /* phones */
 @media (max-width: 600px) {
   .wed-panel {
@@ -638,6 +987,9 @@
     right: 52px;
     top: 22%;
   }
+  .wed-hero {
+    bottom: 160px;
+  }
 }
 @media (max-height: 500px) {
   .office .wed-panel,
@@ -658,6 +1010,21 @@
     top: 8px;
     right: 92px;
     display: flex;
+  }
+  .office.touch .wed-hero {
+    top: 56px;
+    right: 92px;
+  }
+  .office.touch .wed-grab {
+    bottom: 118px; /* above the toolbar and the "Đang nghe" pill */
+    gap: 8px;
+  }
+  .office.touch .wgr-btn {
+    width: 92px;
+    height: 92px;
+  }
+  .office.touch .wgr-label {
+    font-size: 17px;
   }
   .wed-banner {
     top: 56px;

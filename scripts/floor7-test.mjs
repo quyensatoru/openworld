@@ -1,6 +1,8 @@
 // Floor 7 protocol test: the wedding hall with four fake players — roles (groom, bride, MC), who
-// may run the programme, the steps, gift envelopes (amounts, throttle), reactions, poppers, outfits,
-// the bouquet toss (the server picks the catcher), ending the party, roles freed when you leave.
+// may run the programme, the steps, the band (songs follow the programme, requests, skip, who may),
+// the "Hôn đi!" meter, gift envelopes (amounts, throttle), reactions, poppers, outfits, table
+// toasts ("dô!"), the bouquet grab (timed, the server picks the catcher), ending the party, roles
+// freed when you leave.
 //   BASE=http://localhost:5174 PASSCODE=office-dev npx tsx scripts/floor7-test.mjs
 import WebSocket from 'ws';
 
@@ -113,6 +115,7 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   M.send(wed({ a: 'end' }));
   await sleep(300);
   for (const c of P) for (const role of ['groom', 'bride', 'mc']) c.send(wed({ a: 'role', role, on: false }));
+  X.send(wed({ a: 'lights', lights: 'auto' })); // a previous run may have left them up
   await sleep(400);
 
   // roles need floor 7
@@ -143,14 +146,54 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   G.send(wed({ a: 'step', step: 'march' }));
   const march = await X.wait(state((s) => s.step === 'march'));
   ok(!!march && march.s.startedAt && Math.abs(march.s.stepAt - Date.now()) < 5000, 'the ceremony starts with the walk down the aisle');
+  ok(!!march && march.s.music.set === 'march' && march.s.music.at === march.s.stepAt && !march.s.music.by, `the band plays the march (${march?.s.music.title})`);
   ok(!!(await X.wait((m) => m.t === 'chat' && /đang bắt đầu ở tầng 7/.test(m.m.text), 3000)), 'the office is invited up');
   await sleep(1000);
   M.send(wed({ a: 'next' }));
-  ok(!!(await X.wait(state((s) => s.step === 'vows'))), 'the MC moves on to the vows');
+  const vows = await X.wait(state((s) => s.step === 'vows'));
+  ok(!!vows && vows.s.music.set === 'vows', 'the MC moves on to the vows (and the band to a love song)');
   await sleep(1000);
   B.send(wed({ a: 'step', step: 'nope' }));
   B.send(wed({ a: 'step', step: 'rings' }));
-  ok(!!(await X.wait(state((s) => s.step === 'rings'))), 'the bride jumps to the rings (bad step names are ignored)');
+  const rings = await X.wait(state((s) => s.step === 'rings'));
+  ok(!!rings, 'the bride jumps to the rings (bad step names are ignored)');
+  ok(!!rings && !!vows && rings.s.music.id === vows.s.music.id && rings.s.music.at === vows.s.music.at, 'the song carries on through the rings (same set)');
+
+  // the band: requests and skips (only the people running it during the ceremony)
+  X.send(wed({ a: 'song', id: 'dQw4w9WgXcQ', title: 'troll' }));
+  ok(!!(await X.wait((m) => m.t === 'err' && /đổi nhạc/.test(m.msg))), 'a guest cannot change the music during the ceremony');
+  X.clear();
+  M.send(wed({ a: 'song', id: 'not an id!', title: 'x' }));
+  M.send(wed({ a: 'song', id: 'DG6h__b_-iQ', title: 'Cưới Nhau Đi', dur: 239 }));
+  const sfx = await X.wait((m) => m.t === 'wedFx' && m.fx.k === 'song');
+  ok(!!sfx && sfx.fx.name === 'MC Vui' && !sfx.fx.skip, 'the MC picks a song (everyone is told; a bad id is ignored)');
+  const req = await X.wait(state((s) => s.music.by === 'MC Vui'));
+  ok(!!req && req.s.music.id === 'DG6h__b_-iQ' && req.s.music.dur === 239 && req.s.music.at > Date.now() - 2000, 'the request plays from the top for everyone');
+  await sleep(2700);
+  X.clear();
+  M.send(wed({ a: 'skip' }));
+  const sk = await X.wait(state((s) => s.music.by === null && s.music.set === 'vows'));
+  ok(!!sk, `skip goes back to the programme's songs (${sk?.s.music.title})`);
+
+  // the kiss: the guests chant until the meter is full (the couple's shouts don't count)
+  await sleep(1000);
+  X.clear();
+  B.send(wed({ a: 'step', step: 'kiss' }));
+  const kiss = await X.wait(state((s) => s.step === 'kiss'));
+  ok(!!kiss && kiss.s.kiss && kiss.s.kiss.at === null && kiss.s.kiss.goal >= 12, `kiss: the guests have to chant first (goal ${kiss?.s.kiss?.goal})`);
+  G.send(wed({ a: 'chant' }));
+  ok(!(await X.next((m) => m.t === 'wedFx' && m.fx.k === 'chant' && m.fx.id === G.cid, 600)), "the groom's own shouts don't count");
+  const goal = kiss?.s.kiss?.goal ?? 30;
+  const full = (m) => m.t === 'wed' && m.s.step === 'kiss' && m.s.kiss?.at;
+  for (let i = 0; i < goal && !X.inbox.some(full); i++) {
+    X.send(wed({ a: 'chant' }));
+    M.send(wed({ a: 'chant' }));
+    await sleep(200);
+  }
+  const counts = X.inbox.filter((m) => m.t === 'wedFx' && m.fx.k === 'chant').map((m) => m.fx.n);
+  ok(counts.length >= goal && counts.every((n, i) => n === i + 1) && counts.at(-1) === goal, `every shout goes round with the count (${counts.length} → ${counts.at(-1)}/${goal})`);
+  const kissed = await X.wait(full, 3000);
+  ok(!!kissed && kissed.s.kiss.at > Date.now() - 3000, 'a full meter: they kiss');
 
   // gifts
   X.clear();
@@ -185,15 +228,41 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   ok(!!lf && lf.fx.lights === 'off' && lf.fx.name === 'MC Vui', 'the MC turns the lights off (everyone is told; nonsense modes ignored)');
   ok(!!(await X.wait(state((s) => s.lights === 'off'))), 'lights off in the state');
 
-  // bouquet: the guest on the dance floor catches it
+  // table toasts: "một, hai, ba — dô!"
+  X.move(F7 + 20, 12.5);
+  await sleep(400);
+  X.send(wed({ a: 'dzo' }));
+  ok(!!(await X.wait((m) => m.t === 'err' && /bàn tiệc/.test(m.msg))), 'no table, no toast');
+  X.move(F7 + 4.6, 9.9);
+  M.move(F7 + 2.6, 9.9);
+  await sleep(500);
+  X.clear();
+  X.send(wed({ a: 'dzo' }));
+  const dz = await G.wait((m) => m.t === 'wedFx' && m.fx.k === 'dzo');
+  ok(!!dz && dz.fx.t === 0 && dz.fx.ids.length === 1 && dz.fx.at - Date.now() > 2000, 'a guest raises a glass at table 1: the count starts');
+  M.send(wed({ a: 'dzo' }));
+  const dz2 = await G.wait((m) => m.t === 'wedFx' && m.fx.k === 'dzo' && m.fx.ids.length === 2);
+  ok(!!dz2 && dz2.fx.ids.includes(M.cid) && dz2.fx.at === dz.fx.at, 'the MC at the same table joins in');
+  const go = await G.wait((m) => m.t === 'wedFx' && m.fx.k === 'dzoGo', 4500);
+  ok(!!go && go.fx.t === 0 && go.fx.ids.length === 2, 'DZÔ! two glasses clink');
+  M.move(F7 + 24.4, 3.2);
+
+  // bouquet: everyone reaches for it; the best-timed grab wins
   X.move(F7 + 20, 6.6);
   await sleep(1000);
   M.send(wed({ a: 'step', step: 'bouquet' }));
   const bq = await X.wait(state((s) => s.step === 'bouquet'));
   ok(!!bq && !bq.s.bouquet, 'bouquet step: countdown first');
-  const caught = await X.wait(state((s) => !!s.bouquet), 10000);
+  const at = (ms) => sleep(Math.max(0, bq.s.stepAt + ms - Date.now()));
+  await at(5000);
+  X.send(wed({ a: 'catch' })); // too early: it is still in her hands — ignored, X keeps the try
+  await at(9300);
+  X.send(wed({ a: 'catch', el: Date.now() - bq.s.stepAt })); // the press time on the guest's (synced) clock
+  G.send(wed({ a: 'catch' })); // the groom can't
+  const caught = await X.wait(state((s) => !!s.bouquet), 6000);
   ok(!!caught && caught.s.bouquet.id === X.cid, `the guest on the dance floor catches it (${caught?.s.bouquet?.name})`);
-  ok(!!caught && caught.s.bouquet.at - (caught.s.stepAt + 7000) >= 1000, 'it lands after its flight');
+  ok(!!caught && caught.s.bouquet.off !== null && caught.s.bouquet.off < 400 && caught.s.bouquet.tries === 1, `the grab is timed (off ${caught?.s.bouquet?.off} ms, ${caught?.s.bouquet?.tries} try)`);
+  ok(!!caught && caught.s.bouquet.at - caught.s.stepAt >= 10000, 'it drops into their hands after hanging in the air');
   ok(!!(await X.wait((m) => m.t === 'chat' && /bắt được hoa cưới/.test(m.m.text), 4000)), 'the catch is announced');
 
   // party, then the end
@@ -209,6 +278,7 @@ const state = (pred) => (m) => m.t === 'wed' && pred(m.s);
   const done = await X.wait(state((s) => s.step === 'idle' && s.count >= 1));
   ok(!!done && !done.s.groom && !done.s.bride && done.s.mc?.id === M.cid && done.s.total === 0, 'the hall is free again (the MC stays)');
   ok(!!(await X.wait((m) => m.t === 'chat' && /kết thúc tốt đẹp/.test(m.m.text), 3000)), 'thanks everyone in the chat');
+  ok(done?.s.music.set === 'lounge' && !done.s.music.by && !done.s.kiss, 'the band goes back to the lounge');
   ok(done?.s.lights === 'off', 'the lights stay as they were after the party');
   X.send(wed({ a: 'lights', lights: 'auto' }));
   ok(!!(await G.wait(state((s) => s.lights === 'auto'))), 'with no ceremony on, any guest can work the switch');

@@ -1,21 +1,26 @@
 // Wedding hall server (floor 7), living inside the OfficeRoom Durable Object: who is the groom, the
 // bride and the MC, which step of the programme is on (everyone's screen, music, lights and effects
-// follow `step` + `stepAt`), the pretend gift envelopes and wishes, outfits, and the bouquet toss
-// (the server picks who catches it). State is saved to DO storage so a sleeping room keeps it.
+// follow `step` + `stepAt`), the song the band plays, the pretend gift envelopes and wishes, outfits,
+// the guests' "Hôn đi!" meter, the table toasts and the bouquet toss (the server times everyone's
+// grab and decides who caught it). State is saved to DO storage so a sleeping room keeps it.
 import {
+  BOUQUET_OPEN,
+  DZO_MS,
   GIFT_AMOUNTS,
-  STEP_META,
+  STEP_SET,
   WED_DANCE,
   WED_MAX_GIFTS,
   WED_PROGRAM,
   WED_REACTS,
   WED_T,
   WED_WISH_MAX,
+  autoMusic,
   emptyWed,
+  inCatchZone,
   inWedZone,
   money,
   nextStep,
-  onWedStage,
+  tableNear,
   LIGHTS_ORDER,
   type WedAttire,
   type WedMsg,
@@ -24,7 +29,7 @@ import {
   type WedState,
   type WedStep,
 } from '../shared/wedding';
-import { clampStr, type ServerMsg } from '../shared/protocol';
+import { YT_ID, clampStr, type ServerMsg } from '../shared/protocol';
 
 export interface WedHost {
   people(): Iterable<{ id: string; name: string; zone: string; x: number; z: number }>;
@@ -36,20 +41,33 @@ export interface WedHost {
 
 const ATTIRES: WedAttire[] = ['bride', 'groom', 'bridesmaid', 'groomsman'];
 const ROLE_NAME: Record<WedRole, string> = { groom: 'chú rể', bride: 'cô dâu', mc: 'MC' };
+/** Steps where only the people running the show change the music (anyone may in the others). */
+const OPEN_MIC: WedStep[] = ['idle', 'feast', 'party'];
+
+type Who = { id: string; name: string; zone: string; x: number; z: number };
 
 export class Wedding {
   state: WedState = emptyWed();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private kissTimer: ReturnType<typeof setTimeout> | null = null;
   private last = new Map<string, number>();
+  /** Bouquet grabs: player → ms after `stepAt` (one try each). */
+  private grabs = new Map<string, number>();
+  /** Table toasts that are counting, by table. */
+  private dzo = new Map<number, { at: number; ids: string[]; timer: ReturnType<typeof setTimeout> }>();
+  private dzoLast = new Map<number, number>();
 
-  constructor(private host: WedHost) {}
+  constructor(private host: WedHost) {
+    this.state.music.at = Date.now();
+  }
 
   /** After waking up (state loaded from storage). */
   restore(s: WedState | undefined) {
     if (!s || typeof s !== 'object') return;
-    this.state = { ...emptyWed(), ...s, attire: s.attire ?? {}, gifts: s.gifts ?? [], lights: s.lights ?? 'auto' };
-    // a toss that was in the air when the room went to sleep: land it now
-    if (this.state.step === 'bouquet' && !this.state.bouquet) this.arm();
+    const music = s.music && typeof s.music.id === 'string' ? s.music : autoMusic(STEP_SET[s.step] ?? 'lounge', s.count ?? 0, Date.now());
+    this.state = { ...emptyWed(), ...s, attire: s.attire ?? {}, gifts: s.gifts ?? [], lights: s.lights ?? 'auto', music, kiss: s.kiss ?? null };
+    // a toss in the air / a kiss being chanted for when the room went to sleep: finish it now
+    this.arm();
   }
 
   private person(id: string) {
@@ -82,7 +100,7 @@ export class Wedding {
     return true;
   }
 
-  handle(p: { id: string; name: string; zone: string }, m: WedMsg) {
+  handle(p: Who, m: WedMsg) {
     const s = this.state;
     const onFloor = inWedZone(p.zone);
     switch (m.a) {
@@ -168,7 +186,83 @@ export class Wedding {
         this.publish();
         return;
       }
+      case 'song':
+      case 'skip': {
+        if (!onFloor) return;
+        if (m.a === 'song' && (typeof m.id !== 'string' || !YT_ID.test(m.id))) return;
+        if (!OPEN_MIC.includes(s.step) && !this.canRun(p.id)) return this.host.err(p.id, 'Đang làm lễ — chỉ cô dâu, chú rể hoặc MC mới đổi nhạc được 🎵');
+        if (!this.throttle(p.id, 'song', 2500)) return this.host.err(p.id, 'Từ từ nào, bài vừa đổi xong 😄');
+        const set = STEP_SET[s.step];
+        // a little lead so everyone's player has loaded it when it starts
+        const at = Date.now() + 800;
+        if (m.a === 'skip') s.music = autoMusic(set, s.music.by || s.music.set !== set ? s.music.pick : s.music.pick + 1, at);
+        else {
+          const dur = Math.max(0, Math.min(36_000, Math.round(Number(m.dur) || 0)));
+          s.music = { id: m.id, title: clampStr(m.title ?? '', 100) || 'Bài hát YouTube', set, pick: s.music.pick, at, dur, by: p.name };
+        }
+        this.host.broadcast({ t: 'wedFx', fx: { k: 'song', id: p.id, name: p.name, title: s.music.title, skip: m.a === 'skip' } });
+        this.publish();
+        return;
+      }
+      case 'chant': {
+        const k = s.kiss;
+        if (s.step !== 'kiss' || !k || k.at !== null || p.zone !== 'wedding') return;
+        if (s.groom?.id === p.id || s.bride?.id === p.id) return;
+        if (!this.throttle(p.id, 'chant', 140)) return;
+        k.n++;
+        this.host.broadcast({ t: 'wedFx', fx: { k: 'chant', id: p.id, n: k.n, goal: k.goal } });
+        if (k.n >= k.goal) this.kissNow();
+        return;
+      }
+      case 'dzo': {
+        if (p.zone !== 'wedding') return;
+        const t = tableNear(p.x, p.z);
+        if (t < 0) return this.host.err(p.id, 'Ngồi vào (hoặc đứng cạnh) một bàn tiệc rồi hãy “dô” nhé 🍻');
+        const now = Date.now();
+        const cur = this.dzo.get(t);
+        if (cur && now < cur.at) {
+          // the table is counting: join in
+          if (cur.ids.includes(p.id)) return;
+          cur.ids.push(p.id);
+          this.host.broadcast({ t: 'wedFx', fx: { k: 'dzo', t, at: cur.at, ids: cur.ids } });
+          return;
+        }
+        if (now - (this.dzoLast.get(t) ?? 0) < 1500 || !this.throttle(p.id, 'dzo', 2500)) return;
+        const at = now + DZO_MS;
+        const ids = [p.id];
+        const timer = setTimeout(() => {
+          this.dzo.delete(t);
+          this.dzoLast.set(t, Date.now());
+          this.host.broadcast({ t: 'wedFx', fx: { k: 'dzoGo', t, ids } });
+        }, DZO_MS);
+        this.dzo.set(t, { at, ids, timer });
+        this.host.broadcast({ t: 'wedFx', fx: { k: 'dzo', t, at, ids } });
+        return;
+      }
+      case 'catch': {
+        if (s.step !== 'bouquet' || s.bouquet || p.zone !== 'wedding') return;
+        if (s.groom?.id === p.id || s.bride?.id === p.id || this.grabs.has(p.id)) return;
+        const got = Date.now() - s.stepAt;
+        // a little slack either side for the network
+        if (got < BOUQUET_OPEN - 200 || got > WED_T.bouquetResolve + 150) return;
+        // the moment the guest pressed (their clock is synced to ours), so a slow connection doesn't
+        // cost them the bouquet — but never later than it arrived, nor long before
+        const said = Number(m.el);
+        this.grabs.set(p.id, Number.isFinite(said) ? Math.min(got, Math.max(got - 1000, BOUQUET_OPEN - 200, said)) : got);
+        return;
+      }
     }
+  }
+
+  /** The meter is full (or the guests were shy): they kiss. */
+  private kissNow() {
+    const k = this.state.kiss;
+    if (this.state.step !== 'kiss' || !k || k.at !== null) return;
+    if (this.kissTimer) clearTimeout(this.kissTimer);
+    this.kissTimer = null;
+    k.n = Math.max(k.n, k.goal);
+    k.at = Date.now() + WED_T.kissLead;
+    this.publish();
   }
 
   private go(step: WedStep) {
@@ -177,38 +271,64 @@ export class Wedding {
     s.step = step;
     s.stepAt = Date.now();
     if (first) s.startedAt = s.stepAt;
-    if (step !== 'bouquet') s.bouquet = null;
+    s.bouquet = null;
+    this.grabs.clear();
+    // the band moves on with the programme (a song carries on through steps that share a set)
+    const set = STEP_SET[step];
+    if (set !== s.music.set) s.music = autoMusic(set, s.count, s.stepAt);
+    // the kiss: with guests watching, they chant for it first
+    s.kiss = null;
+    if (step === 'kiss') {
+      const couple = new Set([s.groom?.id, s.bride?.id]);
+      const guests = [...this.host.people()].filter((q) => q.zone === 'wedding' && !couple.has(q.id)).length;
+      s.kiss = guests ? { n: 0, goal: Math.min(60, Math.max(12, 8 + guests * 7)), at: null } : { n: 0, goal: 0, at: s.stepAt + WED_T.kiss };
+    }
     this.arm();
     this.publish();
     if (first && s.groom && s.bride) this.host.chat(`💒 Hôn lễ của ${s.groom.name} & ${s.bride.name} đang bắt đầu ở tầng 7 — mời cả nhà lên chung vui! 🎉`);
     else if (step === 'party') this.host.chat(`🎉 Tiệc cưới tầng 7 đã sang phần quẩy — sàn nhảy đang chờ mọi người!`);
-    void STEP_META;
   }
 
-  /** Timed parts of a step that the server decides (the bouquet's catcher). */
+  /** Timed parts of a step that the server decides (the kiss when the guests are shy, the bouquet's catcher). */
   private arm() {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
+    if (this.kissTimer) clearTimeout(this.kissTimer);
+    this.timer = this.kissTimer = null;
     const s = this.state;
+    if (s.step === 'kiss' && s.kiss && s.kiss.at === null) this.kissTimer = setTimeout(() => this.kissNow(), Math.max(0, s.stepAt + WED_T.kissMax - Date.now()));
     if (s.step !== 'bouquet' || s.bouquet) return;
-    const at = s.stepAt + WED_T.bouquetThrow;
+    const at = s.stepAt + WED_T.bouquetResolve;
     this.timer = setTimeout(() => this.toss(), Math.max(0, at - Date.now()));
   }
 
-  /** The bouquet flies: whoever is closest to where it lands (and wants it) catches it. */
+  /**
+   * The bouquet comes down: whoever in the crowd reached for it closest to the perfect moment gets
+   * it; if nobody reached, it falls to someone near where it drops (or on the floor).
+   */
   private toss() {
     this.timer = null;
     const s = this.state;
     if (s.step !== 'bouquet' || s.bouquet) return;
     const couple = new Set([s.groom?.id, s.bride?.id]);
     const guests = [...this.host.people()].filter((q) => q.zone === 'wedding' && !couple.has(q.id));
-    // aim at the dance floor; a crowd standing there pulls it their way
-    // (nobody on the stage — the MC, the groom's friends up there — only the crowd in front)
-    const front = guests.filter((q) => !onWedStage(q.x, q.z) && q.z > WED_DANCE.z0 - 1 && q.z < WED_DANCE.z1 + 5 && q.x > WED_DANCE.x0 - 3 && q.x < WED_DANCE.x1 + 3);
+    // only the crowd in front of the stage (not the MC, not the groom's friends up there)
+    const front = guests.filter((q) => inCatchZone(q.x, q.z));
     let x = WED_DANCE.x0 + 1 + Math.random() * (WED_DANCE.x1 - WED_DANCE.x0 - 2);
     let z = WED_DANCE.z0 + 1.5 + Math.random() * 3.5;
     let catcher: (typeof guests)[number] | null = null;
-    if (front.length) {
+    let off: number | null = null;
+    const tried = front.filter((q) => this.grabs.has(q.id)).map((q) => ({ q, off: Math.abs(this.grabs.get(q.id)! - WED_T.bouquetPerfect) }));
+    this.grabs.clear();
+    if (tried.length) {
+      tried.sort((a, b) => a.off - b.off);
+      // a dead heat (within 30 ms) is settled by luck
+      const best = tried.filter((t) => t.off - tried[0].off < 30);
+      const win = best[Math.floor(Math.random() * best.length)];
+      catcher = win.q;
+      off = Math.round(win.off);
+      x = catcher.x;
+      z = catcher.z;
+    } else if (front.length) {
       // weighted by closeness to the random landing spot, so it is not always the same person
       const w = front.map((q) => 1 / (0.4 + Math.hypot(q.x - x, q.z - z)) ** 2);
       let r = Math.random() * w.reduce((a, b) => a + b, 0);
@@ -223,11 +343,12 @@ export class Wedding {
       x = catcher.x;
       z = catcher.z;
     }
-    s.bouquet = { at: Date.now() + WED_T.bouquetFly, x, z, id: catcher?.id ?? null, name: catcher?.name ?? null };
+    s.bouquet = { at: Date.now() + WED_T.bouquetFly, x, z, id: catcher?.id ?? null, name: catcher?.name ?? null, off, tries: tried.length };
     this.publish();
     const name = catcher?.name;
+    const how = off !== null && tried.length > 1 ? ` — nhanh tay nhất trong ${tried.length} người (lệch ${(off / 1000).toFixed(2)} giây)` : '';
     setTimeout(() => {
-      if (name) this.host.chat(`💐 ${name} đã bắt được hoa cưới của ${s.bride?.name ?? 'cô dâu'}! Sắp có đám cưới tiếp theo rồi 😉`);
+      if (name) this.host.chat(`💐 ${name} đã bắt được hoa cưới của ${s.bride?.name ?? 'cô dâu'}${how}! Sắp có đám cưới tiếp theo rồi 😉`);
     }, WED_T.bouquetFly + 300);
   }
 
@@ -239,7 +360,10 @@ export class Wedding {
       this.host.chat(`🎊 Đám cưới của ${s.groom.name} & ${s.bride.name} đã kết thúc tốt đẹp${gifts}. Chúc hai bạn trăm năm hạnh phúc! 💕`);
     }
     const count = s.count + 1;
-    this.state = { ...emptyWed(), count, attire: s.attire, mc: s.mc, lights: s.lights };
+    this.state = { ...emptyWed(), count, attire: s.attire, mc: s.mc, lights: s.lights, music: autoMusic('lounge', count, Date.now()) };
+    for (const d of this.dzo.values()) clearTimeout(d.timer);
+    this.dzo.clear();
+    this.grabs.clear();
     this.arm();
     this.publish();
   }

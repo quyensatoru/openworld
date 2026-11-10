@@ -4,7 +4,9 @@
 // Two people take the groom / bride roles (an MC is optional), then run the programme: the walk
 // down the aisle, vows, rings, the kiss, cutting the cake, pouring the champagne tower, the toast,
 // the feast, the bouquet toss, the first dance and the party. Guests give (pretend) gift envelopes
-// with a wish, cheer, fire party poppers and throw petals.
+// with a wish, cheer, fire party poppers and throw petals, chant for the kiss ("Hôn đi!"), clink
+// glasses round their table ("Một, hai, ba — dô!"), reach for the bouquet, and a band plays real
+// songs (YouTube, on the shared clock) that follow the programme — or whatever someone requests.
 // Server: worker/wedding.ts. Layout, types and rules are shared here.
 import type { Wall } from './map';
 
@@ -96,6 +98,8 @@ export const WED_SPOTS = {
   march: [spot(19.45, 20.5, PI), spot(20.55, 20.5, PI)],
   /** Under the arch, facing each other. */
   arch: [spot(19.35, 2.3, PI / 2), spot(20.65, 2.3, -PI / 2)],
+  /** The kiss: a step closer. */
+  kiss: [spot(19.7, 2.3, PI / 2), spot(20.3, 2.3, -PI / 2)],
   /** Behind the cake / the tower, facing the guests. */
   cake: [spot(13.45, 5.15, 0), spot(14.55, 5.15, 0)],
   tower: [spot(25.45, 5.15, 0), spot(26.55, 5.15, 0)],
@@ -132,7 +136,12 @@ export const WED_T = {
   marchGo: 3200,
   ringsRise: 900,
   ringsLand: 3600,
+  /** The kiss with nobody watching (otherwise the guests chant until the meter is full). */
   kiss: 1600,
+  /** …but not for longer than this. */
+  kissMax: 13000,
+  /** From a full meter to the kiss. */
+  kissLead: 700,
   cakeCut: 5200,
   pour: 5000,
   pourDur: 7000,
@@ -141,8 +150,134 @@ export const WED_T = {
   /** Bouquet: countdown 3-2-1 from here, the throw three seconds later. */
   bouquetCount: 4000,
   bouquetThrow: 7000,
-  bouquetFly: 1500,
+  /** Up from the bride's hands to high above the dance floor, where it tumbles… */
+  bouquetRise: 900,
+  /** …the ring around the "grab" button closes here: the best moment to reach for it… */
+  bouquetPerfect: 9300,
+  /** …the server picks who got it… */
+  bouquetResolve: 9800,
+  /** …and it drops into their hands. */
+  bouquetFly: 700,
 };
+/** Grabs for the bouquet count from here (a little after it leaves her hands). */
+export const BOUQUET_OPEN = WED_T.bouquetThrow + 300;
+/** Where the bouquet hangs in the air while everyone reaches for it. */
+export const BOUQUET_APEX = { x: X(20), y: 3.9, z: 5.8 };
+/** Who may reach for it: the crowd in front of the stage, not the couple, not anyone on the stage. */
+export function inCatchZone(x: number, z: number): boolean {
+  return !onWedStage(x, z) && z > WED_DANCE.z0 - 1 && z < WED_DANCE.z1 + 5 && x > WED_DANCE.x0 - 3 && x < WED_DANCE.x1 + 3;
+}
+
+/** Banquet table someone is sitting at / standing beside (index into WED_TABLES), or -1. */
+export function tableNear(x: number, z: number): number {
+  let best = -1;
+  let bd = 2.1;
+  WED_TABLES.forEach((t, i) => {
+    const d = Math.hypot(x - t.x, z - t.z);
+    if (d < bd) {
+      bd = d;
+      best = i;
+    }
+  });
+  return best;
+}
+/** "Một, hai, ba — dô!": from the first glass raised to the clink. */
+export const DZO_MS = 3200;
+
+// ------------------------------------------------------------------ the band
+/**
+ * What plays is a "set" picked by the step (several steps share one, so a song carries on through
+ * the vows, the rings and the kiss); each set has a few songs. All are embeddable YouTube uploads,
+ * checked to play in the iframe player. `dur` (seconds) keeps a long-running loop's position sane.
+ */
+export type WedSet = 'lounge' | 'march' | 'vows' | 'toast' | 'feast' | 'bouquet' | 'waltz' | 'party';
+export const STEP_SET: Record<WedStep, WedSet> = {
+  idle: 'lounge',
+  march: 'march',
+  vows: 'vows',
+  rings: 'vows',
+  kiss: 'vows',
+  cake: 'vows',
+  champagne: 'vows',
+  toast: 'toast',
+  feast: 'feast',
+  bouquet: 'bouquet',
+  dance: 'waltz',
+  party: 'party',
+};
+export const SET_NAME: Record<WedSet, string> = {
+  lounge: 'Đón khách',
+  march: 'Tiến vào lễ đường',
+  vows: 'Lễ thành hôn',
+  toast: 'Nâng ly',
+  feast: 'Khai tiệc',
+  bouquet: 'Tung hoa',
+  waltz: 'Điệu nhảy đầu tiên',
+  party: 'Quẩy',
+};
+export interface WedSong {
+  id: string;
+  title: string;
+  dur: number;
+}
+export const WED_SONGS: Record<WedSet, WedSong[]> = {
+  lounge: [
+    { id: '9z6r9uK8a_M', title: 'Saxophone nhạc cưới — hoà tấu lãng mạn', dur: 3519 },
+    { id: 'gLUIsyjQmio', title: 'Canon in D — piano & cello (3 tiếng)', dur: 10947 },
+  ],
+  march: [
+    { id: 'O2GRiATBa_g', title: 'Canon in D (Wedding Version) — Jacob’s Piano', dur: 202 },
+    { id: 'Ptk_1Dc2iPY', title: 'Canon in D — Brooklyn Duo', dur: 302 },
+  ],
+  vows: [
+    { id: 'DG6h__b_-iQ', title: 'Cưới Nhau Đi (Yes I Do) — Hiền Hồ x Bùi Anh Tuấn', dur: 239 },
+    { id: 'sBiSqt8k3U4', title: 'Beautiful In White — piano & strings', dur: 250 },
+    { id: '7rc2y2P5BgQ', title: 'Beautiful In White — piano', dur: 311 },
+  ],
+  toast: [{ id: '1mQwr_O81a4', title: 'Đám Cưới Nha? — Hồng Thanh x Mie', dur: 175 }],
+  feast: [
+    { id: '50diFJZFyMI', title: 'Liên khúc nhạc đám cưới nhẹ nhàng', dur: 4794 },
+    { id: '9z6r9uK8a_M', title: 'Saxophone nhạc cưới — hoà tấu lãng mạn', dur: 3519 },
+  ],
+  bouquet: [
+    { id: 'hW4z1dYE7No', title: 'Cưới Thôi — Masiu x Masew', dur: 202 },
+    { id: '_8ldAdQd9WU', title: 'Cưới Thôi — Masew x Masiu x B Ray x TAP', dur: 182 },
+  ],
+  waltz: [
+    { id: '7KZ460xFFPs', title: 'Can’t Help Falling In Love — Brooklyn Duo', dur: 225 },
+    { id: 'MqazV4hbu8E', title: 'Can’t Help Falling In Love — Elvis Presley', dur: 183 },
+    { id: 'jFQzRKyTn3c', title: 'Can’t Help Falling In Love — cello & piano', dur: 253 },
+  ],
+  party: [
+    { id: '6L9LDweNOZY', title: 'Đám Cưới Nha Remix — liên khúc EDM', dur: 4957 },
+    { id: 'Gm0c_qiQO5k', title: 'Liên khúc nhạc sống đám cưới — cực sung', dur: 5496 },
+    { id: 'BBRCKcGPmhI', title: 'Mình Cưới Nhau Đi — Pjnboys x Huỳnh James', dur: 243 },
+    { id: '6s0wDHcUD9I', title: 'Đám Cưới Nha? (Remix) — Hồng Thanh x DJ Mie', dur: 180 },
+  ],
+};
+/** The song playing now: one of a set's (`pick`), or a request (`by`). `at` = server ms at 0:00. */
+export interface WedMusic {
+  id: string;
+  title: string;
+  set: WedSet;
+  pick: number;
+  at: number;
+  /** Seconds (0 = unknown). */
+  dur: number;
+  by: string | null;
+}
+export function autoMusic(set: WedSet, pick: number, at: number): WedMusic {
+  const list = WED_SONGS[set];
+  const song = list[((pick % list.length) + list.length) % list.length];
+  return { id: song.id, title: song.title, set, pick, at, dur: song.dur, by: null };
+}
+/** "3:45" / "1:02:05" → seconds. */
+export function parseLen(len: string | undefined): number {
+  if (!len) return 0;
+  const parts = len.split(':').map(Number);
+  if (parts.some((n) => !Number.isFinite(n))) return 0;
+  return parts.reduce((a, n) => a * 60 + n, 0);
+}
 
 /** The ballroom's house lights: automatic (dim and glowing, darker for the dance), up, or off (candles only). */
 export type WedLights = 'auto' | 'on' | 'off';
@@ -184,6 +319,17 @@ export interface WedBouquet {
   /** Who caught it (null = it fell on the floor). */
   id: string | null;
   name: string | null;
+  /** How far (ms) the winner's grab was from the perfect moment (null = nobody reached, luck). */
+  off: number | null;
+  /** How many reached for it. */
+  tries: number;
+}
+
+/** The kiss: the guests chant until the meter is full (`at` = when the kiss happens). */
+export interface WedKiss {
+  n: number;
+  goal: number;
+  at: number | null;
 }
 
 export interface WedState {
@@ -205,6 +351,10 @@ export interface WedState {
   count: number;
   /** House lights in the ballroom. */
   lights: WedLights;
+  /** What the band is playing. */
+  music: WedMusic;
+  /** The "Hôn đi!" meter during the kiss step. */
+  kiss: WedKiss | null;
 }
 
 export const emptyWed = (): WedState => ({
@@ -221,6 +371,8 @@ export const emptyWed = (): WedState => ({
   bouquet: null,
   count: 0,
   lights: 'auto',
+  music: autoMusic('lounge', 0, 0),
+  kiss: null,
 });
 
 /** What someone wears: the couple always dress for it. */
@@ -237,7 +389,9 @@ export function money(n: number): string {
   if (n >= 1_000_000 && n % 1_000_000 === 0) return `${n / 1_000_000} triệu`;
   return `${n.toLocaleString('vi-VN')}đ`;
 }
-export const WED_REACTS = ['👏', '❤️', '🌹', '🎉', '🥂', '😭'] as const;
+export const WED_REACTS = ['👏', '❤️', '🌹', '🎉', '🥂', '😭', '📱'] as const;
+/** The little reaction row (📱 = a phone torch held up, swaying, for the first dance). */
+export const WED_REACT_ROW = ['👏', '❤️', '🌹', '🎉', '🥂', '😭'] as const;
 export const WED_MAX_GIFTS = 30;
 export const WED_WISH_MAX = 120;
 
@@ -251,14 +405,28 @@ export type WedMsg =
   | { a: 'popper' }
   | { a: 'petals' }
   | { a: 'attire'; attire: WedAttire | null }
-  | { a: 'lights'; lights: WedLights };
+  | { a: 'lights'; lights: WedLights }
+  /** Request a song (YouTube id) — or `skip` to the set's next one. */
+  | { a: 'song'; id: string; title?: string; dur?: number }
+  | { a: 'skip' }
+  /** "Hôn đi!" — one shout towards the kiss meter. */
+  | { a: 'chant' }
+  /** Raise a glass at my table ("Một, hai, ba — dô!"); joins the table's toast if one is counting. */
+  | { a: 'dzo' }
+  /** Reach for the bouquet (`el` = ms after the step began, on the sender's synced clock — fair whatever the latency). */
+  | { a: 'catch'; el?: number };
 
 export type WedFx =
   | { k: 'gift'; id: string; name: string; amount: number; wish: string }
   | { k: 'react'; id: string; e: string }
   | { k: 'popper'; id: string }
   | { k: 'petals'; id: string }
-  | { k: 'lights'; id: string; name: string; lights: WedLights };
+  | { k: 'lights'; id: string; name: string; lights: WedLights }
+  | { k: 'chant'; id: string; n: number; goal: number }
+  /** A table's toast is counting (`at` = the clink), `ids` = who raised a glass so far. */
+  | { k: 'dzo'; t: number; at: number; ids: string[] }
+  | { k: 'dzoGo'; t: number; ids: string[] }
+  | { k: 'song'; id: string; name: string; title: string; skip: boolean };
 
 /** Next step in the programme (party is the last one). */
 export function nextStep(s: WedStep): WedStep {

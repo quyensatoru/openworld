@@ -9,10 +9,15 @@
 //  - petals (the walk down the aisle, guests throwing them), confetti (poppers, cannons), hearts,
 //    sparkles, cold sparklers by the cake, cold smoke on the floor
 //  - the rings flying to the couple, the champagne tower filling, the feast on every table, the
-//    bouquet flying to whoever catches it, gift envelopes flying into the gift box
+//    bouquet tumbling high over the dance floor until someone grabs it, gift envelopes flying into
+//    the gift box
+//  - the guests: "Hôn đi!" shouts and the meter on the LED wall, "một, hai, ba — dô!" over a table,
+//    phone torches swaying for the first dance; the band's music video through the LED wall
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
+  BOUQUET_APEX,
+  DZO_MS,
   STEP_META,
   WED_CAKE,
   WED_CHANDELIERS,
@@ -143,6 +148,29 @@ function emoji(e: string): THREE.CanvasTexture {
       g.fillText(e, w / 2, h / 2 + 6);
     });
     emojiTex.set(e, t);
+  }
+  return t;
+}
+
+/** A short shout as a sticker: bold white text with a coloured outline (cached by text + colour). */
+const wordTex = new Map<string, THREE.CanvasTexture>();
+function word(text: string, color: string): THREE.CanvasTexture {
+  const key = `${text}|${color}`;
+  let t = wordTex.get(key);
+  if (!t) {
+    t = canvasTexture(512, 160, (g, w, h) => {
+      g.clearRect(0, 0, w, h);
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.font = '900 92px "Be Vietnam Pro", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+      g.lineJoin = 'round';
+      g.lineWidth = 16;
+      g.strokeStyle = color;
+      g.strokeText(text, w / 2, h / 2 + 4, w - 20);
+      g.fillStyle = '#ffffff';
+      g.fillText(text, w / 2, h / 2 + 4, w - 20);
+    });
+    wordTex.set(key, t);
   }
   return t;
 }
@@ -603,6 +631,15 @@ export class Floor7Fx {
   private bouquet: THREE.Group;
   private envelopes: { g: THREE.Group; t: number; from: THREE.Vector3; to: THREE.Vector3 }[] = [];
 
+  // the band's music video through the LED wall (a hole the YouTube iframe shows through)
+  private videoOn = false;
+  private videoHole: THREE.Mesh | null = null;
+  // the guests
+  private chant = { n: 0, goal: 0 };
+  private chantLast = new Map<string, number>();
+  private torches: { id: string; s: THREE.Sprite; core: THREE.Sprite; t: number; life: number; ph: number }[] = [];
+  private dzoTags = new Map<number, { s: THREE.Sprite; g: CanvasRenderingContext2D; tex: THREE.CanvasTexture; at: number; n: number; key: string }>();
+
   constructor(private root: THREE.Group) {
     const SH = WED_STAGE.h;
     // ---- fairy-light strands across the ceiling (each bulb twinkles on its own)
@@ -984,6 +1021,22 @@ export class Floor7Fx {
     mesh.material = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
     this.screen = { mesh, tex, g: (tex.image as HTMLCanvasElement).getContext('2d')! };
     this.drawScreen(Date.now(), true);
+    // 16:9 in the middle of the wall: where the band's video shows through (feast and party)
+    const hole = new THREE.Mesh(new THREE.PlaneGeometry(at.h * (16 / 9), at.h), new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0, blending: THREE.NoBlending, fog: false, toneMapped: false }));
+    hole.position.set(at.x, at.y, at.z + 0.004);
+    hole.visible = false;
+    (mesh.parent ?? this.root).add(hole);
+    this.videoHole = hole;
+  }
+
+  /** The band's YouTube player exists (CSS3D, behind the canvas): the wall can show it. */
+  setVideo(on: boolean) {
+    this.videoOn = on;
+  }
+
+  /** Is the music video showing on the LED wall right now (feast / party)? */
+  private videoShows(step: WedStep) {
+    return this.videoOn && (step === 'feast' || step === 'party');
   }
 
   setupSign(mesh: THREE.Mesh) {
@@ -1086,9 +1139,10 @@ export class Floor7Fx {
     let count = '';
     if (step === 'toast' && el > WED_T.toastCount && el < WED_T.toastCount + 5200) count = ['MỘT', 'HAI', 'BA', 'DÔ! 🥂'][Math.min(3, Math.floor((el - WED_T.toastCount) / 1000))];
     if (step === 'bouquet' && el > WED_T.bouquetCount && el < WED_T.bouquetThrow) count = String(3 - Math.floor((el - WED_T.bouquetCount) / 1000));
-    if (step === 'bouquet' && el >= WED_T.bouquetThrow && el < WED_T.bouquetThrow + 4500) count = s?.bouquet?.name ? `💐 ${s.bouquet.name}!` : '💐';
-    const key = `${step}|${s?.stepAt}|${s?.groom?.name}|${s?.bride?.name}|${count}|${wish?.until ?? ''}`;
-    const animated = step === 'party' || step === 'dance' || !!count;
+    if (step === 'bouquet' && el >= WED_T.bouquetThrow && el < WED_T.bouquetResolve + 4500) count = s?.bouquet?.name ? `💐 ${s.bouquet.name}!` : s?.bouquet ? '💐' : 'CHỘP! 🙌';
+    const chanting = step === 'kiss' && !!s?.kiss && s.kiss.at === null && s.kiss.goal > 0;
+    const key = `${step}|${s?.stepAt}|${s?.groom?.name}|${s?.bride?.name}|${count}|${wish?.until ?? ''}|${chanting ? this.chant.n : ''}`;
+    const animated = step === 'party' || step === 'dance' || !!count || chanting;
     if (!force && key === this.screenKey && !animated) return;
     this.screenKey = key;
     const { g, tex } = this.screen;
@@ -1126,7 +1180,37 @@ export class Floor7Fx {
     const n = this.names();
     const ink = party ? '#fff4f7' : '#7a3b4d';
     const soft = party ? '#ffd58a' : '#b08a4a';
-    if (count) {
+    if (chanting && s?.kiss) {
+      // "HÔN ĐI! HÔN ĐI!" — the guests' meter
+      const k = clamp01(this.chant.n / Math.max(1, s.kiss.goal));
+      const beat = 1 + 0.06 * Math.abs(Math.sin(t * 7));
+      g.fillStyle = soft;
+      g.font = '700 32px "Be Vietnam Pro", sans-serif';
+      g.fillText('CẢ SẢNH CÙNG HÔ NÀO', W / 2, 84);
+      g.save();
+      g.translate(W / 2, 205);
+      g.scale(beat, beat);
+      g.fillStyle = '#d81b60';
+      g.font = '900 104px "Be Vietnam Pro", sans-serif';
+      fitText(g, 'HÔN ĐI! HÔN ĐI!', 0, 0, W - 120);
+      g.restore();
+      const bx = 120;
+      const bw = W - 240;
+      const by = 268;
+      g.fillStyle = 'rgba(122,59,77,0.18)';
+      roundRect(g, bx, by, bw, 34, 17);
+      g.fill();
+      const gr2 = g.createLinearGradient(bx, 0, bx + bw, 0);
+      gr2.addColorStop(0, '#ff8fb1');
+      gr2.addColorStop(1, '#e8325c');
+      g.fillStyle = gr2;
+      roundRect(g, bx, by, Math.max(34, bw * k), 34, 17);
+      g.fill();
+      drawHeart(g, bx + Math.max(17, bw * k - 17), by + 15, 22 * beat, '#ffffff');
+      g.fillStyle = ink;
+      g.font = '600 26px "Be Vietnam Pro", sans-serif';
+      g.fillText(`${Math.min(this.chant.n, s.kiss.goal)} / ${s.kiss.goal} tiếng hô 💋`, W / 2, 346);
+    } else if (count) {
       g.fillStyle = soft;
       g.font = '700 34px "Be Vietnam Pro", sans-serif';
       g.fillText(step === 'toast' ? 'NÂNG LY CHÚC MỪNG' : 'TUNG HOA CƯỚI', W / 2, 90);
@@ -1189,7 +1273,10 @@ export class Floor7Fx {
     const prev = this.s;
     this.s = s;
     this.lights = s.lights ?? 'auto';
-    if (!prev || prev.stepAt !== s.stepAt || prev.step !== s.step) this.fired.clear();
+    if (!prev || prev.stepAt !== s.stepAt || prev.step !== s.step) {
+      this.fired.clear();
+      this.chant = { n: s.kiss?.n ?? 0, goal: s.kiss?.goal ?? 0 };
+    } else if (s.kiss) this.chant = { n: Math.max(this.chant.n, s.kiss.n), goal: s.kiss.goal };
     if (!prev || prev.groom?.name !== s.groom?.name || prev.bride?.name !== s.bride?.name) this.drawSign();
     this.screenKey = '';
   }
@@ -1208,6 +1295,107 @@ export class Floor7Fx {
     s.scale.setScalar(0.42);
     this.root.add(s);
     this.floats.push({ s, t: 0, life: 2.4, vx: (Math.random() - 0.5) * 0.35, vy: 0.75, vz: (Math.random() - 0.5) * 0.35, grow: 0 });
+  }
+
+  /** The kiss meter, as the shouts come in. */
+  setChant(n: number, goal: number) {
+    this.chant = { n: Math.max(this.chant.n, n), goal };
+  }
+
+  /** "Hôn đi!" over someone's head (at most a few a second each). */
+  shout(id: string, text: string, color: string) {
+    const p = this.people(id);
+    if (!p) return;
+    const now = performance.now();
+    if (now - (this.chantLast.get(id) ?? 0) < 380) return;
+    this.chantLast.set(id, now);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: word(text, color), transparent: true, depthWrite: false, toneMapped: false }));
+    sp.position.set(p.x + (Math.random() - 0.5) * 0.3, p.y + 2.15, p.z + (Math.random() - 0.5) * 0.3);
+    sp.scale.set(0.95, 0.3, 1);
+    this.root.add(sp);
+    this.floats.push({ s: sp, t: 0, life: 1.3, vx: (Math.random() - 0.5) * 0.3, vy: 0.9, vz: (Math.random() - 0.5) * 0.3, grow: 0 });
+  }
+
+  /** A phone torch held up and swaying (the first dance). */
+  torch(id: string) {
+    if (this.torches.length > 40 || this.torches.some((t) => t.id === id)) return;
+    // a soft halo round a small, hard, bright point (the phone's LED)
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: '#fff1d9', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    sp.scale.setScalar(0.5);
+    const core = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: '#ffffff', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    core.scale.setScalar(0.09);
+    this.root.add(sp, core);
+    this.torches.push({ id, s: sp, core, t: 0, life: 10, ph: Math.random() * Math.PI * 2 });
+  }
+
+  /** A table's toast is counting ("MỘT · HAI · BA"), `n` glasses raised. */
+  dzo(t: number, at: number, n: number) {
+    const tb = WED_TABLES[t];
+    if (!tb) return;
+    let tag = this.dzoTags.get(t);
+    if (!tag) {
+      const tex = canvasTexture(384, 192, () => {});
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false }));
+      sp.position.set(tb.x, 2.35, tb.z);
+      sp.scale.set(1.2, 0.6, 1);
+      this.root.add(sp);
+      tag = { s: sp, g: (tex.image as HTMLCanvasElement).getContext('2d')!, tex, at, n, key: '' };
+      this.dzoTags.set(t, tag);
+    }
+    tag.at = at;
+    tag.n = n;
+  }
+
+  /** "DZÔ!" — the clink over a table. */
+  dzoGo(t: number, n: number, couple: boolean) {
+    const tb = WED_TABLES[t];
+    this.dropTag(t);
+    if (!tb) return;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: word('DZÔ! 🍻', '#c2185b'), transparent: true, depthWrite: false, toneMapped: false }));
+    sp.position.set(tb.x, 1.9, tb.z);
+    sp.scale.set(1.6, 0.5, 1);
+    this.root.add(sp);
+    this.floats.push({ s: sp, t: 0, life: 1.8, vx: 0, vy: 0.55, vz: 0, grow: 0 });
+    // glasses meet over the middle of the table: gold sparks, a puff of foam
+    this.sparks.burst(tb.x, 1.35, tb.z, 18 + n * 8, 1.6, GOLD, 0.8, 1.2);
+    for (let i = 0; i < 10 + n * 5; i++) this.sparks.emit(tb.x + (Math.random() - 0.5) * 0.5, 1.2, tb.z + (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.8, 1.2 + Math.random() * 1.4, (Math.random() - 0.5) * 0.8, 0.9, WARM, 2.5);
+    if (couple) this.hearts(tb.x, 1.8, tb.z, 10, 0.7);
+  }
+
+  private dropTag(t: number) {
+    const tag = this.dzoTags.get(t);
+    if (!tag) return;
+    this.root.remove(tag.s);
+    tag.s.material.dispose();
+    tag.tex.dispose();
+    this.dzoTags.delete(t);
+  }
+
+  private drawTag(tag: { g: CanvasRenderingContext2D; tex: THREE.CanvasTexture; at: number; n: number; key: string }, now: number) {
+    const left = tag.at - now;
+    const say = left > (DZO_MS * 2) / 3 ? 'MỘT' : left > DZO_MS / 3 ? 'HAI' : 'BA';
+    const key = `${say}|${tag.n}`;
+    if (key === tag.key) return;
+    tag.key = key;
+    const g = tag.g;
+    const w = 384;
+    const h = 192;
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = 'rgba(122, 22, 58, 0.82)';
+    roundRect(g, 14, 18, w - 28, h - 36, 40);
+    g.fill();
+    g.strokeStyle = '#ffd58a';
+    g.lineWidth = 5;
+    g.stroke();
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = '#ffffff';
+    g.font = '900 78px "Be Vietnam Pro", sans-serif';
+    g.fillText(`${say}…`, w / 2, h / 2 - 12);
+    g.fillStyle = '#ffd58a';
+    g.font = '700 28px "Be Vietnam Pro", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    g.fillText(`🍻 ${tag.n} ly đang nâng`, w / 2, h / 2 + 46);
+    tag.tex.needsUpdate = true;
   }
 
   /** Party popper: a cone of confetti out of someone's hand. */
@@ -1333,7 +1521,8 @@ export class Floor7Fx {
         const [b, g] = this.couple(step);
         for (const p of [b, g]) if (p) this.sparks.burst(p.x, p.y + 1.15, p.z, 36, 1.6, GOLD, 1.0, 0.6);
       }
-      if (step === 'kiss' && this.once('kiss', el, WED_T.kiss)) {
+      const kissAt = s.kiss?.at ?? (s.kiss ? null : s.stepAt + WED_T.kiss);
+      if (step === 'kiss' && kissAt !== null && this.once('kiss', el, kissAt - s.stepAt)) {
         cue('kiss');
         const [b, g] = this.couple(step);
         const mx = b && g ? (b.x + g.x) / 2 : WED_RINGS.x;
@@ -1357,7 +1546,9 @@ export class Floor7Fx {
       }
       if (step === 'bouquet') {
         for (let i = 0; i < 3; i++) if (this.once(`btick${i}`, el, WED_T.bouquetCount + i * 1000, 900)) cue('bouquetTick');
-        if (s.bouquet && this.once('throw', el, WED_T.bouquetThrow, 3000)) cue('bouquetThrow');
+        if (this.once('throw', el, WED_T.bouquetThrow, 3000)) cue('bouquetThrow');
+        // the best moment to grab: the bouquet flashes
+        if (!s.bouquet && this.once('perfect', el, WED_T.bouquetPerfect, 600)) this.sparks.burst(BOUQUET_APEX.x, BOUQUET_APEX.y, BOUQUET_APEX.z, 34, 1.8, GOLD, 0.7, 0.3);
         if (s.bouquet && now >= s.bouquet.at && this.once('land', el, s.bouquet.at - s.stepAt, 3000)) {
           if (s.bouquet.id) {
             cue('bouquetCatch');
@@ -1466,23 +1657,65 @@ export class Floor7Fx {
       }
     }
 
-    // ---------- the bouquet in the air
+    // ---------- the bouquet: over her shoulder, high over the dance floor (tumbling while everyone
+    // reaches for it), then down into the hands of whoever grabbed best
     {
       const b = s?.bouquet;
-      const flying = step === 'bouquet' && !!b && now < b.at + 200;
-      this.bouquet.visible = flying;
-      if (flying && b && s) {
-        const throwAt = b.at - WED_T.bouquetFly;
-        const k = clamp01((now - throwAt) / WED_T.bouquetFly);
-        const bride = s.bride ? this.people(s.bride.id) : null;
-        const from = new THREE.Vector3(bride?.x ?? WED_SPOTS.bouquet[0].x, (bride?.y ?? WED_STAGE.h) + 1.4, bride?.z ?? WED_SPOTS.bouquet[0].z);
-        const catcher = b.id ? this.people(b.id) : null;
-        const to = new THREE.Vector3(catcher?.x ?? b.x, catcher ? catcher.y + 1.5 : 0.08, catcher?.z ?? b.z);
-        const p = from.clone().lerp(to, k);
-        p.y += Math.sin(k * Math.PI) * 3.0;
+      const inAir = !!s && step === 'bouquet' && el >= WED_T.bouquetThrow && (b ? now < b.at + 200 : el < WED_T.bouquetResolve + 5000);
+      this.bouquet.visible = inAir;
+      if (inAir && s) {
+        const hang = (ms: number) => {
+          const u = ms / 1000;
+          return new THREE.Vector3(BOUQUET_APEX.x + Math.sin(u * 1.7) * 0.35, BOUQUET_APEX.y + Math.sin(u * 2.9) * 0.12, BOUQUET_APEX.z + Math.cos(u * 1.3) * 0.25);
+        };
+        let p: THREE.Vector3;
+        const dropAt = b ? b.at - WED_T.bouquetFly : Infinity;
+        if (now >= dropAt && b) {
+          const k = clamp01((now - dropAt) / WED_T.bouquetFly);
+          const catcher = b.id ? this.people(b.id) : null;
+          const to = new THREE.Vector3(catcher?.x ?? b.x, catcher ? catcher.y + 1.5 : 0.08, catcher?.z ?? b.z);
+          p = hang(dropAt - s.stepAt).lerp(to, k * k);
+          p.y += Math.sin(k * Math.PI) * 0.4;
+        } else {
+          const k = clamp01((el - WED_T.bouquetThrow) / WED_T.bouquetRise);
+          if (k < 1) {
+            const bride = s.bride ? this.people(s.bride.id) : null;
+            const from = new THREE.Vector3(bride?.x ?? WED_SPOTS.bouquet[0].x, (bride?.y ?? WED_STAGE.h) + 1.4, bride?.z ?? WED_SPOTS.bouquet[0].z);
+            p = from.lerp(hang(el), ease(k));
+            p.y += Math.sin(k * Math.PI) * 1.1;
+          } else p = hang(el);
+        }
         this.bouquet.position.copy(p);
-        this.bouquet.rotation.set(k * 9, k * 4, k * 6);
+        this.bouquet.rotation.set(t * 5.5, t * 2.2, t * 3.4);
         if (Math.random() < dt * 30) this.petals.emit(p.x, p.y, p.z, (Math.random() - 0.5) * 0.4, 0, (Math.random() - 0.5) * 0.4, 3);
+        if (!b && Math.random() < dt * 10) this.sparks.emit(p.x, p.y, p.z, (Math.random() - 0.5) * 0.6, -0.3, (Math.random() - 0.5) * 0.6, 0.7, GOLD, 0.5);
+      }
+    }
+
+    // ---------- the guests: phone torches, toast countdowns
+    for (let i = this.torches.length - 1; i >= 0; i--) {
+      const tc = this.torches[i];
+      tc.t += dt;
+      const p = this.people(tc.id);
+      if (!p || tc.t >= tc.life) {
+        this.root.remove(tc.s, tc.core);
+        tc.s.material.dispose();
+        tc.core.material.dispose();
+        this.torches.splice(i, 1);
+        continue;
+      }
+      const sway = Math.sin(tc.t * 1.6 + tc.ph);
+      tc.s.position.set(p.x + Math.cos(p.ry) * 0.42 * sway + Math.sin(p.ry) * 0.18, p.y + 2.05 + Math.abs(sway) * 0.05, p.z - Math.sin(p.ry) * 0.42 * sway + Math.cos(p.ry) * 0.18);
+      tc.core.position.copy(tc.s.position);
+      const k = Math.min(1, tc.t * 3, (tc.life - tc.t) * 1.5);
+      tc.s.material.opacity = k * (0.75 + 0.15 * Math.sin(tc.t * 13 + tc.ph));
+      tc.core.material.opacity = k;
+    }
+    for (const [ti, tag] of this.dzoTags) {
+      if (now > tag.at + 1500) this.dropTag(ti);
+      else {
+        this.drawTag(tag, now);
+        tag.s.position.y = 2.35 + Math.sin(t * 6) * 0.03;
       }
     }
 
@@ -1650,7 +1883,8 @@ export class Floor7Fx {
       }
     }
 
-    // ---------- the LED wall
+    // ---------- the LED wall (the music video shows through its middle during the feast and the party)
+    if (this.videoHole) this.videoHole.visible = this.videoShows(step);
     this.screenAcc += dt;
     if (this.screenAcc > 0.15) {
       this.screenAcc = 0;
@@ -1683,6 +1917,17 @@ function wrapText(g: CanvasRenderingContext2D, text: string, x: number, y: numbe
     } else line = test;
   }
   if (line && n < lines) fitText(g, line, x, y + n * lh, max);
+}
+
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const rr = Math.min(r, w / 2, h / 2);
+  g.beginPath();
+  g.moveTo(x + rr, y);
+  g.arcTo(x + w, y, x + w, y + h, rr);
+  g.arcTo(x + w, y + h, x, y + h, rr);
+  g.arcTo(x, y + h, x, y, rr);
+  g.arcTo(x, y, x + w, y, rr);
+  g.closePath();
 }
 
 function drawHeart(g: CanvasRenderingContext2D, x: number, y: number, s: number, c: string) {

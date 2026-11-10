@@ -118,6 +118,9 @@ export class Ambience {
   private quietZone = false;
   private music: MusicBus | null = null;
   private wed: WeddingMusic | null = null;
+  /** The wedding band has its own volume, so muting the office's room tone doesn't silence it. */
+  private wedOut: GainNode | null = null;
+  private wedVol = 0.8;
   private musicLevel = 0;
   private musicCutoff = 18000;
   /** Shared clock in seconds (server time), so the beat is the same for everyone. */
@@ -1381,14 +1384,28 @@ export class Ambience {
 
   /** Floor 7's wedding music + effects (null until the first user gesture has started the audio). */
   wedding(): WeddingMusic | null {
-    if (!this.ctx || !this.master) return null;
-    this.wed ??= new WeddingMusic(this.ctx, this.master, () => this.clock());
+    const ctx = this.ctx;
+    if (!ctx || !this.master) return null;
+    if (!this.wedOut) {
+      this.wedOut = ctx.createGain();
+      this.wedOut.gain.value = this.wedVol * 0.75;
+      this.wedOut.connect(ctx.destination);
+    }
+    this.wed ??= new WeddingMusic(ctx, this.wedOut, () => this.clock());
     return this.wed;
+  }
+
+  /** 0..1, the wedding band and its effects (the panel's slider; the YouTube band follows it too). */
+  setWedVolume(v: number) {
+    this.wedVol = Math.max(0, Math.min(1, v));
+    if (this.wedOut && this.ctx) this.wedOut.gain.setTargetAtTime(this.wedVol * 0.75, this.ctx.currentTime, 0.1);
   }
 
   dispose() {
     this.wed?.dispose();
     this.wed = null;
+    this.wedOut?.disconnect();
+    this.wedOut = null;
     this.ctx?.close().catch(() => {});
     this.ctx = null;
     this.music = null;

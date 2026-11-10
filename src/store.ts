@@ -148,13 +148,21 @@ export interface OfficeStore {
   /** Tiệc cưới (floor 7) */
   wed: WedState;
   wedPanel: boolean;
-  wedTab: 'program' | 'gift' | 'dress';
+  wedTab: 'program' | 'music' | 'gift' | 'dress';
   /** A big title for a moment when a step of the programme starts. */
   wedBanner: { step: WedStep; at: number } | null;
   /** Someone's gift and wish, popping up for a moment. */
   wedGift: { name: string; amount: number; wish: string; at: number } | null;
-  /** The bouquet landed (who caught it). */
-  wedCatch: { name: string | null; me: boolean; at: number } | null;
+  /** The bouquet landed (who caught it, how close to the perfect moment, out of how many). */
+  wedCatch: { name: string | null; me: boolean; at: number; off: number | null; tries: number } | null;
+  /** The "Hôn đi!" meter (from the guests' shouts as they come in). */
+  wedChant: { n: number; goal: number; stepAt: number } | null;
+  /** Tables whose toast is counting: table → clink time (server ms) + who raised a glass. */
+  wedDzo: Record<number, { at: number; ids: string[] }>;
+  /** My reach for the bouquet (ms after the step began, my clock), shown until it lands. */
+  wedGrab: { el: number; stepAt: number } | null;
+  /** The wedding band's volume, 0..100 (the YouTube player and the synth band). */
+  wedVolume: number;
   activity: Record<string, ActivityEvent[]>;
   activityToken: string | null | undefined; // undefined = not requested yet
   screenOf: string | null; // player whose Claude screen is open
@@ -269,6 +277,10 @@ export const useStore = create<OfficeStore>(() => ({
   wedBanner: null,
   wedGift: null,
   wedCatch: null,
+  wedChant: null,
+  wedDzo: {},
+  wedGrab: null,
+  wedVolume: loadPref('wedVolume', 80),
   activity: {},
   activityToken: undefined,
   screenOf: null,

@@ -10,7 +10,7 @@
 // envelope ends, so a phone only pays for what it can hear.
 import type { WedTrack } from '../../shared/wedding';
 
-export type WedSfx = 'pop' | 'cheer' | 'chime' | 'sparkle' | 'whoosh' | 'kiss' | 'clink' | 'envelope' | 'tick' | 'catch' | 'cannon' | 'fizz' | 'drumroll';
+export type WedSfx = 'pop' | 'cheer' | 'chime' | 'sparkle' | 'whoosh' | 'kiss' | 'clink' | 'envelope' | 'tick' | 'catch' | 'cannon' | 'fizz' | 'drumroll' | 'chant' | 'dzo' | 'grab';
 
 /** How far ahead notes are put on the audio clock. */
 const LOOKAHEAD = 0.3;
@@ -182,7 +182,7 @@ export class WeddingMusic {
     this.levelV = level;
     this.cutoff = cutoff;
     const now = this.ctx.currentTime;
-    this.level.gain.setTargetAtTime(level * 0.5, now, 0.35);
+    this.level.gain.setTargetAtTime(level * 0.95, now, 0.35);
     this.filter.frequency.setTargetAtTime(cutoff, now, 0.25);
   }
 
@@ -822,6 +822,40 @@ export class WeddingMusic {
         }
         break;
       }
+      case 'chant': {
+        // a few guests shouting "Hôn đi!": an "ô" then an "i", pitch falling like a chant
+        const voices = 3;
+        for (let i = 0; i < voices; i++) {
+          const st = t + Math.random() * 0.05;
+          const f0 = 170 + Math.random() * 120;
+          this.voice(out, st, f0, f0 * 0.95, 0.16, [[520, 6], [880, 7], [2500, 9]], 0.05 * v);
+          this.voice(out, st + 0.21, f0 * 0.92, f0 * 0.8, 0.2, [[300, 6], [2250, 8], [2950, 9]], 0.045 * v);
+        }
+        this.burst(out, t, { gain: 0.03 * v, freq: 1600, q: 0.8, dur: 0.12 });
+        break;
+      }
+      case 'dzo': {
+        // the whole table: "DZÔÔÔ!" rising, glasses clinking all round
+        for (let i = 0; i < 5; i++) {
+          const st = t + Math.random() * 0.08;
+          const f0 = 160 + Math.random() * 160;
+          this.voice(out, st, f0 * 0.9, f0 * 1.25, 0.55, [[480, 5], [820, 6], [2400, 9]], 0.05 * v);
+        }
+        this.burst(out, t, { gain: 0.05 * v, freq: 1200, q: 1, dur: 0.6, attack: 0.08 });
+        for (let i = 0; i < 6; i++) {
+          const st = t + 0.04 + Math.random() * 0.25;
+          const fr = 2200 + Math.random() * 1600;
+          const g = this.envGain(out, st, (0.05 + Math.random() * 0.05) * v, 0.002, 0.005, 0.35);
+          this.osc('sine', fr, st, st + 0.4, g);
+          this.osc('sine', fr * 1.43, st, st + 0.3, g);
+        }
+        break;
+      }
+      case 'grab': {
+        const n = this.burst(out, t, { gain: 0.16 * v, freq: 900, q: 1.2, dur: 0.25, attack: 0.02 });
+        n.bp.frequency.exponentialRampToValueAtTime(2600, t + 0.2);
+        break;
+      }
       case 'drumroll': {
         // snare roll speeding up and swelling for 1.6 s, then a crash
         let st = t;
@@ -840,6 +874,22 @@ export class WeddingMusic {
         o.frequency.exponentialRampToValueAtTime(45, t + 1.9);
         break;
       }
+    }
+  }
+
+  /** A sung / shouted vowel: a sawtooth glottis through three formant band-passes. */
+  private voice(out: AudioNode, t: number, f0: number, f1: number, dur: number, formants: [number, number][], v: number) {
+    const ctx = this.ctx;
+    const g = this.envGain(out, t, v, 0.025, Math.max(0.01, dur - 0.08), 0.12);
+    for (const [fr, q] of formants) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = fr;
+      bp.Q.value = q;
+      bp.connect(g);
+      const o = this.osc('sawtooth', f0, t, t + dur + 0.15, bp, (Math.random() - 0.5) * 20);
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.linearRampToValueAtTime(f1, t + dur);
     }
   }
 

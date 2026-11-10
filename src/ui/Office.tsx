@@ -20,7 +20,7 @@ import { MoleActions, MoleCams, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeetin
 import { MoleTaskModal } from './MoleTasks';
 import { PropActions, PropBlind, PropCrosshair, PropHud, PropHurt, PropPanel, PropResult, PropSplash } from './PropHunt';
 import { PH_ROOM_IDS, phZone } from '../../shared/prophunt';
-import { WeddingActions, WeddingBanner, WeddingPanel, WeddingPops } from './Wedding';
+import { WeddingActions, WeddingBanner, WeddingGrab, WeddingHero, WeddingPanel, WeddingPops } from './Wedding';
 import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
 import { MeetingTvButton } from './MeetingTv';
 import { VoiceStatus } from './VoiceStatus';
@@ -102,6 +102,8 @@ export function Office() {
         <Safe><PropActions /></Safe>
         <Safe><WeddingPanel /></Safe>
         <Safe><WeddingActions /></Safe>
+        <Safe><WeddingHero /></Safe>
+        <Safe><WeddingGrab /></Safe>
         <Safe><LiftPanel /></Safe>
         <Safe><Prompt /></Safe>
         <Safe><VoiceStatus /></Safe>
