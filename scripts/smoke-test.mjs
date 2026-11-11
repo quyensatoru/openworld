@@ -189,7 +189,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const res = await fetch(`${BASE}/api/activity`, { method: 'POST', headers: { Authorization: `Bearer ${tok?.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(hook) });
   ok(res.status === 200, `hook endpoint accepts the token (${res.status})`);
   const act = await B.wait((m) => m.t === 'activity' && m.id === `smokeA_${run}`);
-  ok(act?.ev?.text === 'Sửa checkout.ts' && !JSON.stringify(act).includes('SECRET'), 'B sees "Sửa checkout.ts" (no code content leaked)');
+  ok(act?.ev?.text === 'Đang sửa checkout.ts' && !JSON.stringify(act).includes('SECRET'), 'B sees "Đang sửa checkout.ts" (no code content leaked)');
   const badHook = await fetch(`${BASE}/api/activity`, { method: 'POST', headers: { Authorization: 'Bearer nottherighttoken_123456' }, body: '{}' });
   ok(badHook.status === 401, 'wrong hook token is rejected');
 

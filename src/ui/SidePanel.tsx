@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { DEPTS, DEPT_BY_ID } from '../../shared/agents';
 import { ZONE_BY_ID } from '../../shared/map';
 import { STATUS_META, type ChatMsg } from '../../shared/protocol';
 import { game } from '../game';
@@ -64,7 +65,7 @@ function Chat() {
   const [caret, setCaret] = useState(0);
   const zoneName = ZONE_BY_ID.get(zone)?.name ?? 'Khu vực';
 
-  const msgs = useMemo(() => chat.filter((m) => (tab === 'global' ? m.ch === 'global' : m.ch === `zone:${zone}`)), [chat, tab, zone]);
+  const msgs = useMemo(() => chat.filter((m) => (tab === 'global' ? m.ch === 'global' : tab === 'work' ? m.ch === 'work' : m.ch === `zone:${zone}`)), [chat, tab, zone]);
   const lastId = msgs[msgs.length - 1]?.id;
   const toBottom = (smooth = false) => {
     const el = listRef.current;
@@ -109,6 +110,8 @@ function Chat() {
       ? []
       : [
           ...(norm('all').startsWith(query) || norm('team').startsWith(query) || norm('ca team').startsWith(query) ? [{ id: '@all', name: 'Cả team', online: true, handle: 'all' }] : []),
+          // departments: their virtual employees answer (an always-on machine picks the message up)
+          ...DEPTS.filter((d) => query && (d.alias.some((a) => a.startsWith(query)) || norm(d.name).startsWith(query))).map((d) => ({ id: `@${d.id}`, name: `${d.icon} Phòng ${d.name}`, online: true, handle: d.alias[0] })),
           ...people
             .filter((p) => !query || norm(p.name).split(/\s+/).some((w) => w.startsWith(query)) || norm(p.name).replace(/\s+/g, '').startsWith(query))
             .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name, 'vi'))
@@ -147,6 +150,9 @@ function Chat() {
         <button className={`chip${tab === 'global' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'global' })}>
           🌏 Cả văn phòng
         </button>
+        <button className={`chip${tab === 'work' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'work' })} title="Người và agent các phòng ban trao đổi công việc, gọi nhau bằng @tên / @phòng">
+          💼 Khu làm việc
+        </button>
         <button className={`chip${tab === 'zone' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'zone' })}>
           📍 {zoneName}
         </button>
@@ -154,7 +160,13 @@ function Chat() {
       <div className="chat-wrap">
         <div className="chat-list scroll" ref={listRef} onScroll={onScroll}>
           {!msgs.length && (
-            <div className="empty">{tab === 'global' ? 'Chưa có tin nhắn nào. Chào cả nhà một câu đi! 👋' : `Tin nhắn ở đây chỉ những người đang ở “${zoneName}” thấy.`}</div>
+            <div className="empty">
+              {tab === 'global'
+                ? 'Chưa có tin nhắn nào. Chào cả nhà một câu đi! 👋'
+                : tab === 'work'
+                  ? 'Kênh công việc của người và agent các phòng ban. Gọi một phòng bằng @dev, @qa, @ops, @design, @docs, @biz, @lead — máy trực sẽ cử người trả lời.'
+                  : `Tin nhắn ở đây chỉ những người đang ở “${zoneName}” thấy.`}
+            </div>
           )}
           {msgs.map((m, i) => {
             const prev = msgs[i - 1];
@@ -201,7 +213,7 @@ function Chat() {
           className="input"
           maxLength={500}
           value={draft}
-          placeholder={tab === 'global' ? 'Nhắn cả văn phòng… gõ @ để gọi ai đó' : `Nhắn trong ${zoneName}…`}
+          placeholder={tab === 'global' ? 'Nhắn cả văn phòng… gõ @ để gọi ai đó' : tab === 'work' ? 'Nhắn khu làm việc… @dev @qa @Tên' : `Nhắn trong ${zoneName}…`}
           onChange={(e) => {
             setState({ chatDraft: e.target.value });
             setCaret(e.target.selectionStart ?? e.target.value.length);
@@ -236,7 +248,8 @@ function Message({ m, myName, avatar, cont, repeat }: { m: ChatMsg; myName: stri
         </span>
       </div>
     );
-  const parts = m.text.split(/(@[\p{L}\p{N}_.-]+)/u);
+  // light formatting for messages written by Claude: `code`, **bold** marks dropped, line breaks kept
+  const parts = m.text.replace(/\*\*([^*]+)\*\*/g, '$1').split(/(@[\p{L}\p{N}_.-]+|`[^`\n]+`)/u);
   return (
     <div className={`msg${cont ? ' cont' : ''}`}>
       {cont ? <span className="msg-gap" /> : <AvatarDot name={m.name} avatar={avatar} />}
@@ -244,12 +257,17 @@ function Message({ m, myName, avatar, cont, repeat }: { m: ChatMsg; myName: stri
         {!cont && (
           <div className="msg-head">
             {m.name}
+            {m.meet && <span className="msg-meet">📅 họp</span>}
             <time>{fmtTime(m.ts)}</time>
           </div>
         )}
         <div className="msg-text">
           {parts.map((p, i) =>
-            p.startsWith('@') ? (
+            p.length > 2 && p.startsWith('`') && p.endsWith('`') ? (
+              <code key={i} className="msg-code">
+                {p.slice(1, -1)}
+              </code>
+            ) : p.startsWith('@') ? (
               <span key={i} className={isMe(p, myName) ? 'mention' : 'tagged'}>
                 {p}
               </span>
@@ -284,7 +302,12 @@ function People() {
   }, []);
   const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const match = (name: string) => !q || norm(name).includes(norm(q));
-  const online = Object.values(players).filter((p) => match(p.name)).sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  const online = Object.values(players)
+    .filter((p) => !p.agent && match(p.name))
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  const agents = Object.values(players)
+    .filter((p) => p.agent && match(p.name))
+    .sort((a, b) => a.agent!.dept.localeCompare(b.agent!.dept) || a.name.localeCompare(b.name, 'vi'));
   const offline = Object.values(team)
     .filter((t) => !players[t.id] && t.id !== me?.id && match(t.name))
     .sort((a, b) => b.lastSeen - a.lastSeen);
@@ -326,6 +349,33 @@ function People() {
             <div className="actions">
               <button title="Vẫy tay" onClick={() => game.wave(p.id)}>
                 👋
+              </button>
+              <button title="Đi tới" onClick={() => game.goToPlayer(p.id)}>
+                🚶
+              </button>
+            </div>
+          </div>
+        ))}
+        {agents.length > 0 && (
+          <div className="section-title">
+            🤖 Nhân viên ảo · {agents.length}{' '}
+            <button style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }} onClick={() => setState({ agentsOpen: true, agentsTab: 'depts' })}>
+              xem phòng ban
+            </button>
+          </div>
+        )}
+        {agents.map((p) => (
+          <div className="person" key={p.id}>
+            <AvatarDot name={p.name.replace('🤖 ', '')} avatar={p.avatar} />
+            <div className="info">
+              <div className="name">{p.name}</div>
+              <div className="meta">
+                {DEPT_BY_ID.get(p.agent!.dept)?.icon} {DEPT_BY_ID.get(p.agent!.dept)?.name} · {p.agent!.state === 'working' ? p.statusText || 'đang làm' : p.agent!.state === 'waiting' ? 'chờ duyệt' : 'đang rảnh'}
+              </div>
+            </div>
+            <div className="actions">
+              <button title="Xem màn hình" onClick={() => setState({ screenOf: p.id })}>
+                🖥️
               </button>
               <button title="Đi tới" onClick={() => game.goToPlayer(p.id)}>
                 🚶

@@ -33,6 +33,14 @@ async function tokenUser(env: Env, token: string): Promise<string | null> {
   return uid;
 }
 
+/** The person behind a Claude Code connection token ("Authorization: Bearer …"). */
+async function bearerUser(env: Env, req: Request): Promise<string | null> {
+  const auth = req.headers.get('Authorization') ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return null;
+  return tokenUser(env, token);
+}
+
 const DEFAULT_ICE: RTCIceServerLike[] = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
 
 interface RTCIceServerLike {
@@ -182,10 +190,60 @@ export default {
           return json({ error: 'bad json' }, { status: 400 });
         }
         const ev = summarizeHook(hook, url.searchParams.get('p') === '1', Date.now());
-        if (!ev) return json({ ok: true, skipped: true });
         const stub = env.OFFICE.get(env.OFFICE.idFromName('main'));
-        await stub.fetch('https://office/activity', { method: 'POST', body: JSON.stringify({ uid, ev }) });
-        return json({ ok: true });
+        if (url.searchParams.get('v') !== '2') {
+          if (!ev) return json({ ok: true, skipped: true });
+          await stub.fetch('https://office/activity', { method: 'POST', body: JSON.stringify({ uid, ev }) });
+          return json({ ok: true });
+        }
+        // v2: whatever we answer is printed by the hook — Claude Code reads it as extra context, so
+        // the body is either hook JSON or nothing at all.
+        const res = await stub.fetch('https://office/activity', {
+          method: 'POST',
+          body: JSON.stringify({
+            uid,
+            ev,
+            v2: true,
+            sid: typeof hook.session_id === 'string' ? hook.session_id : '',
+            event: typeof hook.hook_event_name === 'string' ? hook.hook_event_name : '',
+            dept: req.headers.get('X-Office-Dept') ?? '',
+            agent: req.headers.get('X-Office-Agent') ?? '',
+          }),
+        });
+        if (res.status !== 200) return new Response(null, { status: 204 });
+        return new Response(await res.text(), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      }
+
+      // The office MCP server for Claude Code sessions (chat, Kanban handoffs, playbook, debriefs).
+      // Stateless streamable HTTP: JSON-RPC in, JSON out, no server-sent events.
+      case '/api/mcp': {
+        if (req.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST' } });
+        const uid = await bearerUser(env, req);
+        if (!uid) return json({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'unauthorized' } }, { status: 401 });
+        const raw = await req.text();
+        if (raw.length > 200_000) return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'too large' } }, { status: 413 });
+        let body: unknown;
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, { status: 400 });
+        }
+        const stub = env.OFFICE.get(env.OFFICE.idFromName('main'));
+        return stub.fetch('https://office/agent-mcp', { method: 'POST', body: JSON.stringify({ uid, agent: req.headers.get('X-Office-Agent') ?? '', body }) });
+      }
+
+      // Agent runners (public/office-agent.cjs): poll for work, take a job, report the session's end.
+      case '/api/agents/jobs':
+      case '/api/agents/claim':
+      case '/api/agents/exit':
+      case '/api/agents/feed': {
+        const uid = await bearerUser(env, req);
+        if (!uid) return json({ error: 'unauthorized' }, { status: 401 });
+        const op = url.pathname.split('/').pop()!;
+        if (op !== 'jobs' && req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
+        const body = op === 'jobs' ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
+        const stub = env.OFFICE.get(env.OFFICE.idFromName('main'));
+        return stub.fetch('https://office/agent-api', { method: 'POST', body: JSON.stringify({ uid, op, body, depts: url.searchParams.get('depts') ?? '' }) });
       }
 
       // Karaoke song search (YouTube's own results page; no API key needed).

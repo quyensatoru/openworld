@@ -14,6 +14,7 @@
     "assets:inspect": "node scripts/inspect-assets.mjs",
     "assets:prepare": "node scripts/prepare-assets.mjs",
     "test": "node scripts/smoke-test.mjs",
+    "test:agents": "node scripts/agents-test.mjs",
     "e2e": "node scripts/e2e.mjs",
     "assets:vrm": "node scripts/prepare-vrm.mjs assets-src/vrm public/models/vrm"
   },

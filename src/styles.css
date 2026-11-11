@@ -1531,6 +1531,18 @@ input[type='range'] {
 .ct-line.k-notify {
   color: #fcd34d;
 }
+.ct-line.k-say {
+  color: #fafaf9;
+  /* what Claude says reads like a person talking, not like a log */
+  font-family: 'Be Vietnam Pro', system-ui, sans-serif;
+  font-size: 14.5px;
+}
+.ct-line.k-result {
+  color: #86efac;
+}
+.ct-line.k-err {
+  color: #fca5a5;
+}
 .ct-empty {
   margin: auto;
   text-align: center;

@@ -36,6 +36,8 @@ import { DOOR_BY_ID, MOLE_BOARD, MOLE_KILL_RANGE, MOLE_REPORT_RANGE, MOLE_VENTS,
 import * as THREE from 'three';
 import { Ambience, MUSIC_BPM, type SfxKind } from './audio/ambience';
 import { CinemaPlayer } from './cinema/player';
+import { MEET_ROOMS, type AgentMsg, type DeptId } from '../shared/agents';
+import { meetingBoard } from './world/meeting-board';
 import { ClaudeScreens, isLive } from './world/claude-screen';
 import {
   PICKER_EMOTES,
@@ -251,7 +253,8 @@ class Game {
       myId: () => getState().me?.id ?? null,
       me: () => getState().me,
       player: (id) => getState().players[id] ?? null,
-      playerIds: () => Object.keys(getState().players),
+      // virtual employees have no voice or camera: never a call peer
+      playerIds: () => Object.values(getState().players).filter((p) => !p.agent).map((p) => p.id),
       positionOf: (id) => world.positionOf(id),
       sendBinary: (data) => this.net?.sendBinary(data),
       onPeersChanged: () => this.syncPeers(),
@@ -417,6 +420,15 @@ class Game {
       const p = seated.get(seat.id);
       world.office.setMonitorMaterial(seat.id, p ? this.screens.material(p.id, p.name, s.activity[p.id], now) : null);
     }
+    // the hanging department signs count their virtual employees
+    const counts: Partial<Record<DeptId, { here: number; working: number }>> = {};
+    for (const p of Object.values(s.players)) {
+      if (!p.agent) continue;
+      const c = (counts[p.agent.dept] ??= { here: 0, working: 0 });
+      c.here++;
+      if (p.agent.state === 'working') c.working++;
+    }
+    world.office.deptSigns.update(counts);
   }
 
   /** Bar music: full in the bar, muffled in the hall / cinema, silent downstairs. */
@@ -603,6 +615,13 @@ class Game {
   private bindNet(net: Net) {
     net.on('welcome', (m) => this.onWelcome(m));
     net.on('join', ({ p }) => {
+      if (p.agent) {
+        // a virtual employee sat down: no fanfare, just light up its monitor
+        setState((s) => ({ players: { ...s.players, [p.id]: p } }));
+        this.world?.upsertRemote(p);
+        this.refreshScreens();
+        return;
+      }
       setState((s) => ({ players: { ...s.players, [p.id]: p }, team: { ...s.team, [p.id]: { id: p.id, name: p.name, avatar: p.avatar, lastSeen: Date.now(), desk: s.team[p.id]?.desk ?? null, today: s.team[p.id]?.today ?? null } } }));
       this.world?.upsertRemote(p);
       this.syncWedLooks();
@@ -621,6 +640,10 @@ class Game {
         return { players, team, selected: s.selected === id ? null : s.selected };
       });
       this.world?.removePlayer(id);
+      if (p?.agent) {
+        this.refreshScreens();
+        return;
+      }
       this.rtc?.onPlayerLeft(id);
       if (p) toast(`${p.name} đã rời văn phòng`);
       this.updateTvs();
@@ -636,7 +659,7 @@ class Game {
       if ('status' in patch || 'zone' in patch || 'seat' in patch) this.rtc?.evaluate(id === s.me?.id ? undefined : id);
       if ('media' in patch || 'zone' in patch) this.updateTvs();
       if ('media' in patch) this.syncPeers();
-      if ('seat' in patch || 'name' in patch) this.refreshScreens();
+      if ('seat' in patch || 'name' in patch || 'agent' in patch) this.refreshScreens();
     });
     net.on('mv', ({ id, x, z, ry, anim }) => {
       this.world?.remoteMove(id, x, z, ry, anim);
@@ -726,6 +749,23 @@ class Game {
       if (ev.kind === 'notify' && id === getState().me?.id) chime('ping', 0.05);
     });
     net.on('activityToken', ({ token }) => setState({ activityToken: token }));
+    net.on('agentBook', ({ book }) => setState({ agentBook: book }));
+    net.on('approvals', ({ list }) => {
+      const s = getState();
+      const fresh = list.filter((x) => x.state === 'pending' && (x.owner === s.me?.id || x.anyone) && !s.approvals.some((y) => y.id === x.id));
+      setState({ approvals: list });
+      for (const x of fresh) {
+        chime('ping');
+        notify(`🔐 ${x.agentName} xin phép`, x.summary);
+        flashTitle('🔐 Có yêu cầu chờ duyệt');
+      }
+    });
+    net.on('meetings', ({ list }) => {
+      const before = getState().meetings;
+      setState({ meetings: list });
+      for (const m of list) if (!m.endedAt && !before.some((b) => b.id === m.id)) toast(`📅 Họp “${m.topic}” ở ${MEET_ROOMS.find((r) => r.id === m.room)?.name}`, 'info', 5000);
+      this.updateTvs();
+    });
     net.on('kicked', ({ reason }) => {
       setState({ kicked: reason });
       this.rtc?.reset();
@@ -770,7 +810,7 @@ class Game {
     setState({ floor: floorOf(m.you.x) });
     for (const p of m.players) world.upsertRemote(p);
     world.setTasks(m.tasks);
-    setState({ activity: m.activity as Record<string, ActivityEvent[]> });
+    setState({ activity: m.activity as Record<string, ActivityEvent[]>, meetings: m.meetings ?? [], approvals: m.approvals ?? [] });
     this.applyCinema(m.cinema, '', 'welcome');
     this.applyJukebox(m.jukebox ?? null, '', 'welcome');
     if (m.kara) this.applyKara(m.kara);
@@ -1034,6 +1074,9 @@ class Game {
       case 'kanban':
         setState({ kanbanOpen: true });
         break;
+      case 'agents':
+        setState({ agentsOpen: true, agentsTab: 'depts' });
+        break;
       case 'coffee':
         this.emote('coffee');
         this.ambience?.coffee();
@@ -1186,7 +1229,7 @@ class Game {
   }
 
   // ------------------------------------------------------------------ social
-  sendChat(text: string, ch: 'global' | 'zone') {
+  sendChat(text: string, ch: 'global' | 'zone' | 'work') {
     const t = text.trim();
     if (!t) return;
     this.net?.send({ t: 'chat', ch, text: t });
@@ -2568,16 +2611,23 @@ class Game {
         world.office.setTvVideo(zone, null);
       }
       const sharer = Object.values(s.players).find((p) => p.zone === zone && p.media.screen && s.peers[p.id]?.screen);
-      world.office.setTvImage(zone, sharer ? s.peers[sharer.id].screen : null);
+      // nobody sharing a screen in a meeting room with a meeting going → the TV shows the minutes
+      const meet = sharer ? null : s.meetings.find((m) => !m.endedAt && m.room === zone);
+      world.office.setTvImage(zone, sharer ? s.peers[sharer.id].screen : meet ? meetingBoard(meet) : null);
     }
   }
 
   // ------------------------------------------------------------------ tasks
-  createTask(title: string, col: TaskColumn = 'todo', assignee: string | null = null, priority: Priority = 'normal', desc = '') {
-    this.net?.send({ t: 'task:create', title, col, assignee, priority, desc });
+  createTask(title: string, col: TaskColumn = 'todo', assignee: string | null = null, priority: Priority = 'normal', desc = '', dept: DeptId | null = null) {
+    this.net?.send({ t: 'task:create', title, col, assignee, priority, desc, dept });
   }
 
-  updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'desc' | 'assignee' | 'priority'>>) {
+  /** The virtual employees' panel: the playbook, debriefs waiting, lesson edits. */
+  agents(m: AgentMsg) {
+    this.net?.send({ t: 'agents', m });
+  }
+
+  updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'desc' | 'assignee' | 'priority' | 'dept'>>) {
     this.net?.send({ t: 'task:update', id, patch });
   }
 
@@ -2600,7 +2650,7 @@ class Game {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const done = Object.values(s.tasks).filter((t) => t.doneAt && t.doneAt >= startOfDay.getTime()).length;
-    this.world?.office.updateWhiteboard({ online: Object.keys(s.players).length + (s.me ? 1 : 0), doneToday: done, officeName: s.officeName });
+    this.world?.office.updateWhiteboard({ online: Object.values(s.players).filter((p) => !p.agent).length + (s.me ? 1 : 0), doneToday: done, officeName: s.officeName });
   }
 
   /** Ma Sói at night: a sleeping villager's mic sends nothing (shown on the mic button). */

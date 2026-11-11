@@ -85,8 +85,9 @@ export class ClaudeScreens {
       g.font = '500 15px ui-monospace, Menlo, Consolas, monospace';
       g.fillStyle = '#78716c';
       g.fillText(new Date(e.ts).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }), 16, y);
-      g.font = `${e.kind === 'prompt' ? 700 : 500} 19px ui-monospace, Menlo, Consolas, monospace`;
-      g.fillStyle = e.kind === 'prompt' ? '#fafaf9' : e.kind === 'stop' ? '#86efac' : e.kind === 'notify' ? '#fcd34d' : '#d6d3d1';
+      g.font = e.kind === 'say' ? '500 19px "Be Vietnam Pro", system-ui, sans-serif' : `${e.kind === 'prompt' ? 700 : 500} 19px ui-monospace, Menlo, Consolas, monospace`;
+      g.fillStyle =
+        e.kind === 'prompt' || e.kind === 'say' ? '#fafaf9' : e.kind === 'stop' ? '#86efac' : e.kind === 'notify' ? '#fcd34d' : e.kind === 'result' ? (e.icon === '❌' ? '#fca5a5' : '#86efac') : '#d6d3d1';
       const text = `${e.kind === 'prompt' ? '> ' : ''}${e.icon} ${e.text}`;
       g.fillText(fit(g, text, W - 100), 84, y);
     });

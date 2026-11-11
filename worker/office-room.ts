@@ -5,10 +5,12 @@
 import { DurableObject } from 'cloudflare:workers';
 import { sanitizeAvatar } from '../shared/avatar';
 import { BUILD_ID } from '../shared/build';
+import { AgentHub } from './agents';
 import { Arcade } from './arcade';
 import { Karaoke } from './karaoke';
 import { Wedding } from './wedding';
 import { WED_PHOTO_BYTES, inWedZone, type WedState } from '../shared/wedding';
+import { isDept } from '../shared/agents';
 import { Werewolf } from './werewolf';
 import { MoleGame } from './mole';
 import { PropHuntGame } from './prophunt';
@@ -150,6 +152,33 @@ export class OfficeRoom extends DurableObject<Env> {
     dropPhotos: (keep) => void db.keepWedPhotos(this.env.DB, keep).catch((err) => console.error('wed photos sweep failed', err)),
   });
   private activityRate = new Map<string, { t: number; n: number }>();
+  /** Virtual employees: Claude Code sessions sitting at the desks of floor 1. */
+  private agents = new AgentHub({
+    DB: this.env.DB,
+    storage: this.ctx.storage,
+    tz: Number(this.env.TZ_OFFSET_MINUTES) || 420,
+    broadcast: (msg) => this.broadcast(msg),
+    sendTo: (id, msg) => {
+      const c = this.conns.get(id);
+      if (c) this.send(c.ws, msg);
+    },
+    seatTaken: (seatId) => [...this.conns.values()].some((c) => c.p.seat === seatId),
+    getTasks: () => this.getTasks(),
+    saveTask: async (task, by) => {
+      (await this.getTasks()).set(task.id, task);
+      this.broadcast({ t: 'task', task, by });
+      await db.saveTask(this.env.DB, task);
+    },
+    chat: (m) => this.globalChat(m),
+    systemChat: (text) => this.systemChat(text),
+    userName: async (uid) => this.conns.get(uid)?.p.name ?? (await db.getUser(this.env.DB, uid))?.name ?? 'Team',
+    pushActivity: (id, ev) => this.pushActivity(id, ev),
+    dropActivity: (id) => this.ctx.storage.delete(`act:${id}`).then(() => {}),
+    wakeAt: async (ms) => {
+      const cur = await this.ctx.storage.getAlarm();
+      if (cur == null || cur > ms) await this.ctx.storage.setAlarm(ms);
+    },
+  });
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -165,6 +194,7 @@ export class OfficeRoom extends DurableObject<Env> {
       this.jukebox = (await ctx.storage.get<CinemaState>('jukebox')) ?? null;
       this.kara.restore((await ctx.storage.get<KaraState>('kara')) ?? undefined);
       this.wed.restore((await ctx.storage.get<WedState>('wed')) ?? undefined);
+      await this.agents.restore();
       const v = await ctx.storage.get<number>('schemaVersion');
       if (v !== SCHEMA_VERSION) {
         await db.ensureSchema(env.DB);
@@ -182,6 +212,22 @@ export class OfficeRoom extends DurableObject<Env> {
     const url = new URL(req.url);
     if (url.pathname === '/activity' && req.method === 'POST') return this.onActivity(req);
     if (url.pathname === '/wed-photo' && req.method === 'POST') return this.onWedPhoto(req);
+    if (url.pathname === '/agent-mcp' && req.method === 'POST') {
+      await this.schemaReady;
+      const b = (await req.json().catch(() => null)) as { uid?: string; agent?: string; body?: unknown } | null;
+      if (!b?.uid || !CID_RE.test(b.uid)) return new Response('bad', { status: 400 });
+      return this.agents.mcp(b.uid, String(b.agent ?? ''), b.body);
+    }
+    if (url.pathname === '/agent-api' && req.method === 'POST') {
+      await this.schemaReady;
+      const b = (await req.json().catch(() => null)) as { uid?: string; op?: string; body?: Record<string, unknown>; depts?: string } | null;
+      if (!b?.uid || !CID_RE.test(b.uid)) return new Response('bad', { status: 400 });
+      if (b.op === 'jobs') return Response.json(await this.agents.jobs(b.uid, String(b.depts ?? '')));
+      if (b.op === 'claim') return Response.json(await this.agents.claim(b.uid, b.body ?? {}));
+      if (b.op === 'exit') return Response.json(await this.agents.exit(b.uid, b.body ?? {}));
+      if (b.op === 'feed') return Response.json(await this.agents.feed(b.uid, b.body ?? {}));
+      return new Response('bad op', { status: 400 });
+    }
     if (url.pathname === '/nudge-status') {
       // why the room did or did not wake anybody — the gates are invisible from outside otherwise
       const [from, to] = this.nudgeHours;
@@ -287,7 +333,8 @@ export class OfficeRoom extends DurableObject<Env> {
         await db.addWorklog(this.env.DB, this.day(now), c.p.id, { workMs: ms });
       }
     }
-    if (anyone) await this.ctx.storage.setAlarm(now + FLUSH_EVERY_MS);
+    const agentsLeft = await this.agents.sweep(now);
+    if (anyone || agentsLeft) await this.ctx.storage.setAlarm(now + FLUSH_EVERY_MS);
   }
 
   // ------------------------------------------------------------------ helpers
@@ -402,9 +449,18 @@ export class OfficeRoom extends DurableObject<Env> {
   }
 
   private async systemChat(text: string): Promise<void> {
-    const m: ChatMsg = { id: crypto.randomUUID(), ch: 'global', from: 'system', name: 'Văn phòng', text, ts: Date.now() };
+    await this.globalChat({ id: crypto.randomUUID(), ch: 'global', from: 'system', name: 'Văn phòng', text, ts: Date.now() });
+  }
+
+  /** Every line of the global / work chat (people, agents, the office itself). */
+  private async globalChat(m: ChatMsg, zone?: string): Promise<void> {
     this.broadcast({ t: 'chat', m });
+    this.agents.onChat(m, zone);
     await db.insertChat(this.env.DB, m);
+    if (++this.chatSinceprune >= 50) {
+      this.chatSinceprune = 0;
+      await db.pruneChat(this.env.DB);
+    }
   }
 
   private async dropSocket(ws: WebSocket): Promise<void> {
@@ -414,6 +470,7 @@ export class OfficeRoom extends DurableObject<Env> {
     const c = this.conns.get(id);
     if (!c || c.ws !== ws) return; // already replaced by a newer tab
     this.conns.delete(id);
+    this.agents.left(id);
     this.arcade.leave(id);
     this.kara.left(id);
     this.broadcast({ t: 'leave', id });
@@ -561,30 +618,57 @@ export class OfficeRoom extends DurableObject<Env> {
 
   // ------------------------------------------------------------------ Claude Code activity
   private async onActivity(req: Request): Promise<Response> {
-    const body = (await req.json().catch(() => null)) as { uid?: string; ev?: ActivityEvent } | null;
-    if (!body?.uid || !CID_RE.test(body.uid) || !body.ev) return new Response('bad', { status: 400 });
+    await this.schemaReady;
+    const body = (await req.json().catch(() => null)) as {
+      uid?: string;
+      ev?: ActivityEvent | null;
+      v2?: boolean;
+      sid?: string;
+      event?: string;
+      dept?: string;
+      agent?: string;
+    } | null;
+    if (!body?.uid || !CID_RE.test(body.uid) || (!body.ev && !body.v2)) return new Response('bad', { status: 400 });
     const now = Date.now();
     const r = this.activityRate.get(body.uid);
     if (r && now - r.t < 1000) {
-      if (++r.n > 6) return new Response('slow down', { status: 429 });
+      if (++r.n > 20) return new Response('slow down', { status: 429 });
     } else this.activityRate.set(body.uid, { t: now, n: 1 });
-    // Shared only while you sit at your desk (or a focus desk): stand up and your screen goes dark,
-    // events sent meanwhile are dropped — the hook can stay installed.
+    const ev: ActivityEvent | null = body.ev
+      ? {
+          ts: now,
+          kind: body.ev.kind,
+          icon: clampStr(body.ev.icon, 8),
+          text: clampStr(body.ev.text, 120),
+          project: body.ev.project ? clampStr(body.ev.project, 40) : undefined,
+        }
+      : null;
+    // v2 hooks: the session is a virtual employee at a desk of its department
+    const out = body.v2
+      ? await this.agents.hook({
+          uid: body.uid,
+          sid: clampStr(body.sid ?? '', 80),
+          event: clampStr(body.event ?? '', 40),
+          ev,
+          dept: isDept(body.dept) ? body.dept : undefined,
+          agent: clampStr(body.agent ?? '', 40),
+          project: ev?.project,
+        })
+      : null;
+    // Your own monitor shows it only while you sit at your desk (or a focus desk): stand up and the
+    // screen goes dark, events sent meanwhile are dropped — the hook can stay installed.
     const seatId = this.conns.get(body.uid)?.p.seat;
     const seat = seatId ? SEAT_BY_ID.get(seatId) : undefined;
-    if (!seat || (seat.kind !== 'desk' && seat.kind !== 'focus')) return new Response(null, { status: 204, headers: { 'x-office': 'not-seated' } });
-    const ev: ActivityEvent = {
-      ts: now,
-      kind: body.ev.kind,
-      icon: clampStr(body.ev.icon, 8),
-      text: clampStr(body.ev.text, 120),
-      project: body.ev.project ? clampStr(body.ev.project, 40) : undefined,
-    };
-    const key = `act:${body.uid}`;
+    if (ev && seat && (seat.kind === 'desk' || seat.kind === 'focus')) await this.pushActivity(body.uid, ev);
+    if (out) return new Response(out, { headers: { 'Content-Type': 'application/json' } });
+    return new Response(null, { status: 204 });
+  }
+
+  private async pushActivity(id: string, ev: ActivityEvent): Promise<void> {
+    const key = `act:${id}`;
     const list = ((await this.ctx.storage.get<ActivityEvent[]>(key)) ?? []).concat(ev).slice(-ACTIVITY_KEEP);
     await this.ctx.storage.put(key, list);
-    this.broadcast({ t: 'activity', id: body.uid, ev });
-    return new Response(null, { status: 204 });
+    this.broadcast({ t: 'activity', id, ev });
   }
 
   private async recentActivity(now: number): Promise<Record<string, ActivityEvent[]>> {
@@ -678,7 +762,7 @@ export class OfficeRoom extends DurableObject<Env> {
       t: 'welcome',
       build: BUILD_ID,
       you: p,
-      players: [...this.conns.values()].filter((c) => c !== conn).map((c) => c.p),
+      players: [...[...this.conns.values()].filter((c) => c !== conn).map((c) => c.p), ...this.agents.players()],
       tasks: [...tasks.values()],
       chat,
       team,
@@ -690,6 +774,8 @@ export class OfficeRoom extends DurableObject<Env> {
       kara: this.kara.state,
       wed: this.wed.state,
       activity,
+      meetings: this.agents.meetingsView(),
+      approvals: this.agents.approvalsView(),
     });
     this.broadcast({ t: 'join', p }, id);
     this.wolf.rejoin(id);
@@ -746,13 +832,8 @@ export class OfficeRoom extends DurableObject<Env> {
           this.broadcast({ t: 'chat', m }, undefined, (o) => o.p.zone === p.zone);
           return;
         }
-        const m: ChatMsg = { id: crypto.randomUUID(), ch: 'global', from: p.id, name: p.name, text, ts: now };
-        this.broadcast({ t: 'chat', m });
-        await db.insertChat(this.env.DB, m);
-        if (++this.chatSinceprune >= 50) {
-          this.chatSinceprune = 0;
-          await db.pruneChat(this.env.DB);
-        }
+        // 'work' = the work floor, where people and the departments' agents talk shop
+        await this.globalChat({ id: crypto.randomUUID(), ch: msg.ch === 'work' ? 'work' : 'global', from: p.id, name: p.name, text, ts: now }, p.zone);
         return;
       }
 
@@ -796,6 +877,7 @@ export class OfficeRoom extends DurableObject<Env> {
           this.send(c.ws, { t: 'err', msg: 'Ghế này đã có người ngồi rồi.' });
           return;
         }
+        this.agents.vacate(seat.id); // virtual employees give their chair to a person
         if (seat.kind === 'wolf' && !this.wolf.canSit(p.id, seat.id)) {
           this.send(c.ws, { t: 'err', msg: 'Ván Ma Sói đang diễn ra — ghế này của người chơi khác. Ngồi khúc gỗ xem nhé 🪵' });
           return;
@@ -937,6 +1019,10 @@ export class OfficeRoom extends DurableObject<Env> {
         return;
       }
 
+      case 'agents':
+        if (msg.m && typeof msg.m === 'object') await this.agents.handle(p.id, msg.m, p.name);
+        return;
+
       case 'activity:revoke': {
         await db.replaceActivityToken(this.env.DB, p.id, null, Date.now());
         this.send(c.ws, { t: 'activityToken', token: null });
@@ -963,6 +1049,8 @@ export class OfficeRoom extends DurableObject<Env> {
           createdAt: now,
           updatedAt: now,
           doneAt: col === 'done' ? now : null,
+          dept: isDept(msg.dept) ? msg.dept : null,
+          hops: 0,
         };
         tasks.set(task.id, task);
         this.broadcast({ t: 'task', task, by: p.id });
@@ -979,6 +1067,10 @@ export class OfficeRoom extends DurableObject<Env> {
         if (patch.desc !== undefined) task.desc = clampStr(patch.desc, LIMITS.taskDesc);
         if (patch.assignee !== undefined) task.assignee = sanitizeAssignee(patch.assignee);
         if (patch.priority !== undefined) task.priority = sanitizePriority(patch.priority);
+        if (patch.dept !== undefined) {
+          task.dept = isDept(patch.dept) ? patch.dept : null;
+          task.hops = 0; // a person re-routed it: the bounce counter starts again
+        }
         task.updatedAt = Date.now();
         this.broadcast({ t: 'task', task, by: p.id });
         await db.saveTask(this.env.DB, task);
@@ -1004,11 +1096,11 @@ export class OfficeRoom extends DurableObject<Env> {
         if (task.col === 'doing' && owner && !owner.p.taskId) this.update(owner, { taskId: task.id });
         if (task.col === 'done' && !wasDone) {
           for (const o of this.conns.values()) if (o.p.taskId === task.id) this.update(o, { taskId: null });
-          const creditId = task.assignee ?? p.id;
+          const creditId = task.assignee && !this.agents.has(task.assignee) ? task.assignee : p.id;
           await db.addWorklog(this.env.DB, this.day(now), creditId, { tasksDone: 1 });
           const credited = this.conns.get(creditId);
           if (credited) await this.sendToday(credited);
-          const who = credited?.p.name ?? p.name;
+          const who = (task.assignee && this.agents.players().find((x) => x.id === task.assignee)?.name) || (credited?.p.name ?? p.name);
           await this.systemChat(`🎉 ${who} vừa hoàn thành “${task.title}”`);
         }
         return;

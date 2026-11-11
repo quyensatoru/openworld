@@ -8,6 +8,7 @@ import type { WedFx, WedMsg, WedState } from './wedding';
 // Every message is JSON with a short `t` (type) field.
 
 import type { AvatarConfig } from './avatar';
+import type { AgentBook, AgentMsg, AgentTag, Approval, DeptId, Meeting } from './agents';
 
 export type Status = 'online' | 'working' | 'meeting' | 'break' | 'focus' | 'away';
 export type AnimState = 'idle' | 'walk' | 'run' | 'sit';
@@ -98,6 +99,8 @@ export interface PlayerState {
   pomo: Pomodoro | null;
   media: MediaState;
   joinedAt: number;
+  /** set on virtual employees (Claude Code sessions), never on people */
+  agent?: AgentTag;
 }
 
 export interface Task {
@@ -112,15 +115,21 @@ export interface Task {
   createdAt: number;
   updatedAt: number;
   doneAt: number | null;
+  /** department the task is handed to (agents of that department pick it up) */
+  dept?: DeptId | null;
+  /** how many handoffs led here */
+  hops?: number;
 }
 
 export interface ChatMsg {
   id: string;
-  ch: string; // 'global' | `zone:${zoneId}` | 'system'
+  ch: string; // 'global' | 'work' (the work floor: people + virtual employees) | `zone:${zoneId}`
   from: string; // clientId or 'system'
   name: string;
   text: string;
   ts: number;
+  /** said in this meeting (work channel) */
+  meet?: string;
 }
 
 export interface WorklogDay {
@@ -145,7 +154,8 @@ export interface CinemaState {
 /** One line on someone's "Claude Code screen" (sent by their Claude Code hooks). */
 export interface ActivityEvent {
   ts: number;
-  kind: 'start' | 'prompt' | 'tool' | 'stop' | 'notify';
+  /** say / result: streamed by agent runners (what Claude wrote, what a tool returned) */
+  kind: 'start' | 'prompt' | 'tool' | 'stop' | 'notify' | 'say' | 'result';
   icon: string;
   text: string;
   project?: string;
@@ -191,15 +201,15 @@ export interface TeamMember {
 export type ClientMsg =
   | { t: 'hello'; cid: string; name: string; avatar: AvatarConfig; x?: number; z?: number; ry?: number }
   | { t: 'move'; x: number; z: number; ry: number; anim: AnimState }
-  | { t: 'chat'; ch: 'global' | 'zone'; text: string }
+  | { t: 'chat'; ch: 'global' | 'zone' | 'work'; text: string }
   | { t: 'emote'; e: Emote }
   | { t: 'wave'; to: string }
   | { t: 'status'; status: Status; manual: boolean; text?: string }
   | { t: 'sit'; seat: string | null }
   | { t: 'pomo'; pomo: Pomodoro | null; completed?: boolean }
   | { t: 'profile'; name: string; avatar: AvatarConfig }
-  | { t: 'task:create'; title: string; desc?: string; col?: TaskColumn; assignee?: string | null; priority?: Priority }
-  | { t: 'task:update'; id: string; patch: Partial<Pick<Task, 'title' | 'desc' | 'assignee' | 'priority'>> }
+  | { t: 'task:create'; title: string; desc?: string; col?: TaskColumn; assignee?: string | null; priority?: Priority; dept?: DeptId | null }
+  | { t: 'task:update'; id: string; patch: Partial<Pick<Task, 'title' | 'desc' | 'assignee' | 'priority' | 'dept'>> }
   | { t: 'task:move'; id: string; col: TaskColumn; ord: number }
   | { t: 'task:delete'; id: string }
   | { t: 'task:focus'; id: string | null }
@@ -217,6 +227,7 @@ export type ClientMsg =
   | { t: 'wed'; m: WedMsg }
   | { t: 'activity:token' }
   | { t: 'activity:revoke' }
+  | { t: 'agents'; m: AgentMsg }
   | { t: 'ping' };
 
 // ---------- server -> client ----------
@@ -237,6 +248,8 @@ export type ServerMsg =
       kara?: KaraState;
       wed?: WedState;
       activity: Record<string, ActivityEvent[]>;
+      meetings?: Meeting[];
+      approvals?: Approval[];
     }
   | { t: 'join'; p: PlayerState }
   | { t: 'leave'; id: string }
@@ -267,6 +280,9 @@ export type ServerMsg =
   | { t: 'wedFx'; fx: WedFx }
   | { t: 'activity'; id: string; ev: ActivityEvent }
   | { t: 'activityToken'; token: string | null }
+  | { t: 'agentBook'; book: AgentBook }
+  | { t: 'meetings'; list: Meeting[] }
+  | { t: 'approvals'; list: Approval[] }
   | { t: 'kicked'; reason: string }
   | { t: 'err'; msg: string }
   | { t: 'pong' };

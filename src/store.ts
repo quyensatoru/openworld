@@ -1,3 +1,4 @@
+import type { AgentBook, Approval, Meeting } from '../shared/agents';
 import type { CaroGame, SnakeFrame } from '../shared/arcade';
 import type { KaraState, MicFx } from '../shared/karaoke';
 import type { Floor } from '../shared/map';
@@ -63,6 +64,10 @@ export interface OfficeStore {
 
   panel: SidePanel;
   kanbanOpen: boolean;
+  /** the virtual employees' panel (departments, playbook, how to connect) */
+  agentsOpen: boolean;
+  agentsTab: 'depts' | 'book' | 'profiles' | 'connect';
+  agentBook: AgentBook | null;
   creatorOpen: boolean;
   settingsOpen: boolean;
   helpOpen: boolean;
@@ -70,7 +75,11 @@ export interface OfficeStore {
   installHelp: boolean;
   selected: string | null; // clicked player id
   prompt: string | null; // "Nhấn E để …"
-  chatTab: 'global' | 'zone';
+  chatTab: 'global' | 'zone' | 'work';
+  /** meetings in the floor-1 meeting rooms (departments' agents, and people who join in) */
+  meetings: Meeting[];
+  /** runner sessions asking a person to allow something */
+  approvals: Approval[];
   chatDraft: string;
   unread: number;
   toasts: Toast[];
@@ -205,6 +214,9 @@ export const useStore = create<OfficeStore>(() => ({
 
   panel: loadPref<SidePanel>('panel2', null),
   kanbanOpen: false,
+  agentsOpen: false,
+  agentsTab: 'depts',
+  agentBook: null,
   creatorOpen: false,
   settingsOpen: false,
   helpOpen: false,
@@ -212,6 +224,8 @@ export const useStore = create<OfficeStore>(() => ({
   selected: null,
   prompt: null,
   chatTab: 'global',
+  meetings: [],
+  approvals: [],
   chatDraft: '',
   unread: 0,
   toasts: [],
@@ -312,7 +326,7 @@ export function playerById(id: string): PlayerState | null {
 
 export function nameOf(id: string | null | undefined): string {
   if (!id) return '';
-  return playerById(id)?.name ?? getState().team[id]?.name ?? 'Ai đó';
+  return playerById(id)?.name ?? getState().team[id]?.name ?? (id.startsWith('ag-') ? '🤖 nhân viên ảo' : 'Ai đó');
 }
 
 export function serverNow(): number {

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { DEPTS, DEPT_BY_ID, isDept, mentionedDepts, type DeptId } from '../../shared/agents';
 import { COLUMNS, PRIORITY_META, type Priority, type Task, type TaskColumn } from '../../shared/protocol';
 import { game } from '../game';
 import { getState, nameOf, setState, useStore } from '../store';
@@ -155,7 +156,14 @@ function Card({ task, working, dragging, onDrag, onOpen, avatar }: { task: Task;
       onDragEnd={() => onDrag(null)}
       onClick={onOpen}
     >
-      <div className="t">{task.title}</div>
+      <div className="t">
+        {task.dept && (
+          <span className="kb-dept" style={{ ['--c' as string]: DEPT_BY_ID.get(task.dept)?.color }} title={`Giao cho phòng ${DEPT_BY_ID.get(task.dept)?.name}`}>
+            {DEPT_BY_ID.get(task.dept)?.icon} {DEPT_BY_ID.get(task.dept)?.short}
+          </span>
+        )}
+        {task.title}
+      </div>
       <div className="m">
         {assignee ? (
           <>
@@ -181,13 +189,17 @@ function AddTask({ col, assignToMe }: { col: TaskColumn; assignToMe: boolean }) 
       className="kb-add"
       onSubmit={(e) => {
         e.preventDefault();
-        const t = v.trim();
+        let t = v.trim();
+        // "@qa kiểm tra form đăng nhập" → handed to that department (its agents pick it up)
+        const lead = /^@(\S+)\s+/.exec(t);
+        const dept: DeptId | null = lead ? (mentionedDepts(lead[0])[0] ?? null) : null;
+        if (dept) t = t.slice(lead![0].length).trim();
         if (!t) return;
-        game.createTask(t, col, assignToMe ? meId : null);
+        game.createTask(t, col, assignToMe && !dept ? meId : null, 'normal', '', dept);
         setV('');
       }}
     >
-      <input className="input" placeholder="+ Thêm việc (Enter)" maxLength={140} value={v} onChange={(e) => setV(e.target.value)} />
+      <input className="input" placeholder="+ Thêm việc · @dev @qa… để giao phòng ban" title="Gõ @dev, @qa, @ops, @design, @docs, @biz hoặc @lead ở đầu để giao cho nhân viên ảo của phòng đó" maxLength={160} value={v} onChange={(e) => setV(e.target.value)} />
     </form>
   );
 }
@@ -248,6 +260,17 @@ function TaskEditor({ task, onClose }: { task: Task; onClose: () => void }) {
           </select>
         </label>
       </div>
+      <label style={{ fontSize: 13, fontWeight: 600 }}>
+        Giao cho phòng ban <span className="muted" style={{ fontWeight: 400 }}>(nhân viên ảo của phòng sẽ tự nhận)</span>
+        <select className="input" style={{ marginTop: 6 }} value={task.dept ?? ''} onChange={(e) => game.updateTask(task.id, { dept: isDept(e.target.value) ? e.target.value : null })}>
+          <option value="">— Không —</option>
+          {DEPTS.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.icon} {d.name}
+            </option>
+          ))}
+        </select>
+      </label>
       <label style={{ fontSize: 13, fontWeight: 600 }}>
         Cột
         <div className="chips" style={{ marginTop: 6 }}>

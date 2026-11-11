@@ -1,13 +1,21 @@
 // D1 data access for the office. All functions take the D1 binding explicitly.
 
 import { sanitizeAvatar, type AvatarConfig } from '../shared/avatar';
+import { isDept, type Debrief, type Lesson } from '../shared/agents';
 import type { ChatMsg, Priority, Task, TaskColumn, TeamMember, WorklogDay } from '../shared/protocol';
-import { SCHEMA_STATEMENTS } from './schema';
+import { SCHEMA_ALTERS, SCHEMA_STATEMENTS } from './schema';
 
 const DAY_MS = 86_400_000;
 
 export async function ensureSchema(db: D1Database): Promise<void> {
   await db.batch(SCHEMA_STATEMENTS.map((s) => db.prepare(s)));
+  for (const s of SCHEMA_ALTERS) {
+    try {
+      await db.prepare(s).run();
+    } catch (err) {
+      if (!/duplicate column/i.test(String(err))) throw err;
+    }
+  }
 }
 
 // ---------------------------------------------------------------- users
@@ -91,6 +99,8 @@ interface TaskRow {
   created_at: number;
   updated_at: number;
   done_at: number | null;
+  dept?: string | null;
+  hops?: number | null;
 }
 
 const rowToTask = (r: TaskRow): Task => ({
@@ -105,6 +115,8 @@ const rowToTask = (r: TaskRow): Task => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   doneAt: r.done_at,
+  dept: isDept(r.dept) ? r.dept : null,
+  hops: r.hops ?? 0,
 });
 
 /** Active tasks + tasks finished in the last 14 days. */
@@ -119,12 +131,12 @@ export async function loadTasks(db: D1Database, now: number): Promise<Task[]> {
 export async function saveTask(db: D1Database, t: Task): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO tasks (id, title, descr, col, ord, assignee, priority, created_by, created_at, updated_at, done_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+      `INSERT INTO tasks (id, title, descr, col, ord, assignee, priority, created_by, created_at, updated_at, done_at, dept, hops)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
        ON CONFLICT(id) DO UPDATE SET title = ?2, descr = ?3, col = ?4, ord = ?5, assignee = ?6, priority = ?7,
-         updated_at = ?10, done_at = ?11`,
+         updated_at = ?10, done_at = ?11, dept = ?12, hops = ?13`,
     )
-    .bind(t.id, t.title, t.desc, t.col, t.ord, t.assignee, t.priority, t.createdBy, t.createdAt, t.updatedAt, t.doneAt)
+    .bind(t.id, t.title, t.desc, t.col, t.ord, t.assignee, t.priority, t.createdBy, t.createdAt, t.updatedAt, t.doneAt, t.dept ?? null, t.hops ?? 0)
     .run();
 }
 
@@ -278,4 +290,80 @@ export async function keepWedPhotos(db: D1Database, keep: string[]): Promise<voi
     .prepare(`DELETE FROM wed_photos WHERE id NOT IN (${keep.map(() => '?').join(',')})`)
     .bind(...keep)
     .run();
+}
+
+// ---------------------------------------------------------------- agents: playbook + debriefs
+interface LessonRow {
+  id: string;
+  dept: string;
+  project: string;
+  text: string;
+  by_name: string;
+  updated_at: number;
+}
+const rowToLesson = (r: LessonRow): Lesson => ({ id: r.id, dept: r.dept === 'all' || !isDept(r.dept) ? 'all' : r.dept, project: r.project, text: r.text, by: r.by_name, at: r.updated_at });
+
+export async function listLessons(db: D1Database): Promise<Lesson[]> {
+  const { results } = await db.prepare('SELECT * FROM agent_lessons ORDER BY updated_at DESC LIMIT 500').all<LessonRow>();
+  return results.map(rowToLesson);
+}
+
+export async function saveLesson(db: D1Database, l: Lesson): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO agent_lessons (id, dept, project, text, by_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+       ON CONFLICT(id) DO UPDATE SET dept = ?2, project = ?3, text = ?4, by_name = ?5, updated_at = ?6`,
+    )
+    .bind(l.id, l.dept, l.project, l.text, l.by, l.at)
+    .run();
+}
+
+export async function deleteLesson(db: D1Database, id: string): Promise<boolean> {
+  const r = await db.prepare('DELETE FROM agent_lessons WHERE id = ?').bind(id).run();
+  return (r.meta.changes ?? 0) > 0;
+}
+
+interface DebriefRow {
+  id: string;
+  agent: string;
+  agent_name: string;
+  dept: string;
+  project: string;
+  text: string;
+  created_at: number;
+}
+const rowToDebrief = (r: DebriefRow): Debrief => ({
+  id: r.id,
+  agent: r.agent,
+  agentName: r.agent_name,
+  dept: isDept(r.dept) ? r.dept : 'dev',
+  project: r.project,
+  text: r.text,
+  at: r.created_at,
+});
+
+export async function addDebrief(db: D1Database, d: Debrief, owner: string): Promise<void> {
+  await db
+    .prepare('INSERT INTO agent_debriefs (id, agent, agent_name, dept, project, owner, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(d.id, d.agent, d.agentName, d.dept, d.project, owner, d.text, d.at)
+    .run();
+}
+
+export async function pendingDebriefs(db: D1Database, limit: number): Promise<Debrief[]> {
+  const { results } = await db.prepare('SELECT * FROM agent_debriefs WHERE done = 0 ORDER BY created_at LIMIT ?').bind(limit).all<DebriefRow>();
+  return results.map(rowToDebrief);
+}
+
+export async function countPendingDebriefs(db: D1Database): Promise<number> {
+  const r = await db.prepare('SELECT COUNT(*) AS n FROM agent_debriefs WHERE done = 0').first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
+/** Mark debriefs as distilled; ones older than 60 days are dropped for good. */
+export async function finishDebriefs(db: D1Database, ids: string[], now: number): Promise<number> {
+  if (!ids.length) return 0;
+  const marks = ids.map(() => '?').join(',');
+  const r = await db.prepare(`UPDATE agent_debriefs SET done = 1 WHERE done = 0 AND id IN (${marks})`).bind(...ids).run();
+  await db.prepare('DELETE FROM agent_debriefs WHERE done = 1 AND created_at < ?').bind(now - 60 * DAY_MS).run();
+  return r.meta.changes ?? 0;
 }

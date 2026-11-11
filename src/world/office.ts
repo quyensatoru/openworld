@@ -1,6 +1,7 @@
 // Builds the whole office scene from shared/map.ts and exposes its dynamic parts.
 // Two floors: the ground floor is drawn as-is; everything with a logical x >= 50 (the upper floor)
 // goes into `upstairs`, a group shifted by (-UP_DX, FLOOR_H, 0) so it sits right above the office.
+import { DeptSigns } from './dept-signs';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
@@ -165,6 +166,8 @@ export class OfficeScene {
   private tvs = new Map<string, { mesh: THREE.Mesh; idle: THREE.CanvasTexture; video: THREE.VideoTexture | null; label: string }>();
   private kanban: { mesh: THREE.Mesh; tex: THREE.CanvasTexture | null } | null = null;
   private whiteboard: { mesh: THREE.Mesh; tex: THREE.CanvasTexture | null } | null = null;
+  /** Department signs over the desk clusters (virtual employees). */
+  deptSigns!: DeptSigns;
   private arcades: { mesh: THREE.Mesh; tex: THREE.CanvasTexture; t: number; floor: number }[] = [];
   private arcAcc = 0;
   private clockAcc = 0;
@@ -416,6 +419,7 @@ export class OfficeScene {
     for (const d of DOORS) this.buildDoor(d, layer(d.x0).root, layer(d.x0).stat);
     statics.forEach((st, f) => this.levels[f].add(mergeStatic(st)));
     this.group.add(mergeStatic(staticOut));
+    this.deptSigns = new DeptSigns(this.downstairs);
     this.bar = new BarFx(this.upstairs);
     this.karaFx = new KaraokeFx(this.roof4);
     this.wolfFx = new WolfFx(this.roof4);

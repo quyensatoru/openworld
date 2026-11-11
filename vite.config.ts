@@ -7,7 +7,9 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 const BUILD_ID = process.env.BUILD_ID ?? new Date().toISOString().slice(0, 16);
 
 export default defineConfig({
-  plugins: [react(), cloudflare()],
+  // OFFICE_STATE=<dir>: a dev server with its own local D1 / Durable Object data — tests on a second
+  // server must never share state with the office someone is using on 5173
+  plugins: [react(), cloudflare(process.env.OFFICE_STATE ? { persistState: { path: process.env.OFFICE_STATE } } : {})],
   define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   server: { host: true, port: 5173 },
   build: { chunkSizeWarningLimit: 2500 },

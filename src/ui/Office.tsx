@@ -26,6 +26,7 @@ import { MeetingTvButton } from './MeetingTv';
 import { VoiceStatus } from './VoiceStatus';
 import { AvatarDot } from './common';
 import { Kanban } from './Kanban';
+import { AgentsPanel, ApprovalCards } from './Agents';
 import { Minimap } from './Minimap';
 import { SidePanel } from './SidePanel';
 import { Toolbar } from './Toolbar';
@@ -135,6 +136,8 @@ export function Office() {
       <Safe><ClaudeScreenModal /></Safe>
       <Safe><ArcadeWindow /></Safe>
       {kanbanOpen && <Kanban />}
+      <Safe><AgentsPanel /></Safe>
+      <Safe><ApprovalCards /></Safe>
       {creatorOpen && <CharacterCreator mode="edit" onDone={() => setState({ creatorOpen: false })} />}
       {settingsOpen && <Settings />}
       {helpOpen && <Help />}
@@ -186,7 +189,7 @@ const PLACES = [
 function TopBar() {
   const zone = useStore((s) => s.me?.zone);
   const floor = useStore((s) => s.floor);
-  const online = useStore((s) => Object.keys(s.players).length + (s.me ? 1 : 0));
+  const online = useStore((s) => Object.values(s.players).filter((p) => !p.agent).length + (s.me ? 1 : 0));
   const connected = useStore((s) => s.connected);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
