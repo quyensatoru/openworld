@@ -9,6 +9,7 @@ import type { WedFx, WedMsg, WedState } from './wedding';
 
 import type { AvatarConfig } from './avatar';
 import type { AgentAccess, AgentBook, AgentMsg, AgentTag, Approval, DeptId, Meeting } from './agents';
+import type { BrainView } from './brain';
 
 export type Status = 'online' | 'working' | 'meeting' | 'break' | 'focus' | 'away';
 export type AnimState = 'idle' | 'walk' | 'run' | 'sit';
@@ -119,17 +120,29 @@ export interface Task {
   dept?: DeptId | null;
   /** how many handoffs led here */
   hops?: number;
+  /** ids of tasks that must finish first — one orchestrator plan, several departments at once */
+  after?: string[];
+  /** the chat thread this work is discussed in (root message id) */
+  thread?: string;
 }
+
+/** Whether the department that owns a task is finished with it — what the work chained after it
+ *  waits for. A card in review is finished as far as the next department is concerned: it is only
+ *  waiting for a person to look, and QA *is* that look. Waiting for `done` instead would stall
+ *  every chain, because departments hand their work over in review. */
+export const settled = (t: Task) => t.col === 'done' || t.col === 'review';
 
 export interface ChatMsg {
   id: string;
-  ch: string; // 'global' | 'work' (the work floor: people + virtual employees) | `zone:${zoneId}`
+  ch: string; // 'global' (the office's own announcements) | `ask:${userId}` (one person and the AI staff) | `zone:${zoneId}`
   from: string; // clientId or 'system'
   name: string;
   text: string;
   ts: number;
   /** said in this meeting (work channel) */
   meet?: string;
+  /** id of the message that opened this thread — everything about one piece of work hangs off it */
+  root?: string;
 }
 
 export interface WorklogDay {
@@ -201,7 +214,7 @@ export interface TeamMember {
 export type ClientMsg =
   | { t: 'hello'; cid: string; name: string; avatar: AvatarConfig; x?: number; z?: number; ry?: number }
   | { t: 'move'; x: number; z: number; ry: number; anim: AnimState }
-  | { t: 'chat'; ch: 'global' | 'zone' | 'work'; text: string }
+  | { t: 'chat'; ch: 'global' | 'zone' | 'work' | 'ask'; text: string; root?: string }
   | { t: 'emote'; e: Emote }
   | { t: 'wave'; to: string }
   | { t: 'status'; status: Status; manual: boolean; text?: string }
@@ -251,6 +264,7 @@ export type ServerMsg =
       meetings?: Meeting[];
       approvals?: Approval[];
       access?: AgentAccess;
+      brain?: BrainView;
     }
   | { t: 'join'; p: PlayerState }
   | { t: 'leave'; id: string }
@@ -286,6 +300,7 @@ export type ServerMsg =
   | { t: 'meetings'; list: Meeting[] }
   | { t: 'approvals'; list: Approval[] }
   | { t: 'agentAccess'; v: AgentAccess }
+  | { t: 'brain'; v: BrainView }
   | { t: 'kicked'; reason: string }
   | { t: 'err'; msg: string }
   | { t: 'pong' };

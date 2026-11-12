@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { DEPTS, DEPT_BY_ID } from '../../shared/agents';
 import { ZONE_BY_ID } from '../../shared/map';
 import { STATUS_META, type ChatMsg } from '../../shared/protocol';
 import { game } from '../game';
 import { savePref } from '../profile';
 import { getState, serverNow, setState, useStore, type SidePanel as Panel } from '../store';
-import { AvatarDot, fmtClock, fmtDuration, fmtTime, timeAgo } from './common';
+import { AvatarDot, fmtClock, fmtDay, fmtDuration, fmtTime, timeAgo } from './common';
 
 export function SidePanel() {
   const panel = useStore((s) => s.panel);
@@ -63,9 +63,26 @@ function Chat() {
   const [fresh, setFresh] = useState(0);
   const [pick, setPick] = useState(0);
   const [caret, setCaret] = useState(0);
+  const thread = useStore((s) => s.chatThread);
   const zoneName = ZONE_BY_ID.get(zone)?.name ?? 'Khu vực';
 
-  const msgs = useMemo(() => chat.filter((m) => (tab === 'global' ? m.ch === 'global' : tab === 'work' ? m.ch === 'work' : m.ch === `zone:${zone}`)), [chat, tab, zone]);
+  // Two channels: your own with the AI staff, and whoever is standing near you. The office's own
+  // announcements (a task finished, someone put a film on) show up wherever you are.
+  const all = useMemo(
+    () => chat.filter((m) => (tab === 'ask' ? m.ch === `ask:${meId}` : m.ch === `zone:${zone}` || ((m.ch === 'global' || m.ch === 'work') && m.from === 'system'))),
+    [chat, tab, zone, meId],
+  );
+  // One piece of work = one thread. The channel shows the openers; the replies live inside.
+  const replies = useMemo(() => {
+    const by = new Map<string, ChatMsg[]>();
+    for (const m of all) if (m.root) by.set(m.root, [...(by.get(m.root) ?? []), m]);
+    return by;
+  }, [all]);
+  const openThread = thread && tab === 'ask' ? all.find((m) => m.id === thread) ?? null : null;
+  const msgs = useMemo(
+    () => (openThread ? [openThread, ...(replies.get(openThread.id) ?? [])] : all.filter((m) => !m.root)),
+    [all, replies, openThread],
+  );
   const lastId = msgs[msgs.length - 1]?.id;
   const toBottom = (smooth = false) => {
     const el = listRef.current;
@@ -76,7 +93,7 @@ function Chat() {
   // open / switch tab → the newest messages
   useEffect(() => {
     toBottom();
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, thread]); // eslint-disable-line react-hooks/exhaustive-deps
   // a new message: follow it (unless you scrolled far up to read something — then show a button)
   useEffect(() => {
     if (!lastId) return;
@@ -137,7 +154,7 @@ function Chat() {
     if (showMentions) return choose(options[Math.min(pick, options.length - 1)].handle);
     const text = getState().chatDraft.trim();
     if (!text) return;
-    game.sendChat(text, tab);
+    game.sendChat(text, tab, openThread?.id);
     setState({ chatDraft: '' });
     setCaret(0);
   };
@@ -147,36 +164,56 @@ function Chat() {
   return (
     <>
       <div className="chat-sub">
-        <button className={`chip${tab === 'global' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'global' })}>
-          🌏 Cả văn phòng
+        <button className={`chip${tab === 'ask' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'ask', chatThread: null })} title="Chỉ bạn và các nhân viên đang làm việc cho bạn thấy kênh này. Mỗi việc là một thread.">
+          🏢 Văn phòng của bạn
         </button>
-        <button className={`chip${tab === 'work' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'work' })} title="Người và agent các phòng ban trao đổi công việc, gọi nhau bằng @tên / @phòng">
-          💼 Khu làm việc
-        </button>
-        <button className={`chip${tab === 'zone' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'zone' })}>
+        <button className={`chip${tab === 'zone' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'zone', chatThread: null })}>
           📍 {zoneName}
         </button>
       </div>
+      {openThread && (
+        <button className="chat-thread-head" onClick={() => setState({ chatThread: null })}>
+          ← Quay lại · <b>{openThread.name}</b>: {openThread.text.slice(0, 48)}
+          {openThread.text.length > 48 ? '…' : ''}
+        </button>
+      )}
       <div className="chat-wrap">
         <div className="chat-list scroll" ref={listRef} onScroll={onScroll}>
           {!msgs.length && (
             <div className="empty">
-              {tab === 'global'
-                ? 'Chưa có tin nhắn nào. Chào cả nhà một câu đi! 👋'
-                : tab === 'work'
-                  ? 'Kênh công việc của người và agent các phòng ban. Gọi một phòng bằng @dev, @qa, @ops, @design, @docs, @biz, @lead — máy trực sẽ cử người trả lời.'
-                  : `Tin nhắn ở đây chỉ những người đang ở “${zoneName}” thấy.`}
+              {tab === 'ask'
+                ? 'Luồng riêng của bạn với 🧠 Tổng quản và các nhân viên đang làm việc cho bạn. Cứ nói việc bạn cần — Tổng quản tự chọn phòng ban, chia việc và trả lời bạn ngay đây. Không ai khác thấy luồng này.'
+                : `Nhắn với những người đang đứng ở “${zoneName}” — đi sang khu khác là sang cuộc trò chuyện khác.`}
             </div>
           )}
           {msgs.map((m, i) => {
             const prev = msgs[i - 1];
             // same person, a few minutes apart → one block (no repeated avatar / name)
-            const cont = !!prev && prev.from === m.from && m.from !== 'system' && m.ts - prev.ts < 3 * 60_000;
+            const sameDay = !!prev && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
+            const cont = !!prev && sameDay && prev.from === m.from && m.from !== 'system' && m.ts - prev.ts < 3 * 60_000;
+            const day = sameDay ? null : <div className="chat-day" key={`d${m.id}`}><span>{fmtDay(m.ts)}</span></div>;
             // the same system line over and over → shown once with a counter
             if (m.from === 'system' && msgs[i + 1]?.from === 'system' && msgs[i + 1].text === m.text) return null;
             let repeat = 1;
             if (m.from === 'system') for (let j = i - 1; j >= 0 && msgs[j].from === 'system' && msgs[j].text === m.text; j--) repeat++;
-            return <Message key={m.id} m={m} myName={myName} avatar={avatarOf(m.from)} cont={cont} repeat={repeat} />;
+            const kids = openThread ? [] : replies.get(m.id) ?? [];
+            return (
+              <Fragment key={m.id}>
+                {day}
+                <Message m={m} myName={myName} avatar={avatarOf(m.from)} cont={cont} repeat={repeat} />
+                {!!kids.length && (
+                  <button className="chat-replies" onClick={() => setState({ chatThread: m.id })}>
+                    <span className="cr-faces">
+                      {[...new Map(kids.map((k) => [k.from, k])).values()].slice(0, 4).map((k) => (
+                        <AvatarDot key={k.from} name={k.name} avatar={avatarOf(k.from)} size={20} />
+                      ))}
+                    </span>
+                    {kids.length} tin trong việc này
+                    <time>{timeAgo(kids[kids.length - 1].ts)}</time>
+                  </button>
+                )}
+              </Fragment>
+            );
           })}
         </div>
         {fresh > 0 && (
@@ -213,7 +250,7 @@ function Chat() {
           className="input"
           maxLength={500}
           value={draft}
-          placeholder={tab === 'global' ? 'Nhắn cả văn phòng… gõ @ để gọi ai đó' : tab === 'work' ? 'Nhắn khu làm việc… @dev @qa @Tên' : `Nhắn trong ${zoneName}…`}
+          placeholder={openThread ? 'Trả lời trong việc này…' : tab === 'ask' ? 'Cần gì cứ nói với Tổng quản…' : `Nhắn với người ở ${zoneName}…`}
           onChange={(e) => {
             setState({ chatDraft: e.target.value });
             setCaret(e.target.selectionStart ?? e.target.value.length);
@@ -358,7 +395,7 @@ function People() {
         ))}
         {agents.length > 0 && (
           <div className="section-title">
-            🤖 Nhân viên ảo · {agents.length}{' '}
+            🤖 Nhân viên văn phòng · {agents.length}{' '}
             <button style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }} onClick={() => setState({ agentsOpen: true, agentsTab: 'depts' })}>
               xem phòng ban
             </button>

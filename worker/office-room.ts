@@ -227,6 +227,8 @@ export class OfficeRoom extends DurableObject<Env> {
       if (b.op === 'claim') return Response.json(await this.agents.claim(b.uid, b.body ?? {}));
       if (b.op === 'exit') return Response.json(await this.agents.exit(b.uid, b.body ?? {}));
       if (b.op === 'feed') return Response.json(await this.agents.feed(b.uid, b.body ?? {}));
+      if (b.op === 'brain') return Response.json({ job: await this.agents.brain.job(b.uid) });
+      if (b.op === 'brainResult') return Response.json(await this.agents.brain.result(b.uid, String(b.body?.id ?? ''), String(b.body?.raw ?? '')));
       return new Response('bad op', { status: 400 });
     }
     if (url.pathname === '/nudge-status') {
@@ -453,9 +455,12 @@ export class OfficeRoom extends DurableObject<Env> {
     await this.globalChat({ id: crypto.randomUUID(), ch: 'global', from: 'system', name: 'Văn phòng', text, ts: Date.now() });
   }
 
-  /** Every line of the global / work chat (people, agents, the office itself). */
+  /** Every line of the office-wide chat and of the private threads (people, agents, the office). */
   private async globalChat(m: ChatMsg, zone?: string): Promise<void> {
-    this.broadcast({ t: 'chat', m });
+    // `ask:<uid>` is one person's own thread with the AI — nobody else is shown it
+    const owner = m.ch.startsWith('ask:') ? m.ch.slice(4) : null;
+    if (owner) this.broadcast({ t: 'chat', m }, undefined, (o) => o.p.id === owner);
+    else this.broadcast({ t: 'chat', m });
     this.agents.onChat(m, zone);
     await db.insertChat(this.env.DB, m);
     if (++this.chatSinceprune >= 50) {
@@ -644,14 +649,13 @@ export class OfficeRoom extends DurableObject<Env> {
           project: body.ev.project ? clampStr(body.ev.project, 40) : undefined,
         }
       : null;
-    // v2 hooks: the session is a virtual employee at a desk of its department
+    // v2 hooks: a session an on-call machine started, reporting from its department's desk
     const out = body.v2
       ? await this.agents.hook({
           uid: body.uid,
           sid: clampStr(body.sid ?? '', 80),
           event: clampStr(body.event ?? '', 40),
           ev,
-          dept: isDept(body.dept) ? body.dept : undefined,
           agent: clampStr(body.agent ?? '', 40),
           project: ev?.project,
         })
@@ -765,7 +769,8 @@ export class OfficeRoom extends DurableObject<Env> {
       you: p,
       players: [...[...this.conns.values()].filter((c) => c !== conn).map((c) => c.p), ...this.agents.players()],
       tasks: [...tasks.values()],
-      chat,
+      // other people's private threads with the AI are not theirs to read
+      chat: chat.filter((m) => !m.ch.startsWith('ask:') || m.ch === `ask:${id}`),
       team,
       today: { ...today, activeSince: null },
       office: { name: this.env.OFFICE_NAME || 'Văn phòng', tzOffsetMinutes: this.tz },
@@ -778,6 +783,7 @@ export class OfficeRoom extends DurableObject<Env> {
       meetings: this.agents.meetingsView(),
       approvals: this.agents.approvalsView(),
       access: await this.agents.accessReady(),
+      brain: this.agents.brain.view(),
     });
     this.broadcast({ t: 'join', p }, id);
     this.wolf.rejoin(id);
@@ -834,8 +840,12 @@ export class OfficeRoom extends DurableObject<Env> {
           this.broadcast({ t: 'chat', m }, undefined, (o) => o.p.zone === p.zone);
           return;
         }
-        // 'work' = the work floor, where people and the departments' agents talk shop
-        await this.globalChat({ id: crypto.randomUUID(), ch: msg.ch === 'work' ? 'work' : 'global', from: p.id, name: p.name, text, ts: now }, p.zone);
+        // 'ask' = this person's channel with the AI staff, which only they and their agents see.
+        // A `root` makes the line a reply inside that work's thread.
+        // ('work' was a separate feed once; an old tab sending it now just talks to the office.)
+        const ch = msg.ch === 'ask' ? `ask:${p.id}` : 'global';
+        const root = typeof msg.root === 'string' && /^[\w:-]{6,80}$/.test(msg.root) ? msg.root : undefined;
+        await this.globalChat({ id: crypto.randomUUID(), ch, from: p.id, name: p.name, text, ts: now, ...(root ? { root } : {}) }, p.zone);
         return;
       }
 

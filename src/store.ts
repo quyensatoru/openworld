@@ -1,4 +1,5 @@
 import type { AgentAccess, AgentBook, Approval, Meeting } from '../shared/agents';
+import type { BrainView } from '../shared/brain';
 import type { CaroGame, SnakeFrame } from '../shared/arcade';
 import type { KaraState, MicFx } from '../shared/karaoke';
 import type { Floor } from '../shared/map';
@@ -66,10 +67,12 @@ export interface OfficeStore {
   kanbanOpen: boolean;
   /** the virtual employees' panel (departments, playbook, how to connect) */
   agentsOpen: boolean;
-  agentsTab: 'depts' | 'book' | 'profiles' | 'access' | 'connect';
+  agentsTab: 'brain' | 'depts' | 'book' | 'profiles' | 'access' | 'connect';
   /** who may give work to whose runner */
   agentAccess: AgentAccess | null;
   agentBook: AgentBook | null;
+  /** 🧠 Tổng quản: its queue, what it decided, what the office has spent */
+  brain: BrainView | null;
   creatorOpen: boolean;
   settingsOpen: boolean;
   helpOpen: boolean;
@@ -77,7 +80,9 @@ export interface OfficeStore {
   installHelp: boolean;
   selected: string | null; // clicked player id
   prompt: string | null; // "Nhấn E để …"
-  chatTab: 'global' | 'zone' | 'work';
+  chatTab: 'ask' | 'zone';
+  /** the thread open in the chat panel (root message id), null = the channel itself */
+  chatThread: string | null;
   /** meetings in the floor-1 meeting rooms (departments' agents, and people who join in) */
   meetings: Meeting[];
   /** runner sessions asking a person to allow something */
@@ -217,16 +222,18 @@ export const useStore = create<OfficeStore>(() => ({
   panel: loadPref<SidePanel>('panel2', null),
   kanbanOpen: false,
   agentsOpen: false,
-  agentsTab: 'depts',
+  agentsTab: 'brain',
   agentAccess: null,
   agentBook: null,
+  brain: null,
   creatorOpen: false,
   settingsOpen: false,
   helpOpen: false,
   installHelp: false,
   selected: null,
   prompt: null,
-  chatTab: 'global',
+  chatTab: 'ask',
+  chatThread: null,
   meetings: [],
   approvals: [],
   chatDraft: '',
@@ -329,7 +336,7 @@ export function playerById(id: string): PlayerState | null {
 
 export function nameOf(id: string | null | undefined): string {
   if (!id) return '';
-  return playerById(id)?.name ?? getState().team[id]?.name ?? (id.startsWith('ag-') ? '🤖 nhân viên ảo' : 'Ai đó');
+  return playerById(id)?.name ?? getState().team[id]?.name ?? (id.startsWith('ag-') ? '🤖 nhân viên văn phòng' : 'Ai đó');
 }
 
 export function serverNow(): number {

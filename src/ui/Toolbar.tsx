@@ -155,7 +155,7 @@ export function Toolbar() {
             📋 Bảng công việc <small>K</small>
           </button>
           <button className="menu-item" onClick={() => (setPop(null), setState({ agentsOpen: true }))}>
-            🧠 Nhân viên ảo
+            🧠 Nhân viên văn phòng
           </button>
           <button className="menu-item" onClick={() => (setPop(null), togglePanel('people'))}>
             👥 Mọi người

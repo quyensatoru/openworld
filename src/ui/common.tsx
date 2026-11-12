@@ -39,6 +39,18 @@ export function fmtTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
 
+/** "Hôm nay" / "Hôm qua" / "Thứ ba, 11/11" — chat that runs over days needs to say which one. */
+export function fmtDay(ts: number): string {
+  const d = new Date(ts);
+  const today = new Date();
+  const dayStart = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((dayStart(today) - dayStart(d)) / 86_400_000);
+  if (diff === 0) return 'Hôm nay';
+  if (diff === 1) return 'Hôm qua';
+  const opts: Intl.DateTimeFormatOptions = diff < 7 ? { weekday: 'long', day: '2-digit', month: '2-digit' } : { day: '2-digit', month: '2-digit', year: 'numeric' };
+  return d.toLocaleDateString('vi-VN', opts);
+}
+
 export function timeAgo(ts: number): string {
   const d = Date.now() - ts;
   if (d < 60_000) return 'vừa xong';

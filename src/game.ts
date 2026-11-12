@@ -751,6 +751,7 @@ class Game {
     net.on('activityToken', ({ token }) => setState({ activityToken: token }));
     net.on('agentBook', ({ book }) => setState({ agentBook: book }));
     net.on('agentAccess', ({ v }) => setState({ agentAccess: v }));
+    net.on('brain', ({ v }) => setState({ brain: v }));
     net.on('approvals', ({ list }) => {
       const s = getState();
       const fresh = list.filter((x) => x.state === 'pending' && (x.owner === s.me?.id || x.anyone) && !s.approvals.some((y) => y.id === x.id));
@@ -811,7 +812,7 @@ class Game {
     setState({ floor: floorOf(m.you.x) });
     for (const p of m.players) world.upsertRemote(p);
     world.setTasks(m.tasks);
-    setState({ activity: m.activity as Record<string, ActivityEvent[]>, meetings: m.meetings ?? [], approvals: m.approvals ?? [], agentAccess: m.access ?? null });
+    setState({ activity: m.activity as Record<string, ActivityEvent[]>, meetings: m.meetings ?? [], approvals: m.approvals ?? [], agentAccess: m.access ?? null, brain: m.brain ?? null });
     this.applyCinema(m.cinema, '', 'welcome');
     this.applyJukebox(m.jukebox ?? null, '', 'welcome');
     if (m.kara) this.applyKara(m.kara);
@@ -1230,10 +1231,10 @@ class Game {
   }
 
   // ------------------------------------------------------------------ social
-  sendChat(text: string, ch: 'global' | 'zone' | 'work') {
+  sendChat(text: string, ch: 'ask' | 'zone', root?: string) {
     const t = text.trim();
     if (!t) return;
-    this.net?.send({ t: 'chat', ch, text: t });
+    this.net?.send({ t: 'chat', ch, text: t, ...(root ? { root } : {}) });
   }
 
   emote(e: Emote) {

@@ -76,7 +76,7 @@ function Login() {
       <div className="login-card glass">
         <div className="logo">🏢</div>
         <h1>{officeName}</h1>
-        <p>Văn phòng ảo của team — vào làm việc cùng nhau nào!</p>
+        <p>Văn phòng của team — vào làm việc cùng nhau nào!</p>
         <form onSubmit={submit}>
           <input className="input" type="password" autoFocus placeholder="Nhập mã văn phòng" value={code} onChange={(e) => setCode(e.target.value)} />
           <div className="error-text">{err}</div>

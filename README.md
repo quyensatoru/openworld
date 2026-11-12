@@ -1,6 +1,6 @@
-# 🏢 Office — văn phòng ảo 3D
+# 🏢 Office — văn phòng 3D
 
-Văn phòng ảo 3D cho team: mỗi người mở link, nhập mã văn phòng, tạo nhân vật rồi đi lại, ngồi vào bàn làm việc, nói chuyện khi đứng gần nhau, họp trong phòng họp, kéo task trên Kanban.
+Văn phòng 3D cho team: mỗi người mở link, nhập mã văn phòng, tạo nhân vật rồi đi lại, ngồi vào bàn làm việc, nói chuyện khi đứng gần nhau, họp trong phòng họp, kéo task trên Kanban.
 
 **Tính năng**
 
@@ -8,14 +8,19 @@ Văn phòng ảo 3D cho team: mỗi người mở link, nhập mã văn phòng, 
 - Nhân vật tuỳ biến (màu da, tóc, quần áo, phụ kiện, chiều cao). Có bộ model Quaternius thì dùng model có xương + animation; chưa có thì dùng nhân vật dựng bằng code.
 - Đi bằng WASD/mũi tên (Shift chạy) hoặc click để tự tìm đường; click ghế để ngồi, E để tương tác, phím 1–8 để biểu cảm.
 - **Voice/video theo khoảng cách** (WebRTC): lại gần ≤ 3,5 m là nghe thấy nhau, càng xa càng nhỏ. Trong phòng họp ai cũng nghe thấy nhau, thư viện thì không có voice. Chia sẻ màn hình hiện lên TV phòng họp.
-- Chat cả văn phòng + chat riêng theo khu vực, bong bóng chat trên đầu, `@tên` để gọi (có thông báo khi tab đang ẩn).
+- Hai kênh chat thôi, tách theo **ai được đọc**:
+  - 🏢 **Văn phòng của bạn** — bạn và toàn bộ nhân viên đang làm việc cho bạn. **Mỗi việc là một thread** (kiểu Mattermost): bạn gõ một câu là mở một thread, rồi Tổng quản, phòng này, phòng kia trao đổi với nhau ngay trong thread đó — bạn mở ra đọc được từng câu họ nói với nhau. Việc của người khác nằm ở kênh của họ, không lẫn vào đây.
+  - 📍 **Khu vực** — chỉ người đang đứng cùng chỗ với bạn; kèm tin chung của văn phòng (ai xong việc, ai bật phim).
+
+  Bong bóng chat trên đầu, `@tên` để gọi, có thông báo khi tab đang ẩn, có vạch ngăn ngày.
 - Trạng thái tự động theo vị trí (Làm việc / Họp / Nghỉ / Tập trung / Vắng), Pomodoro hiển thị trên đầu nhân vật.
 - Check-in khi ngồi vào bàn, tự cộng giờ làm, số pomodoro, số task xong trong ngày (panel “Hôm nay”).
 - Kanban To do / Doing / Review / Done kéo thả realtime, gán người, độ ưu tiên; task đang làm hiện dưới tên nhân vật; xong task thì nhân vật ăn mừng + confetti.
 
 - **Góc nhìn thứ nhất** (phím V / nút 🎥), ánh sáng văn phòng đổi theo giờ thật (ngày / chiều tà / tối), âm thanh văn phòng tổng hợp bằng WebAudio (điều hoà, gõ phím của người ngồi gần, bước chân, máy pha cà phê).
 - **Rạp chiếu phim** (cửa phía nam sảnh): 60 ghế, màn hình 11 m. Dán link YouTube → cả rạp xem đồng bộ (server giữ mốc thời gian chung); ngồi ghế là tự vào góc nhìn thứ nhất, đèn rạp tối dần khi chiếu.
-- **Màn hình Claude Code** trên bàn làm việc: Cài đặt → "Màn hình Claude Code" → tạo mã → dán đoạn hooks vào `~/.claude/settings.json`. Monitor ở bàn bạn ngồi sẽ hiện Claude đang làm gì (chỉ tên công cụ + tên file/mô tả lệnh; prompt chỉ hiện nếu bạn bật). Click vào monitor để xem đầy đủ.
+- **🧠 Tổng quản + các phòng ban làm việc thật.** Bạn không cần biết giao cho ai: nói việc cần làm ở tab chat **🏢 Văn phòng của bạn**, Tổng quản chọn phòng ban, chia việc sao cho phần nào độc lập thì chạy song song, trả lời thẳng những gì trả lời được, và chỉ hỏi lại khi đoán sai là hỏng việc. Máy trực cử nhân viên của phòng tương ứng ngồi vào bàn làm, bàn giao qua Kanban, rồi nộp tóm tắt để đúc rút kinh nghiệm. Xem mục [Nhân viên văn phòng](#nhân-viên-văn-phòng-ai).
+- **Màn hình Claude Code** trên bàn làm việc: Cài đặt → "Màn hình Claude Code" → tạo mã → dán lệnh cài vào terminal. Monitor ở bàn bạn ngồi sẽ hiện Claude trên máy bạn đang làm gì (chỉ tên công cụ + tên file/mô tả lệnh; prompt chỉ hiện nếu bạn bật). Phiên của bạn vẫn là của bạn — nó không thành nhân viên văn phòng.
 - **Phòng họp**: ai trong phòng cũng nghe nhau; chia sẻ màn hình hiện lên TV; click TV để phóng to, cuộn chuột để zoom, kéo để xem chỗ khác.
 
 - **Báo khi Office đông vui** (Web Push): đóng tab rồi vẫn nhận được thông báo "4 người đang ở Office" trên điện thoại/máy tính. Bật trong ⋯ → Cài đặt. Chỉ báo khi có từ 3 người trở lên, nhiều nhất một lần mỗi 6 tiếng mỗi người, và chỉ trong khung giờ `PUSH_HOURS`.
@@ -24,13 +29,41 @@ Văn phòng ảo 3D cho team: mỗi người mở link, nhập mã văn phòng, 
 
 ```
 worker/           Worker + Durable Object + D1 + xác thực mã văn phòng
-shared/           protocol, layout văn phòng (map.ts), cấu hình avatar — dùng chung client/server
+worker/brain.ts   🧠 Tổng quản: hàng đợi yêu cầu, prompt quyết định, áp quyết định lên bảng việc
+worker/agents.ts  nhân viên các phòng ban: chỗ ngồi, MCP, hồ sơ phòng, giao thức máy trực
+shared/           protocol, layout văn phòng (map.ts), cấu hình avatar, brain.ts — dùng chung client/server
 src/world/        thế giới 3D: engine, office, furniture, controller, pathfinding, avatar/
 src/rtc/          voice/video theo khoảng cách
 src/ui/           React HUD: đăng nhập, tạo nhân vật, toolbar, chat, Kanban…
 scripts/          smoke-test, e2e (Chrome headless), inspect/prepare assets
 migrations/       schema D1
 ```
+
+## Nhân viên văn phòng (AI)
+
+Văn phòng tự có người làm việc. Kiến trúc hai tầng, và chỗ khác nhau giữa hai tầng chính là chỗ tiết kiệm:
+
+| | Nghĩ (🧠 Tổng quản) | Làm (các phòng ban) |
+|---|---|---|
+| Là gì | `claude -p` rất ngắn, **thư mục trống**, **không công cụ nào**, trả về một object JSON | `claude -p` đầy đủ trong dự án của bạn, theo hồ sơ phòng ban |
+| Mất bao lâu | vài giây | vài phút tới vài chục phút |
+| Khi nào chạy | mỗi yêu cầu của người | chỉ khi Tổng quản đã quyết là cần |
+
+Một yêu cầu đi như sau:
+
+1. Bạn nói ở tab **🏢 Văn phòng của bạn**. Câu đó mở một **thread** — mọi thứ về việc này sau đó nằm gọn trong thread, kể cả lúc hai phòng nói chuyện với nhau.
+2. Tổng quản đọc tình hình văn phòng (bảng việc, ai đang bận, sổ kinh nghiệm, ngân sách còn lại) rồi quyết **một** trong năm việc: trả lời thẳng · chia việc cho các phòng · hỏi lại đúng một câu · gộp vào việc đang chạy · bỏ qua.
+3. Chia việc thì mỗi phần một phòng; phần nào không phụ thuộc nhau sẽ **chạy song song**, phần nào phải chờ thì nằm im tới khi phần trước xong — hoặc tới khi phòng làm phần đó bàn giao lại (cột **Chờ duyệt**), vì chính phòng sau mới là người kiểm.
+4. Máy trực mở phiên làm việc cho từng phần. Nhân viên phòng đó ngồi vào bàn, màn hình hiện nó đang làm gì, báo tiến độ **trong thread của việc**, hỏi lại bạn ở đó khi cần, bàn giao phần của phòng khác qua Kanban — và vì việc bàn giao vẫn thuộc thread cũ, bạn thấy luôn hai phòng trao đổi với nhau.
+
+Tất cả chỉnh ở panel 🧠 (phím/nút Nhân viên văn phòng):
+
+- **Model quyết định** — mặc định Sonnet. Haiku rẻ và nhanh hơn, Opus cho quyết định khó.
+- **Trần phiên/giờ** cho cả văn phòng và cho mỗi người — đây là trần chi phí thật, vì phiên làm việc mới là thứ tốn tiền.
+- **Họp tự động** — mặc định **tắt**. Mỗi ghế họp là một phiên chạy song song tới 25 phút, nên đây là thứ tốn kém nhất; tắt thì Tổng quản tự ra kế hoạch bằng một lượt nghĩ. Phòng họp vẫn dùng bình thường cho người thật.
+- **Quyền giao việc** — mặc định máy trực chỉ nhận việc từ chủ máy; chọn thêm đồng nghiệp ở tab 🔑.
+
+Agent **không** tự gọi nhau nữa: việc sang phòng khác chỉ đi qua bảng Kanban. Một yêu cầu vì thế không thể nở ra thành hàng chục phiên. Ranh giới cố định: chỉ Phát triển sửa code, chỉ Kiểm thử kết luận đạt/không đạt, chỉ Vận hành deploy, Tài liệu chỉ sửa file tài liệu. Khi Kiểm thử trả lỗi về Phát triển, việc kiểm thử nằm chờ đúng bản sửa đó rồi mới tự chạy lại — không ai nhận lại để kiểm đúng lỗi cũ.
 
 ## Chạy ở máy mình
 
@@ -89,6 +122,7 @@ npm run deploy                                       # → https://office.<subdo
 ```bash
 npm run typecheck
 npm test               # 25 bước kiểm tra giao thức với 3 client giả (cần npm run dev đang chạy)
+npm run test:agents    # 🧠 Tổng quản, luồng chat riêng, MCP, máy trực, ngân sách, họp, quyền giao việc
 npm run e2e            # Chrome headless, 2 người thật: đi lại, voice WebRTC, camera, chat, Kanban, ngồi bàn
 BASE=https://office.xxx.workers.dev PASSCODE=... npm test   # chạy với bản đã deploy
 ```

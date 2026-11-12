@@ -196,8 +196,9 @@ export default {
           await stub.fetch('https://office/activity', { method: 'POST', body: JSON.stringify({ uid, ev }) });
           return json({ ok: true });
         }
-        // v2: whatever we answer is printed by the hook — Claude Code reads it as extra context, so
-        // the body is either hook JSON or nothing at all.
+        // v2 is only for the sessions an on-call machine started (they send X-Office-Agent): whatever
+        // we answer is printed by the hook, and Claude Code reads it as extra context. A person's own
+        // Claude Code never takes a desk here — it uses v1 above, which only feeds their monitor.
         const res = await stub.fetch('https://office/activity', {
           method: 'POST',
           body: JSON.stringify({
@@ -206,7 +207,6 @@ export default {
             v2: true,
             sid: typeof hook.session_id === 'string' ? hook.session_id : '',
             event: typeof hook.hook_event_name === 'string' ? hook.hook_event_name : '',
-            dept: req.headers.get('X-Office-Dept') ?? '',
             agent: req.headers.get('X-Office-Agent') ?? '',
           }),
         });
@@ -233,15 +233,19 @@ export default {
       }
 
       // Agent runners (public/office-agent.cjs): poll for work, take a job, report the session's end.
+      // `brain`: GET asks the orchestrator for one decision to make, POST brings the answer back.
       case '/api/agents/jobs':
       case '/api/agents/claim':
       case '/api/agents/exit':
+      case '/api/agents/brain':
       case '/api/agents/feed': {
         const uid = await bearerUser(env, req);
         if (!uid) return json({ error: 'unauthorized' }, { status: 401 });
-        const op = url.pathname.split('/').pop()!;
-        if (op !== 'jobs' && req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
-        const body = op === 'jobs' ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
+        const last = url.pathname.split('/').pop()!;
+        const poll = last === 'jobs' || (last === 'brain' && req.method === 'GET');
+        const op = last === 'brain' && !poll ? 'brainResult' : last;
+        if (!poll && req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
+        const body = poll ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
         const stub = env.OFFICE.get(env.OFFICE.idFromName('main'));
         return stub.fetch('https://office/agent-api', { method: 'POST', body: JSON.stringify({ uid, op, body, depts: url.searchParams.get('depts') ?? '' }) });
       }

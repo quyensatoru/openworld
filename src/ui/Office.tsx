@@ -344,7 +344,7 @@ function PlayerCard() {
         <button
           className="btn"
           onClick={() => {
-            setState({ panel: 'chat', chatTab: 'global', chatDraft: `@${p.name.split(/\s+/).pop()} ` });
+            setState({ panel: 'chat', chatTab: 'zone', chatDraft: `@${p.name.split(/\s+/).pop()} ` });
             setTimeout(() => document.querySelector<HTMLInputElement>('.chat-input input')?.focus(), 40);
           }}
         >
@@ -681,7 +681,7 @@ function Help() {
         <button className="close-x" onClick={close}>
           ✕
         </button>
-        <h2>Chào mừng đến văn phòng ảo 👋</h2>
+        <h2>Chào mừng đến văn phòng 👋</h2>
         <div className="help-grid">
           {rows.map(([k, v]) => (
             <div key={k} style={{ display: 'contents' }}>

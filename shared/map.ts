@@ -604,7 +604,7 @@ for (const [room, cz] of [['meetA', 4.5], ['meetB', 13.5]] as const) {
   addF('sofa', 2.5, 8, 0.9, 0.9, PI / 2, true, 'library');
   addSeat('sofa', 7.6, 8, -PI / 2, 'library', 'Ghế đọc sách', 'read-2');
   // the library doubles as the virtual employees' head office: departments, playbook, how to connect
-  INTERACTABLES.push({ id: 'agents', kind: 'agents', x: 5, z: 6.1, radius: 1.5, label: '🧠 Điều phối nhân viên ảo & sổ kinh nghiệm' });
+  INTERACTABLES.push({ id: 'agents', kind: 'agents', x: 5, z: 6.1, radius: 1.5, label: '🧠 Điều phối nhân viên văn phòng & sổ kinh nghiệm' });
   addF('sofa', 7.7, 8, 0.9, 0.9, -PI / 2, true, 'library');
 }
 

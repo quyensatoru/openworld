@@ -1,8 +1,12 @@
-// Virtual employees: every Claude Code session connected to the office (through its hooks and the
-// office MCP server) sits at a desk of its department on floor 1, shows what it is doing on its
-// monitor, talks in the office chat and hands work to other departments via the Kanban board.
-// The "lead" department (the library) distils the sessions' debriefs into a playbook that is fed
-// back to every new session.
+// Virtual employees: headless Claude Code sessions started by an on-call machine. Each one sits at
+// a desk of its department on floor 1, shows what it is doing on its monitor, talks in the office
+// chat and hands work to other departments via the Kanban board. Nobody's own Claude Code session
+// becomes an employee any more — the office staffs itself.
+//
+// Above them sits one orchestrator, 🧠 Tổng quản (shared/brain.ts): it takes every request, decides
+// who does what, and is the only thing allowed to start a department session.
+
+import type { BrainMsg } from './brain';
 
 export type DeptId = 'lead' | 'dev' | 'qa' | 'ops' | 'design' | 'docs' | 'biz';
 
@@ -42,7 +46,8 @@ export const DEPTS: Dept[] = [
     short: 'Dev',
     icon: '💻',
     color: '#6b8cff',
-    brief: 'Bạn thuộc phòng Phát triển: viết và sửa code. Chạy test liên quan trước khi bàn giao. Không deploy, không push trừ khi việc ghi rõ.',
+    brief:
+      'Bạn thuộc phòng Phát triển: viết và sửa code — chỉ phòng bạn được sửa code sản phẩm. Chạy test liên quan trước khi bàn giao; phần kiểm thử, giao diện, tài liệu hay deploy thì handoff đúng phòng. Không deploy, không push trừ khi việc ghi rõ.',
     seats: desks(1),
     alias: ['dev', 'phattrien', 'code'],
   },
@@ -53,7 +58,7 @@ export const DEPTS: Dept[] = [
     icon: '🧪',
     color: '#3fb27f',
     brief:
-      'Bạn thuộc phòng Kiểm thử: đọc thay đổi, chạy test/build, tìm lỗi và ghi rõ cách tái hiện. Có lỗi thì handoff về Phát triển; ổn thì đánh dấu xong hoặc handoff Vận hành nếu cần deploy.',
+      'Bạn thuộc phòng Kiểm thử: đọc thay đổi, chạy test/build, kết luận đạt hay không đạt. Không sửa code sản phẩm — có lỗi thì handoff về Phát triển (wait=true) rồi chờ bản sửa; ổn thì đánh dấu xong, hoặc handoff Vận hành nếu cần deploy.',
     seats: desks(5),
     alias: ['qa', 'test', 'tester', 'kiemthu'],
   },
@@ -63,7 +68,8 @@ export const DEPTS: Dept[] = [
     short: 'Ops',
     icon: '🚀',
     color: '#f0a35e',
-    brief: 'Bạn thuộc phòng Vận hành: build, deploy, hạ tầng, theo dõi lỗi production. Chỉ deploy/push khi việc ghi rõ yêu cầu và test đã qua.',
+    brief:
+      'Bạn thuộc phòng Vận hành: build, deploy, hạ tầng, theo dõi lỗi production — chỉ phòng bạn được deploy, và thường là chặng cuối của một đợt việc. Chỉ deploy/push khi việc ghi rõ yêu cầu và test đã qua; việc sửa nguyên nhân gốc thì handoff Phát triển.',
     seats: desks(9),
     alias: ['ops', 'devops', 'vanhanh', 'deploy'],
   },
@@ -73,7 +79,8 @@ export const DEPTS: Dept[] = [
     short: 'Design',
     icon: '🎨',
     color: '#e889b0',
-    brief: 'Bạn thuộc phòng Thiết kế: giao diện, trải nghiệm, CSS, chữ hiển thị. Giữ phong cách sẵn có của sản phẩm.',
+    brief:
+      'Bạn thuộc phòng Thiết kế: giao diện, trải nghiệm, CSS, chữ hiển thị. Giữ phong cách sẵn có của sản phẩm; phần logic và dữ liệu thì handoff Phát triển, đừng tự sửa.',
     seats: desks(13),
     alias: ['design', 'designer', 'thietke', 'ui', 'ux'],
   },
@@ -83,7 +90,8 @@ export const DEPTS: Dept[] = [
     short: 'Docs',
     icon: '📝',
     color: '#4f9d8a',
-    brief: 'Bạn thuộc phòng Tài liệu: README, hướng dẫn, changelog, ghi chú kỹ thuật. Viết ngắn, đúng với code hiện tại.',
+    brief:
+      'Bạn thuộc phòng Tài liệu: README, hướng dẫn, changelog, ghi chú kỹ thuật — chỉ sửa file tài liệu. Viết ngắn, đúng với code hiện tại; thấy code sai thì handoff Phát triển.',
     seats: desks(17),
     alias: ['docs', 'doc', 'tailieu'],
   },
@@ -93,7 +101,8 @@ export const DEPTS: Dept[] = [
     short: 'Biz',
     icon: '🤝',
     color: '#d9a62e',
-    brief: 'Bạn thuộc phòng Kinh doanh & CSKH: phân tích yêu cầu khách, soạn câu trả lời, viết spec rõ ràng rồi handoff cho Phát triển.',
+    brief:
+      'Bạn thuộc phòng Kinh doanh & CSKH: phân tích yêu cầu khách, soạn câu trả lời, viết spec rõ ràng rồi handoff cho Phát triển (hoặc Thiết kế nếu chủ yếu là giao diện). Không sửa code.',
     seats: desks(21),
     alias: ['biz', 'cskh', 'sale', 'sales', 'kinhdoanh', 'support'],
   },
@@ -113,8 +122,9 @@ export const DEPT_SIGNS: { dept: DeptId; x: number; z: number }[] = [
   { dept: 'lead', x: 4.9, z: 3.3 },
 ];
 
-export type AgentKind = 'runner' | 'person';
-export type AgentState = 'working' | 'idle' | 'waiting';
+/** 'runner' = a department session doing the work; 'brain' = the one orchestrator above them. */
+export type AgentKind = 'runner' | 'brain';
+export type AgentState = 'working' | 'idle' | 'waiting' | 'thinking';
 
 /** Marks a PlayerState as a virtual employee. */
 export interface AgentTag {
@@ -149,7 +159,7 @@ export interface Debrief {
 
 /** Agent ids look like this (they share the player id space). */
 export const AGENT_ID = /^ag-[a-z0-9]{8,16}$/;
-/** A person's session leaves its desk after this long without a single hook event. */
+/** The orchestrator leaves its desk after this long without a single decision to make. */
 export const AGENT_IDLE_MS = 30 * 60_000;
 /** Handoff chains longer than this wait for a human (stops agents bouncing work forever). */
 export const MAX_HOPS = 6;
@@ -278,7 +288,8 @@ export type AgentMsg =
   | { a: 'meeting'; topic: string; agenda?: string; depts: DeptId[] }
   | { a: 'meetingEnd'; id: string }
   | { a: 'approve'; id: string; decision: 'once' | 'session' | 'deny' }
-  | { a: 'access'; all: boolean; users: string[] };
+  | { a: 'access'; all: boolean; users: string[] }
+  | BrainMsg;
 
 /** Who may give work to whose agents. Every runner owner decides for their own machine; by default
  *  only they themselves. A person may give work to the AI when at least one owner trusts them. */

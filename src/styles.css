@@ -622,6 +622,25 @@ input[type='range'] {
   display: flex;
   gap: 6px;
   padding: 10px 12px 4px;
+  flex-wrap: wrap;
+}
+/* which day the messages below belong to */
+.chat-day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 2px;
+  color: var(--muted, #8b92a1);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.chat-day::before,
+.chat-day::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.18;
 }
 .chat-list {
   flex: 1;
@@ -5682,4 +5701,54 @@ body {
 }
 *::-webkit-scrollbar-button {
   display: none;
+}
+
+/* one piece of work = one thread inside the channel */
+.chat-replies {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 0 42px;
+  padding: 4px 10px 4px 4px;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  color: var(--accent, #6b8cff);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.chat-replies:hover {
+  background: rgba(107, 140, 255, 0.1);
+}
+.cr-faces {
+  display: flex;
+}
+.cr-faces > * + * {
+  margin-left: -7px;
+}
+.chat-replies time {
+  opacity: 0.6;
+  font-weight: 500;
+}
+.chat-thread-head {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(45, 49, 66, 0.1);
+  background: rgba(45, 49, 66, 0.04);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-thread-head:hover {
+  background: rgba(45, 49, 66, 0.08);
 }

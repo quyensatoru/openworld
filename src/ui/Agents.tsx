@@ -1,7 +1,9 @@
-// The virtual employees' head office (the library on floor 1): who is working in which department,
-// the company playbook distilled from their sessions, and how to connect a machine.
+// The virtual employees' head office (the library on floor 1): 🧠 Tổng quản and what it decided,
+// who is working in which department, the company playbook distilled from their sessions, and how
+// to connect an on-call machine.
 import { useEffect, useMemo, useState } from 'react';
 import { AGENT_MODELS, DEPTS, DEPT_BY_ID, MEET_ROOMS, canAssign, isDept, type AgentModel, type DeptId, type DeptProfile, type DeptSkill, type Lesson, type Meeting } from '../../shared/agents';
+import type { BrainAction } from '../../shared/brain';
 import type { PlayerState, Task } from '../../shared/protocol';
 import { game } from '../game';
 import { serverNow, setState, useStore } from '../store';
@@ -9,7 +11,7 @@ import { AvatarDot, timeAgo } from './common';
 import { ClaudeConnect, CopyRow } from './ClaudeScreen';
 import './agents.css';
 
-const STATE_LABEL = { working: 'đang làm', idle: 'đang rảnh', waiting: 'chờ duyệt' } as const;
+const STATE_LABEL = { working: 'đang làm', idle: 'đang rảnh', waiting: 'chờ trả lời', thinking: 'đang nghĩ' } as const;
 
 export function AgentsPanel() {
   const open = useStore((s) => s.agentsOpen);
@@ -31,13 +33,13 @@ export function AgentsPanel() {
   const close = () => setState({ agentsOpen: false });
   const working = agents.filter((a) => a.agent!.state === 'working').length;
   const waiting = Object.values(tasks).filter((t) => t.dept && t.col === 'todo' && !t.assignee).length;
-  const set = (agentsTab: 'depts' | 'book' | 'profiles' | 'access' | 'connect') => setState({ agentsTab });
+  const set = (agentsTab: 'brain' | 'depts' | 'book' | 'profiles' | 'access' | 'connect') => setState({ agentsTab });
 
   return (
     <div className="modal-bg" onClick={close}>
       <div className="modal glass ag-panel" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
         <header className="ag-head">
-          <h2>🧠 Nhân viên ảo</h2>
+          <h2>🧠 Nhân viên văn phòng</h2>
           <div className="ag-sum">
             <span>
               <b>{agents.length}</b> đang có mặt
@@ -59,6 +61,9 @@ export function AgentsPanel() {
           </button>
         </header>
         <nav className="ag-tabs">
+          <button className={tab === 'brain' ? 'on' : ''} onClick={() => set('brain')}>
+            🧠 Tổng quản
+          </button>
           <button className={tab === 'depts' ? 'on' : ''} onClick={() => set('depts')}>
             🏢 Phòng ban
           </button>
@@ -76,6 +81,7 @@ export function AgentsPanel() {
           </button>
         </nav>
         <div className="ag-body scroll">
+          {tab === 'brain' && <BrainTab />}
           {tab === 'depts' && <Depts agents={agents} tasks={Object.values(tasks)} />}
           {tab === 'book' && <Book />}
           {tab === 'profiles' && <Profiles />}
@@ -83,6 +89,138 @@ export function AgentsPanel() {
           {tab === 'connect' && <Connect />}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ 🧠 Tổng quản
+const ACTION_META: Record<BrainAction, { icon: string; label: string }> = {
+  answer: { icon: '💬', label: 'trả lời thẳng' },
+  route: { icon: '📨', label: 'giao việc' },
+  ask: { icon: '❓', label: 'hỏi lại' },
+  merge: { icon: '🧵', label: 'gộp vào việc đang chạy' },
+  drop: { icon: '🤫', label: 'bỏ qua' },
+};
+const QUEUE_META: Record<string, string> = { pending: 'đang chờ nghĩ', thinking: 'đang nghĩ', asked: 'đang chờ bạn trả lời', done: 'xong' };
+
+function BrainTab() {
+  const brain = useStore((s) => s.brain);
+  const acc = useStore((s) => s.agentAccess);
+  const meId = useStore((s) => s.me?.id ?? '');
+  const isOwner = !!acc?.owners.some((o) => o.id === meId);
+  if (!brain) return <p className="ag-hint">Đang tải…</p>;
+  const { config: cfg, budget, queue, recent, online } = brain;
+  const pct = Math.min(100, Math.round((budget.sessionsHour / Math.max(1, cfg.maxSessionsHour)) * 100));
+  const set = (patch: Partial<typeof cfg>) => game.agents({ a: 'brainConfig', config: { ...cfg, ...patch } });
+  return (
+    <div className="ag-brain">
+      <section className={`br-head${online ? ' on' : ''}`}>
+        <div className="br-dot" />
+        <div>
+          <b>{online ? 'Tổng quản đang trực' : 'Chưa có máy nào phục vụ Tổng quản'}</b>
+          <small>
+            {online
+              ? 'Mọi yêu cầu đi qua đây: nó chọn phòng ban, chia việc chạy song song, trả lời thẳng những gì trả lời được và chỉ hỏi lại khi đoán sai là hỏng việc.'
+              : 'Chạy máy trực ở tab 🔌 Kết nối. Yêu cầu của mọi người vẫn được ghi lại và sẽ xử lý khi có máy lên.'}
+          </small>
+        </div>
+      </section>
+
+      <section className="br-budget">
+        <h3>Chi tiêu giờ này</h3>
+        <div className="br-bar">
+          <i style={{ width: `${pct}%` }} className={pct > 85 ? 'hot' : ''} />
+        </div>
+        <p className="ag-hint">
+          <b>{budget.sessionsHour}</b>/{cfg.maxSessionsHour} phiên làm việc (thứ tốn tiền) · <b>{budget.thoughtsHour}</b> lượt suy nghĩ (rẻ, không đụng vào dự án)
+          {budget.throttled.length ? ` · ${budget.throttled.length} người đang chạm trần riêng` : ''}
+        </p>
+      </section>
+
+      {isOwner && (
+        <section className="br-cfg">
+          <h3>Cách Tổng quản làm việc</h3>
+          <label>
+            Model quyết định
+            <select className="input" value={cfg.model} onChange={(e) => set({ model: e.target.value as typeof cfg.model })}>
+              <option value="haiku">Haiku — nhanh và rẻ nhất</option>
+              <option value="sonnet">Sonnet — cân bằng (khuyên dùng)</option>
+              <option value="opus">Opus — quyết định khó nhất</option>
+            </select>
+          </label>
+          <label>
+            Trần phiên/giờ cho cả văn phòng
+            <input className="input" type="number" min={1} max={200} value={cfg.maxSessionsHour} onChange={(e) => set({ maxSessionsHour: Number(e.target.value) })} />
+          </label>
+          <label>
+            Trần phiên/giờ cho mỗi người
+            <input className="input" type="number" min={1} max={100} value={cfg.maxPerPersonHour} onChange={(e) => set({ maxPerPersonHour: Number(e.target.value) })} />
+          </label>
+          <label className="br-check">
+            <input type="checkbox" checked={cfg.meetings} onChange={(e) => set({ meetings: e.target.checked })} />
+            Cho phép họp tự động giữa các nhân viên văn phòng
+          </label>
+          <p className="ag-hint">
+            Họp là thứ tốn kém nhất: mỗi ghế là một phiên chạy song song tới 25 phút. Tắt thì Tổng quản tự ra kế hoạch “ai làm gì” bằng một lượt nghĩ rồi giao việc song song. Phòng họp vẫn dùng bình thường cho người thật.
+          </p>
+        </section>
+      )}
+
+      <section>
+        <h3>Đang trên bàn Tổng quản{queue.length ? ` · ${queue.length}` : ''}</h3>
+        {!queue.length && <p className="ag-hint">Không có yêu cầu nào đang chờ.</p>}
+        {queue.map((it) => (
+          <div key={it.id} className={`br-item ${it.state}`}>
+            <div className="br-row">
+              <b>{it.whoName || 'Ai đó'}</b>
+              <span className="br-tag">{QUEUE_META[it.state] ?? it.state}</span>
+              <time>{timeAgo(it.at)}</time>
+              {it.who === meId && it.state !== 'done' && (
+                <button className="btn tiny" onClick={() => game.agents({ a: 'brainCancel', id: it.id })}>
+                  Huỷ
+                </button>
+              )}
+            </div>
+            <p className="br-text">{it.text}</p>
+            {it.followUps.filter((f) => f.q).map((f, i) => (
+              <p key={i} className="br-ask">
+                ❓ {f.q}
+                {f.a ? ` → “${f.a}”` : ''}
+              </p>
+            ))}
+          </div>
+        ))}
+      </section>
+
+      <section>
+        <h3>Đã quyết</h3>
+        {!recent.length && <p className="ag-hint">Chưa có quyết định nào.</p>}
+        {[...recent].reverse().map((l) => {
+          const meta = ACTION_META[l.action];
+          return (
+            <div key={`${l.id}-${l.at}`} className="br-log">
+              <div className="br-row">
+                <span className="br-act">
+                  {meta.icon} {meta.label}
+                </span>
+                <b>{l.whoName}</b>
+                <time>{timeAgo(l.at)}</time>
+              </div>
+              <p className="br-text">{l.text}</p>
+              {l.reply && <p className="br-reply">↳ {l.reply}</p>}
+              {!!l.depts.length && (
+                <div className="br-depts">
+                  {l.depts.map((d, i) => (
+                    <span key={i} style={{ ['--c' as string]: DEPT_BY_ID.get(d)?.color }}>
+                      {DEPT_BY_ID.get(d)?.icon} {DEPT_BY_ID.get(d)?.short}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
     </div>
   );
 }
@@ -115,7 +253,7 @@ function Depts({ agents, tasks }: { agents: PlayerState[]; tasks: Task[] }) {
         )}
       </div>
       <p className="ag-hint">
-        Không biết giao ai? Gõ <code>@ai …</code> trong chat (hoặc thẻ Kanban bắt đầu bằng <code>@ai</code>) — Tổng quản tự phân loại và chia cho đúng phòng. Biết rồi thì gọi thẳng <code>@dev</code>, <code>@qa</code>, <code>@ops</code>, <code>@design</code>, <code>@docs</code>, <code>@biz</code>. Máy trực sẽ cử một nhân viên ảo của phòng đó ngồi vào bàn làm, bàn giao tiếp cho phòng khác khi cần, rồi nộp tóm tắt để Ban điều hành đúc rút kinh nghiệm.
+        Bạn không cần biết giao cho ai. Cứ nói việc cần làm ở tab chat <b>🏢 Văn phòng của bạn</b> — 🧠 Tổng quản chọn phòng ban, chia việc chạy song song và trả lời bạn ngay trong luồng đó. Máy trực cử nhân viên văn phòng của phòng tương ứng ngồi vào bàn làm, rồi nộp tóm tắt để đúc rút kinh nghiệm.
       </p>
       <div className="ag-grid">
         {DEPTS.map((d) => {
@@ -138,7 +276,7 @@ function Depts({ agents, tasks }: { agents: PlayerState[]; tasks: Task[] }) {
                       <span className="ag-pname">
                         <b>{a.name.replace('🤖 ', '')}</b>
                         <small>
-                          {a.agent!.kind === 'runner' ? 'máy trực' : 'phiên'} của {a.agent!.ownerName}
+                          {a.agent!.kind === 'brain' ? 'điều phối cả văn phòng' : `máy trực của ${a.agent!.ownerName}`}
                           {a.agent!.project ? ` · ${a.agent!.project}` : ''}
                         </small>
                         {last && (
@@ -151,7 +289,7 @@ function Depts({ agents, tasks }: { agents: PlayerState[]; tasks: Task[] }) {
                     </button>
                   );
                 })}
-                {!here.length && <div className="ag-empty">Chưa có ai ngồi — cài Claude Code vào phòng này ở tab Kết nối.</div>}
+                {!here.length && <div className="ag-empty">Chưa có ai ngồi — phòng này sẽ có người khi Tổng quản giao việc tới.</div>}
               </div>
               {(open.length > 0 || done > 0) && (
                 <div className="ag-tasks">
@@ -517,16 +655,9 @@ function Connect() {
   return (
     <div className="ag-connect">
       <section>
-        <h3>1. Claude Code của bạn thành nhân viên ảo</h3>
+        <h3>Máy trực: văn phòng tự làm việc</h3>
         <p className="ag-hint">
-          Làm việc như bình thường — mỗi phiên Claude Code bạn mở sẽ ngồi vào bàn phòng ban đã chọn, màn hình hiện nó đang làm gì, đầu phiên được đọc sổ kinh nghiệm, và có thêm MCP <code>office</code> để chat, bàn giao việc, nộp tóm tắt.
-        </p>
-        <ClaudeConnect intro={false} />
-      </section>
-      <section>
-        <h3>2. Máy trực: nhân viên ảo tự làm việc</h3>
-        <p className="ag-hint">
-          Chạy trên một máy luôn bật, đã đăng nhập Claude Code (dùng gói Claude của máy đó). Cứ ~12 giây nó hỏi Office có việc gì cho các phòng nó phụ trách — việc trên Kanban gắn phòng ban, tin nhắn <code>@phòng</code> trong chat, đợt đúc rút kinh nghiệm — rồi mở một phiên <code>claude -p</code> cho từng việc. Nhân viên ảo ngồi vào bàn khi bắt đầu và rời đi khi xong.
+          Chạy trên một máy luôn bật, đã đăng nhập Claude Code (dùng gói Claude của máy đó). Máy này làm hai việc: phục vụ các <b>quyết định điều phối</b> của 🧠 Tổng quản (lệnh ngắn, không đụng vào dự án), và mở phiên <code>claude -p</code> trong dự án cho những việc Tổng quản đã đưa lên bảng. Nhân viên văn phòng ngồi vào bàn khi bắt đầu và rời đi khi xong.
         </p>
         <div className="ag-filter">
           {DEPTS.map((d) => (
@@ -544,24 +675,30 @@ function Connect() {
         )}
         <ul className="ag-notes">
           <li>
-            Mỗi phiên dùng <b>hồ sơ của phòng</b> (tab 📋): prompt, model, được sửa file nào. Lệnh terminal chỉ được chạy khi hồ sơ phòng xin <b>và</b> bạn cho phép trong <code>--allow</code> (hoặc thêm <code>--trust-profiles</code> để tin hồ sơ).
+            Mỗi phiên làm việc dùng <b>hồ sơ của phòng</b> (tab 📋): prompt, model, được sửa file nào. Lệnh terminal chỉ được chạy khi hồ sơ phòng xin <b>và</b> bạn cho phép trong <code>--allow</code> (hoặc thêm <code>--trust-profiles</code> để tin hồ sơ).
           </li>
-          <li>Mọi điều Claude nói và mọi công cụ nó dùng được stream lên màn hình bàn của agent đó; log đầy đủ nằm trên máy trực.</li>
+          <li>
+            Quyết định của Tổng quản chạy trong thư mục trống, <b>không</b> đọc được dự án và không có công cụ nào — nên rẻ và nhanh. Trần chi tiêu đặt ở tab 🧠. Thêm <code>--no-brain</code> nếu máy khác đã lo phần này.
+          </li>
+          <li>Mọi điều Claude nói và mọi công cụ nó dùng được stream lên màn hình bàn của nhân viên văn phòng đó; log đầy đủ nằm ở <code>~/.office-agent/logs</code>.</li>
           <li>
             Mặc định máy trực <b>chỉ nhận việc từ bạn</b>. Muốn đồng nghiệp giao việc được thì chọn họ ở tab 🔑 Quyền giao việc. Chỉ trỏ <code>--dir</code> vào dự án bạn chấp nhận cho agent đụng vào.
           </li>
-          <li>
-            Việc chuyền tay quá 6 lần sẽ dừng lại chờ người duyệt. Log từng phiên ở <code>~/.office-agent/logs</code>. Ctrl+C để dừng — việc dở được trả về Kanban.
-          </li>
+          <li>Ctrl+C để dừng — việc dở được trả về Kanban.</li>
         </ul>
+      </section>
+      <section>
+        <h3>Màn hình Claude Code của bạn</h3>
+        <p className="ag-hint">
+          Việc riêng của bạn vẫn là của bạn: Claude Code trên máy bạn <b>không</b> thành nhân viên văn phòng. Bật cái này thì màn hình ở bàn bạn ngồi sẽ hiện Claude đang làm gì (chỉ tên công cụ + tên file), để đồng nghiệp đi ngang thấy bạn đang bận.
+        </p>
+        <ClaudeConnect intro={false} />
       </section>
     </div>
   );
 }
-
 type AccessMode = 'me' | 'some' | 'all';
 
-/** 🔑 Who may give work to the AI: each runner owner picks, for their own machine. */
 function Access() {
   const me = useStore((s) => s.me?.id ?? '');
   const acc = useStore((s) => s.agentAccess);

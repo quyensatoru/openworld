@@ -199,7 +199,7 @@ function AddTask({ col, assignToMe }: { col: TaskColumn; assignToMe: boolean }) 
         setV('');
       }}
     >
-      <input className="input" placeholder="+ Thêm việc · @dev @qa… để giao phòng ban" title="Gõ @dev, @qa, @ops, @design, @docs, @biz hoặc @lead ở đầu để giao cho nhân viên ảo của phòng đó" maxLength={160} value={v} onChange={(e) => setV(e.target.value)} />
+      <input className="input" placeholder="+ Thêm việc · @dev @qa… để giao phòng ban" title="Gõ @dev, @qa, @ops, @design, @docs, @biz hoặc @lead ở đầu để giao cho nhân viên văn phòng của phòng đó" maxLength={160} value={v} onChange={(e) => setV(e.target.value)} />
     </form>
   );
 }
@@ -261,7 +261,7 @@ function TaskEditor({ task, onClose }: { task: Task; onClose: () => void }) {
         </label>
       </div>
       <label style={{ fontSize: 13, fontWeight: 600 }}>
-        Giao cho phòng ban <span className="muted" style={{ fontWeight: 400 }}>(nhân viên ảo của phòng sẽ tự nhận)</span>
+        Giao cho phòng ban <span className="muted" style={{ fontWeight: 400 }}>(nhân viên văn phòng của phòng sẽ tự nhận)</span>
         <select className="input" style={{ marginTop: 6 }} value={task.dept ?? ''} onChange={(e) => game.updateTask(task.id, { dept: isDept(e.target.value) ? e.target.value : null })}>
           <option value="">— Không —</option>
           {DEPTS.map((d) => (

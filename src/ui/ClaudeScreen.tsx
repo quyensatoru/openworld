@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { DEPTS, isDept, type DeptId } from '../../shared/agents';
 import { game } from '../game';
 import { serverNow, setState, useStore } from '../store';
 import { isLive } from '../world/claude-screen';
@@ -102,58 +101,25 @@ export function CopyRow({ text, label }: { text: string; label: string }) {
 export function ClaudeConnect({ intro = true }: { intro?: boolean }) {
   const token = useStore((s) => s.activityToken);
   const [share, setShare] = useState(false);
-  const [dept, setDept] = useState<DeptId>(() => (isDept(localStorage.getItem('office-agent-dept')) ? (localStorage.getItem('office-agent-dept') as DeptId) : 'dev'));
-  const endpoint = `${location.origin}/api/activity?v=2${share ? '&p=1' : ''}`;
+  const endpoint = `${location.origin}/api/activity${share ? '?p=1' : ''}`;
   const script = `curl -fsSL ${location.origin}/claude-hook.cjs | node -`;
-  const install = token ? `${script} install '${endpoint}' ${token} ${dept}` : '';
+  const install = token ? `${script} install '${endpoint}' ${token}` : '';
   const uninstall = `${script} uninstall`;
   const cmd = token
-    ? `[ -n "\${OFFICE_RUNNER:-}" ] || curl -sf -m 4 -X POST -H 'Authorization: Bearer ${token}' -H "X-Office-Dept: \${OFFICE_DEPT:-${dept}}" -H 'Content-Type: application/json' --data-binary @- '${endpoint}' 2>/dev/null || true # office-activity`
+    ? `[ -n "\${OFFICE_RUNNER:-}" ] || curl -s -m 3 -X POST -H 'Authorization: Bearer ${token}' -H 'Content-Type: application/json' --data-binary @- '${endpoint}' >/dev/null 2>&1 || true # office-activity`
     : '';
   const hook = (matcher?: string) => [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command: cmd }] }];
-  const snippet = token
-    ? JSON.stringify(
-        {
-          permissions: { allow: ['mcp__office'] },
-          hooks: { SessionStart: hook(), UserPromptSubmit: hook(), PostToolUse: hook('*'), Notification: hook(), Stop: hook(), SessionEnd: hook() },
-        },
-        null,
-        2,
-      ) + `\n\n# và MCP:\nclaude mcp add --scope user --transport http office ${location.origin}/api/mcp --header "Authorization: Bearer ${token}"`
-    : '';
+  const snippet = token ? JSON.stringify({ hooks: { SessionStart: hook(), UserPromptSubmit: hook(), PostToolUse: hook('*'), Notification: hook(), Stop: hook() } }, null, 2) : '';
   return (
     <div className="claude-connect">
       {intro && (
         <>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>🤖 Claude Code của bạn trong Office</div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>🖥️ Màn hình Claude Code của bạn</div>
           <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-            Mỗi phiên Claude Code trên máy bạn thành một <b>nhân viên ảo</b> ngồi ở bàn của phòng ban bạn chọn: màn hình hiện nó đang làm gì, nó đọc được sổ kinh nghiệm của công ty, chat thật với mọi người và bàn giao việc qua Kanban. Chỉ gửi tên công cụ + tên file/mô tả lệnh, không gửi nội dung code.
+            Màn hình ở bàn bạn ngồi sẽ hiện Claude Code trên máy bạn <b>đang làm gì</b> — chỉ tên công cụ + tên file/mô tả lệnh, không gửi nội dung code. Phiên của bạn vẫn là của bạn: nó không thành nhân viên của văn phòng, không nhận việc và không chat thay bạn.
           </div>
         </>
       )}
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5, margin: '10px 0 0' }}>
-        Phòng ban:
-        <select
-          className="input"
-          style={{ width: 'auto', padding: '6px 10px' }}
-          value={dept}
-          onChange={(e) => {
-            if (!isDept(e.target.value)) return;
-            setDept(e.target.value);
-            try {
-              localStorage.setItem('office-agent-dept', e.target.value);
-            } catch {
-              /* private mode */
-            }
-          }}
-        >
-          {DEPTS.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.icon} {d.name}
-            </option>
-          ))}
-        </select>
-      </label>
       {token === undefined || token === null ? (
         <button className="btn primary" style={{ marginTop: 10 }} onClick={() => game.requestActivityToken()}>
           Tạo mã kết nối

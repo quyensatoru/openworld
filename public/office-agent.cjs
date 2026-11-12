@@ -4,14 +4,16 @@
 //   curl -fsSL https://<office>/office-agent.cjs -o office-agent.cjs
 //   node office-agent.cjs --url https://<office> --token <mã-kết-nối> --dir ~/code/du-an [options]
 //
-// Every few seconds it asks the office for work and starts a headless Claude Code session
-// (`claude -p`, using this machine's Claude login) set up with the department's profile (prompt,
-// model, which files it may edit, which commands it may run) for:
-//   • a seat at a meeting a department was invited to,
-//   • the lead's distillation round: debriefs → the playbook,
-//   • a person (or, a little, another agent) calling a department in the chat (@dev, @qa…),
-//   • a Kanban task handed to one of its departments.
-// Everything the session says and does is streamed to the office (its desk monitor).
+// It does two different jobs, and the difference is the whole point:
+//
+//   1. THINKING (cheap).  It asks the office whether 🧠 Tổng quản has a decision to make, and if so
+//      runs a short `claude -p` with no repo access at all — an empty working directory, no tools,
+//      no MCP — that returns one JSON decision. A few seconds, a few thousand tokens.
+//   2. DOING (expensive).  Only work the orchestrator actually put on the board starts a real
+//      department session: `claude -p` in your project, set up with that department's profile
+//      (prompt, model, which files it may edit, which commands it may run).
+//
+// Everything a doing session says and does is streamed to the office (its desk monitor).
 //
 // Options:
 //   --depts dev,qa,ops,design,docs,biz,lead   departments this machine works for (default: all)
@@ -25,6 +27,7 @@
 //   --approvers anyone   let anyone in the office approve (default: only you, the token's owner)
 //   --mode <mode>        force one Claude Code permission mode for every session
 //   --claude claude      the Claude Code command
+//   --no-brain           do not serve the orchestrator's decisions from this machine (another one does)
 //   --once               run one round, wait for the sessions, exit (for testing)
 const fs = require('fs');
 const os = require('os');
@@ -70,6 +73,7 @@ const OWNER_ALLOW = String(opt.allow || '').split(',').map((s) => s.trim()).filt
 const TRUST = !!opt['trust-profiles'];
 const CLAUDE = String(opt.claude || 'claude');
 const APPROVERS = opt.approvers === 'anyone' ? 'anyone' : 'owner';
+const BRAIN = !opt['no-brain'];
 const home = path.join(os.homedir(), '.office-agent');
 const logs = path.join(home, 'logs');
 fs.mkdirSync(logs, { recursive: true });
@@ -114,9 +118,10 @@ function flagsFor(profile) {
     profile.prompt || '',
     '',
     '## Quy tắc chung',
-    '- Trao đổi với đồng nghiệp bằng mcp__office__chat_send, gọi @Tên hoặc @phòng; chờ trả lời bằng mcp__office__chat_wait.',
-    '- Nhắn tin và phát biểu như người với người: tiếng Việt tự nhiên, 1–3 câu, không markdown, không dán log/mã lỗi dài (để chi tiết trong note của việc). Ví dụ: "Mình sửa xong lỗi giỏ hàng rồi, @QA-1 kiểm tra giúp mình phần mã giảm giá nhé."',
-    '- Phần việc của phòng khác → mcp__office__handoff, ghi rõ đã làm gì, còn gì, file nào.',
+    '- Mỗi việc có một luồng trao đổi riêng: mcp__office__chat_send để báo tiến độ/kết quả, mcp__office__ask_human khi thật sự cần người giao việc quyết. Đồng nghiệp đang làm cùng việc đó nghe được bạn (mcp__office__chat_wait để nghe họ), người giao việc đọc được cả luồng.',
+    '- Nhắn như người với người: tiếng Việt tự nhiên, 1–3 câu, không markdown, không dán log/mã lỗi dài (để chi tiết trong note của việc). Ví dụ: "Mình sửa xong lỗi giỏ hàng rồi, phần mã giảm giá mình để QA kiểm lại nhé."',
+    '- Hỏi ít, hỏi đúng: chỉ hỏi thứ mà đoán sai là phải làm lại. Còn lại tự quyết và ghi giả định vào note.',
+    '- Phần việc của phòng khác → mcp__office__handoff, ghi rõ đã làm gì, còn gì, file nào. Việc phân công chung do 🧠 Tổng quản lo, bạn không cần gọi phòng khác.',
     '- Không làm việc phá huỷ hoặc ra bên ngoài (deploy, push, xoá dữ liệu, gửi email…) nếu việc không ghi rõ yêu cầu.',
     '- Xong việc: mcp__office__debrief (làm gì, lỗi gì, cách xử lý, bài học; không ghi mật khẩu/token).',
   ].join('\n');
@@ -134,19 +139,8 @@ function promptFor(job, agent) {
       t.desc ? `\n${t.desc}` : '',
       '',
       agent.dept === 'lead'
-        ? `Việc này chưa rõ phòng nào làm: tự phân loại. Đọc bối cảnh (code, tài liệu, chat) nếu cần, rồi giao từng phần cho đúng phòng bằng mcp__office__handoff (theo kỹ năng "chia-viec"); cần bàn chung thì mcp__office__meeting_call. Xong: mcp__office__task_update id="${t.short}" col="done" kèm note kế hoạch (ai làm gì).`
-        : `Mở kỹ năng phù hợp (mcp__office__skill) rồi làm trong thư mục hiện tại. Xong: mcp__office__task_update id="${t.short}" col="review" (hoặc "done" nếu chắc chắn không cần duyệt) kèm note kết quả. Không làm được: col="todo" và note lý do.`,
-    ].join('\n');
-  }
-  if (job.kind === 'mention') {
-    const m = job.mention;
-    return [
-      who,
-      `${m.name} nhắn cho phòng ${NAMES[agent.dept]}: "${m.text}"`,
-      '',
-      agent.dept === 'lead'
-        ? 'Tự phân loại: việc này của phòng nào? Giao bằng mcp__office__handoff cho đúng phòng (chia nhỏ nếu nhiều phòng; cần bàn chung thì mcp__office__meeting_call), rồi mcp__office__chat_send báo người hỏi (gọi @tên): ai sẽ làm gì. Câu hỏi đơn giản thì trả lời luôn.'
-        : 'Xem thêm bối cảnh bằng mcp__office__chat_read nếu cần, trả lời bằng mcp__office__chat_send (gọi @tên người hỏi). Yêu cầu công việc rõ ràng và vừa sức một phiên thì làm luôn rồi báo lại; việc lớn thì tạo việc bằng mcp__office__handoff cho phòng phù hợp.',
+        ? `Đọc bối cảnh (code, tài liệu) nếu cần, rồi giao từng phần cho đúng phòng bằng mcp__office__handoff. Xong: mcp__office__task_update id="${t.short}" col="done" kèm note kế hoạch (ai làm gì).`
+        : `Mở kỹ năng phù hợp (mcp__office__skill) rồi làm trong thư mục hiện tại. Thiếu một thông tin mà đoán sai thì hỏng cả việc: mcp__office__ask_human một câu duy nhất; chi tiết nhỏ thì tự quyết và ghi giả định vào note. Xong: mcp__office__task_update id="${t.short}" col="review" (hoặc "done" nếu chắc chắn không cần duyệt) kèm note kết quả. Không làm được: col="todo" và note lý do.`,
     ].join('\n');
   }
   if (job.kind === 'meeting') {
@@ -187,7 +181,9 @@ function toolLine(name, input = {}) {
       case 'chat_read':
         return { icon: '💬', text: 'Đọc tin nhắn mới' };
       case 'chat_wait':
-        return { icon: '⏳', text: 'Đang chờ đồng nghiệp trả lời' };
+        return { icon: '⏳', text: 'Đang chờ trả lời' };
+      case 'ask_human':
+        return { icon: '🙋', text: input.question ? `Hỏi lại: “${clip(input.question, 110)}”` : 'Hỏi lại người giao việc' };
       case 'skill':
         return { icon: '📘', text: input.name ? `Xem lại quy trình “${clip(input.name, 40)}”` : 'Xem các quy trình của phòng' };
       case 'tasks':
@@ -365,8 +361,75 @@ function start(job, agent, profile) {
     log(`❌ không chạy được "${CLAUDE}": ${e.message}`);
     void finish(127);
   });
-  const what = job.kind === 'task' ? job.task.title : job.kind === 'mention' ? `trả lời ${job.mention.name}` : job.kind === 'meeting' ? `${job.meeting.chair ? 'chủ trì' : 'họp'}: ${job.meeting.topic}` : 'đúc rút kinh nghiệm';
+  const what = job.kind === 'task' ? job.task.title : job.kind === 'meeting' ? `${job.meeting.chair ? 'chủ trì' : 'họp'}: ${job.meeting.topic}` : 'đúc rút kinh nghiệm';
   log(`▶️  ${agent.name} (${NAMES[agent.dept]}) ${what}  [${f.mode}${f.bash.length ? `, lệnh: ${f.bash.join(' ')}` : ''}${profile?.model && profile.model !== 'default' ? `, ${profile.model}` : ''}]`);
+}
+
+// ---------------------------------------------------------------- the orchestrator's thinking
+let thinking = false;
+
+// One empty directory, reused for every decision. Empty on purpose — no project files, no CLAUDE.md,
+// nothing to read or change — and the SAME one every time, so Claude Code's own prompt prefix stays
+// byte-identical and gets served from cache. A fresh temp dir each time costs about twice as much.
+const brainDir = path.join(home, 'brain');
+fs.mkdirSync(brainDir, { recursive: true });
+fs.writeFileSync(path.join(brainDir, 'settings.json'), '{}');
+
+/** One decision: a short prompt, no repo, no tools. Returns what the model printed. */
+function think(job) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-p',
+      '--model',
+      job.model,
+      '--output-format',
+      'json',
+      '--settings',
+      path.join(brainDir, 'settings.json'),
+      '--strict-mcp-config',
+      '--mcp-config',
+      '{"mcpServers":{}}',
+      '--disallowed-tools',
+      'Bash,Edit,Write,MultiEdit,NotebookEdit,Read,Glob,Grep,WebFetch,WebSearch,Task,TodoWrite',
+      '--system-prompt',
+      job.system,
+    ];
+    const child = spawn(CLAUDE, args, { cwd: brainDir, env: { ...process.env, OFFICE_RUNNER: '1' }, stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32' });
+    let out = '';
+    let err = '';
+    const done = (fn, v) => fn(v);
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', (e) => done(reject, e));
+    child.on('exit', (code) => {
+      if (code !== 0) return done(reject, new Error(`claude thoát mã ${code}: ${clip(err, 200)}`));
+      try {
+        const m = JSON.parse(out);
+        done(resolve, typeof m.result === 'string' ? m.result : out);
+      } catch {
+        done(resolve, out); // the office parses it either way
+      }
+    });
+    child.stdin.end(job.prompt);
+    setTimeout(() => child.kill('SIGTERM'), 120_000);
+  });
+}
+
+async function brainRound() {
+  if (!BRAIN || thinking) return;
+  const { job } = await api('/api/agents/brain');
+  if (!job) return;
+  thinking = true;
+  const started = Date.now();
+  try {
+    const raw = await think(job);
+    const res = await api('/api/agents/brain', { id: job.id, raw });
+    log(`🧠 quyết định xong sau ${((Date.now() - started) / 1000).toFixed(1)}s${res && res.ok === false ? ` — office: ${res.error}` : ''}`);
+  } catch (e) {
+    log('🧠 ⚠️ ', e.message);
+  } finally {
+    thinking = false;
+  }
 }
 
 const busyIn = (dept) => [...running.values()].filter((r) => r.dept === dept && !r.meeting).length;
@@ -377,14 +440,13 @@ async function round() {
   const queue = [];
   for (const m of jobs.meetings || []) queue.push({ kind: 'meeting', id: m.id, dept: m.dept, meeting: true });
   if (jobs.distill) queue.push({ kind: 'distill', dept: 'lead' });
-  for (const m of jobs.mentions) queue.push({ kind: 'mention', id: m.id, dept: m.dept });
   for (const t of jobs.tasks) queue.push({ kind: 'task', id: t.id, dept: t.dept });
   for (const j of queue) {
     if (running.size >= MAX) break;
     if (!j.meeting && busyIn(j.dept) >= PER_DEPT) continue;
     const r = await api('/api/agents/claim', { kind: j.kind, id: j.id, dept: j.dept, approvers: APPROVERS });
     if (!r.ok) continue;
-    start({ kind: j.kind, task: r.task, mention: r.mention, meeting: r.meeting }, r.agent, r.profile);
+    start({ kind: j.kind, task: r.task, meeting: r.meeting }, r.agent, r.profile);
   }
 }
 
@@ -393,14 +455,17 @@ async function main() {
   log(`   phòng ban: ${depts.map((d) => NAMES[d]).join(', ')} · tối đa ${MAX} phiên · thư mục ${workdir}`);
   log(`   tự cho phép: ${TRUST ? 'lệnh theo hồ sơ phòng ban (--trust-profiles)' : OWNER_ALLOW.length ? OWNER_ALLOW.join(', ') : 'không lệnh nào (chỉ đọc/sửa file theo hồ sơ)'}`);
   log(`   còn lại: hỏi ${APPROVERS === 'anyone' ? 'bất kỳ ai' : 'bạn'} trong Office (thẻ 🔐 chờ duyệt)`);
+  log(`   🧠 Tổng quản: ${BRAIN ? 'máy này phục vụ các quyết định điều phối' : 'tắt (--no-brain)'}`);
   for (;;) {
+    // thinking first: a decision is what puts work on the board in the first place
+    await brainRound().catch((e) => log('🧠 ⚠️ ', e.message));
     try {
       await round();
     } catch (e) {
       log('⚠️ ', e.message);
     }
     if (opt.once) break;
-    await new Promise((r) => setTimeout(r, 12_000));
+    await new Promise((r) => setTimeout(r, thinking ? 3_000 : 8_000));
   }
   if (opt.once) {
     while (running.size) await new Promise((r) => setTimeout(r, 500));

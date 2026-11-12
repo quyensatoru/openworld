@@ -95,7 +95,7 @@ export class DeptSigns {
     g.font = '600 26px Inter, system-ui, sans-serif';
     if (!c.here) {
       g.fillStyle = '#9aa3ad';
-      g.fillText('🤖 chưa có nhân viên ảo', 156, 104);
+      g.fillText('🤖 chưa có nhân viên văn phòng', 156, 104);
     } else {
       g.fillStyle = c.working ? '#23895a' : '#6b7282';
       if (c.working) {
@@ -103,7 +103,7 @@ export class DeptSigns {
         g.arc(166, 104, 8, 0, Math.PI * 2);
         g.fill();
       }
-      g.fillText(`${c.working ? `${c.working} đang làm · ` : ''}${c.here} nhân viên ảo`, c.working ? 184 : 156, 104);
+      g.fillText(`${c.working ? `${c.working} đang làm · ` : ''}${c.here} nhân viên văn phòng`, c.working ? 184 : 156, 104);
     }
     s.tex.needsUpdate = true;
   }

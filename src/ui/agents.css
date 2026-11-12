@@ -653,3 +653,137 @@
   padding: 1px 5px;
   border-radius: 5px;
 }
+
+/* ------------------------------------------------------------------ 🧠 Tổng quản */
+.ag-brain {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ag-brain h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.br-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(181, 111, 208, 0.08);
+  border: 1px solid rgba(181, 111, 208, 0.22);
+}
+.br-head small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  opacity: 0.75;
+}
+.br-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex: none;
+  background: #9aa1ae;
+}
+.br-head.on .br-dot {
+  background: #3fb27f;
+  box-shadow: 0 0 0 4px rgba(63, 178, 127, 0.18);
+}
+.br-bar {
+  height: 8px;
+  border-radius: 99px;
+  background: rgba(45, 49, 66, 0.1);
+  overflow: hidden;
+}
+.br-bar i {
+  display: block;
+  height: 100%;
+  background: #6b8cff;
+  transition: width 0.3s ease;
+}
+.br-bar i.hot {
+  background: #e5566b;
+}
+.br-cfg {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.br-cfg label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13.5px;
+}
+.br-cfg label .input {
+  width: 240px;
+  max-width: 55%;
+}
+.br-cfg label.br-check {
+  justify-content: flex-start;
+}
+.br-item,
+.br-log {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(45, 49, 66, 0.045);
+  margin-bottom: 8px;
+}
+.br-item.asked {
+  background: rgba(240, 163, 94, 0.12);
+}
+.br-item.thinking {
+  background: rgba(181, 111, 208, 0.12);
+}
+.br-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+.br-row time {
+  margin-left: auto;
+  opacity: 0.55;
+  font-size: 11.5px;
+}
+.br-tag,
+.br-act {
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: rgba(45, 49, 66, 0.08);
+  font-size: 11.5px;
+}
+.br-text {
+  margin: 5px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.br-ask,
+.br-reply {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+.br-depts {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+  flex-wrap: wrap;
+}
+.br-depts span {
+  font-size: 11.5px;
+  padding: 1px 8px;
+  border-radius: 99px;
+  color: var(--c);
+  border: 1px solid currentColor;
+}
+.btn.tiny {
+  padding: 2px 9px;
+  font-size: 11.5px;
+}

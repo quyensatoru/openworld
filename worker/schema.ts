@@ -1,5 +1,5 @@
 // Keep in sync with migrations/0001_init.sql. Applied idempotently by the Durable Object on first use.
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 7;
 export const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL, desk TEXT, last_seen INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, descr TEXT NOT NULL DEFAULT '', col TEXT NOT NULL, ord REAL NOT NULL, assignee TEXT, priority TEXT NOT NULL DEFAULT 'normal', created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER)`,
@@ -18,4 +18,12 @@ export const SCHEMA_STATEMENTS = [
 ];
 
 /** Columns added to existing tables; each fails harmlessly once the column exists. */
-export const SCHEMA_ALTERS = [`ALTER TABLE tasks ADD COLUMN dept TEXT`, `ALTER TABLE tasks ADD COLUMN hops INTEGER NOT NULL DEFAULT 0`];
+export const SCHEMA_ALTERS = [
+  `ALTER TABLE chat_messages ADD COLUMN root TEXT`,
+  `ALTER TABLE tasks ADD COLUMN dept TEXT`,
+  `ALTER TABLE tasks ADD COLUMN hops INTEGER NOT NULL DEFAULT 0`,
+  // task ids this one waits for, comma separated — the orchestrator's parallel plans
+  `ALTER TABLE tasks ADD COLUMN after_ids TEXT`,
+  // the chat thread this work is discussed in
+  `ALTER TABLE tasks ADD COLUMN thread_id TEXT`,
+];

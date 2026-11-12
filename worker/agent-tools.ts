@@ -7,6 +7,9 @@ const me = { me: { type: 'string', description: 'Mã agent của bạn (ag-…),
 const deptEnum = DEPTS.map((d) => d.id);
 const deptHelp = 'lead = Ban điều hành, dev = Phát triển, qa = Kiểm thử, ops = Vận hành, design = Thiết kế, docs = Tài liệu, biz = Kinh doanh & CSKH';
 
+/** Tools only offered when the office allows agents to meet (they cost one session per seat). */
+export const MEETING_TOOLS = ['meeting_call', 'meeting_wait', 'meeting_say', 'meeting_end'];
+
 export const TOOLS: { name: string; description: string; inputSchema: Json }[] = [
   {
     name: 'permission',
@@ -16,17 +19,23 @@ export const TOOLS: { name: string; description: string; inputSchema: Json }[] =
   {
     name: 'chat_send',
     description:
-      'Nhắn tin cho đồng nghiệp. Mặc định là kênh "Khu làm việc" (trao đổi công việc); channel="global" để nói với cả công ty. Gọi đồng nghiệp đang có mặt bằng @Tên (vd @QA-1, @Claude-An), gọi cả phòng bằng @dev / @qa / @ops / @design / @docs / @biz / @lead (máy trực sẽ cử người nếu phòng đó chưa có ai). Viết như đồng nghiệp nói chuyện: tiếng Việt tự nhiên, 1–3 câu, không markdown, không dán log hay mã việc dài; nói rõ mình cần gì từ ai.',
-    inputSchema: { type: 'object', properties: { ...me, text: { type: 'string' }, channel: { type: 'string', enum: ['work', 'global'] } }, required: ['text'] },
+      'Nhắn cho người đã giao việc này, trong luồng riêng của họ (mỗi người một luồng, không lẫn vào nhau). Dùng để báo tiến độ, báo kết quả, nói rõ bạn đã làm gì. Viết như đồng nghiệp nói chuyện: tiếng Việt tự nhiên, 1–3 câu, không markdown, không dán log.',
+    inputSchema: { type: 'object', properties: { ...me, text: { type: 'string' } }, required: ['text'] },
   },
   {
     name: 'chat_read',
-    description: 'Đọc tin nhắn mới (Khu làm việc + cả văn phòng) kể từ lần đọc trước.',
+    description: 'Đọc tin nhắn mới trong luồng của người giao việc (và các tin chung của văn phòng), kể từ lần đọc trước.',
     inputSchema: { type: 'object', properties: { ...me, limit: { type: 'number', description: 'tối đa bao nhiêu tin (mặc định 20)' } } },
   },
   {
+    name: 'ask_human',
+    description:
+      'Hỏi người đã giao việc MỘT câu rồi chờ trả lời. Chỉ hỏi thứ đáng hỏi: nếu đoán sai thì cả việc thành vô ích hoặc phải làm lại. Chi tiết nhỏ thì tự quyết và ghi giả định vào note của việc, đừng hỏi. Không ai trả lời trong `seconds` giây thì trả về rỗng — khi đó cứ chọn phương án hợp lý nhất và ghi rõ bạn đã chọn gì.',
+    inputSchema: { type: 'object', properties: { ...me, question: { type: 'string' }, seconds: { type: 'number', description: '10–120, mặc định 90' } }, required: ['question'] },
+  },
+  {
     name: 'chat_wait',
-    description: 'Chờ tới khi có tin nhắn gọi tên bạn hoặc phòng bạn (vd câu trả lời cho câu bạn vừa hỏi). Trả về ngay khi có, hoặc sau tối đa `seconds` giây.',
+    description: 'Chờ tới khi có tin nhắn mới gửi cho bạn. Trả về ngay khi có, hoặc sau tối đa `seconds` giây.',
     inputSchema: { type: 'object', properties: { ...me, seconds: { type: 'number', description: '5–50, mặc định 40' } } },
   },
   {
@@ -60,7 +69,8 @@ export const TOOLS: { name: string; description: string; inputSchema: Json }[] =
   },
   {
     name: 'handoff',
-    description: 'Bàn giao một phần việc cho phòng ban khác: tạo việc mới trên Kanban cho phòng đó (agent của phòng đó sẽ nhận). Ghi rõ bối cảnh, đã làm gì, cần làm gì, file liên quan.',
+    description:
+      'Bàn giao phần việc KHÔNG thuộc phòng bạn cho phòng ban khác: tạo việc mới trên Kanban cho phòng đó. Ghi rõ bối cảnh, đã làm gì, cần làm gì, file liên quan. Thường gặp: dev làm xong phần dễ hồi quy → qa; qa thấy lỗi → dev (kèm wait=true rồi trả việc về todo); đã kiểm đạt mà cần lên production → ops; cần README/changelog → docs; cần quyết giao diện → design; yêu cầu còn mơ hồ phải hỏi khách → biz. Đừng bàn giao phần bạn tự làm được — mỗi lần bàn giao là một phiên mới, tốn thời gian và chi phí của văn phòng.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -70,6 +80,10 @@ export const TOOLS: { name: string; description: string; inputSchema: Json }[] =
         details: { type: 'string' },
         priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] },
         from_task: { type: 'string', description: 'mã việc đang làm dẫn tới bàn giao này (nếu có)' },
+        wait: {
+          type: 'boolean',
+          description: 'việc đang làm phải chờ kết quả việc này (ví dụ QA trả lỗi về Phát triển rồi kiểm lại). Việc của bạn sẽ nằm yên trên bảng tới khi bên kia xong, rồi tự chạy tiếp — nhờ vậy không ai nhận lại nó để làm lại đúng việc cũ.',
+        },
       },
       required: ['dept', 'title', 'details'],
     },
@@ -77,7 +91,7 @@ export const TOOLS: { name: string; description: string; inputSchema: Json }[] =
   {
     name: 'meeting_call',
     description:
-      'Gọi họp với các phòng ban (mỗi phòng cử một người tới). Bạn chủ trì: meeting_say để nói, meeting_wait để nghe, meeting_end để chốt và tạo việc. Chỉ họp khi thật sự cần nhiều phòng cùng quyết.',
+      'Gọi họp với các phòng ban (mỗi phòng cử một người tới). Rất tốn kém — mỗi ghế là một phiên chạy song song. Chỉ dùng khi nhiều phòng phải cùng quyết một việc mà bàn giao qua Kanban không giải quyết được. Tổng quản thường đã chia việc sẵn, nên hầu như không cần họp.',
     inputSchema: {
       type: 'object',
       properties: {

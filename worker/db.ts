@@ -101,6 +101,8 @@ interface TaskRow {
   done_at: number | null;
   dept?: string | null;
   hops?: number | null;
+  after_ids?: string | null;
+  thread_id?: string | null;
 }
 
 const rowToTask = (r: TaskRow): Task => ({
@@ -117,6 +119,8 @@ const rowToTask = (r: TaskRow): Task => ({
   doneAt: r.done_at,
   dept: isDept(r.dept) ? r.dept : null,
   hops: r.hops ?? 0,
+  after: r.after_ids ? r.after_ids.split(',').filter(Boolean) : undefined,
+  thread: r.thread_id ?? undefined,
 });
 
 /** Active tasks + tasks finished in the last 14 days. */
@@ -131,12 +135,12 @@ export async function loadTasks(db: D1Database, now: number): Promise<Task[]> {
 export async function saveTask(db: D1Database, t: Task): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO tasks (id, title, descr, col, ord, assignee, priority, created_by, created_at, updated_at, done_at, dept, hops)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+      `INSERT INTO tasks (id, title, descr, col, ord, assignee, priority, created_by, created_at, updated_at, done_at, dept, hops, after_ids, thread_id)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
        ON CONFLICT(id) DO UPDATE SET title = ?2, descr = ?3, col = ?4, ord = ?5, assignee = ?6, priority = ?7,
-         updated_at = ?10, done_at = ?11, dept = ?12, hops = ?13`,
+         updated_at = ?10, done_at = ?11, dept = ?12, hops = ?13, after_ids = ?14, thread_id = ?15`,
     )
-    .bind(t.id, t.title, t.desc, t.col, t.ord, t.assignee, t.priority, t.createdBy, t.createdAt, t.updatedAt, t.doneAt, t.dept ?? null, t.hops ?? 0)
+    .bind(t.id, t.title, t.desc, t.col, t.ord, t.assignee, t.priority, t.createdBy, t.createdAt, t.updatedAt, t.doneAt, t.dept ?? null, t.hops ?? 0, t.after?.length ? t.after.join(',') : null, t.thread ?? null)
     .run();
 }
 
@@ -147,16 +151,16 @@ export async function deleteTask(db: D1Database, id: string): Promise<void> {
 // ---------------------------------------------------------------- chat
 export async function recentChat(db: D1Database, limit = 80): Promise<ChatMsg[]> {
   const { results } = await db
-    .prepare('SELECT id, ch, sender, name, text, ts FROM chat_messages ORDER BY ts DESC LIMIT ?')
+    .prepare('SELECT id, ch, sender, name, text, ts, root FROM chat_messages ORDER BY ts DESC LIMIT ?')
     .bind(limit)
-    .all<{ id: string; ch: string; sender: string; name: string; text: string; ts: number }>();
-  return results.reverse().map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts }));
+    .all<{ id: string; ch: string; sender: string; name: string; text: string; ts: number; root: string | null }>();
+  return results.reverse().map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}) }));
 }
 
 export async function insertChat(db: D1Database, m: ChatMsg): Promise<void> {
   await db
-    .prepare('INSERT INTO chat_messages (id, ch, sender, name, text, ts) VALUES (?, ?, ?, ?, ?, ?)')
-    .bind(m.id, m.ch, m.from, m.name, m.text, m.ts)
+    .prepare('INSERT INTO chat_messages (id, ch, sender, name, text, ts, root) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(m.id, m.ch, m.from, m.name, m.text, m.ts, m.root ?? null)
     .run();
 }
 
