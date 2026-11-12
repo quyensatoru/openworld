@@ -163,6 +163,7 @@ export class OfficeRoom extends DurableObject<Env> {
       if (c) this.send(c.ws, msg);
     },
     seatTaken: (seatId) => [...this.conns.values()].some((c) => c.p.seat === seatId),
+    people: () => [...this.conns.values()].map((c) => c.p),
     getTasks: () => this.getTasks(),
     saveTask: async (task, by) => {
       (await this.getTasks()).set(task.id, task);
@@ -776,6 +777,7 @@ export class OfficeRoom extends DurableObject<Env> {
       activity,
       meetings: this.agents.meetingsView(),
       approvals: this.agents.approvalsView(),
+      access: await this.agents.accessReady(),
     });
     this.broadcast({ t: 'join', p }, id);
     this.wolf.rejoin(id);
@@ -1026,6 +1028,7 @@ export class OfficeRoom extends DurableObject<Env> {
       case 'activity:revoke': {
         await db.replaceActivityToken(this.env.DB, p.id, null, Date.now());
         this.send(c.ws, { t: 'activityToken', token: null });
+        await this.agents.dropOwner(p.id);
         return;
       }
 
@@ -1053,6 +1056,7 @@ export class OfficeRoom extends DurableObject<Env> {
           hops: 0,
         };
         tasks.set(task.id, task);
+        this.agents.taskTouched(task, p.id);
         this.broadcast({ t: 'task', task, by: p.id });
         await db.saveTask(this.env.DB, task);
         return;
@@ -1071,6 +1075,8 @@ export class OfficeRoom extends DurableObject<Env> {
           task.dept = isDept(patch.dept) ? patch.dept : null;
           task.hops = 0; // a person re-routed it: the bounce counter starts again
         }
+        // whoever last wrote or re-routed it answers for it (a runner takes it only if it trusts them)
+        if (patch.title !== undefined || patch.desc !== undefined || patch.dept !== undefined) this.agents.taskTouched(task, p.id);
         task.updatedAt = Date.now();
         this.broadcast({ t: 'task', task, by: p.id });
         await db.saveTask(this.env.DB, task);
@@ -1084,6 +1090,8 @@ export class OfficeRoom extends DurableObject<Env> {
         if (!task || !COL_IDS.has(msg.col) || !Number.isFinite(ord)) return;
         const wasDone = task.col === 'done';
         const now = Date.now();
+        // putting a department's task back in To do sets the runners going again: on this person's word
+        if (msg.col === 'todo' && task.col !== 'todo' && task.dept) this.agents.taskTouched({ ...task, col: 'todo', assignee: null }, p.id);
         task.col = msg.col;
         task.ord = ord;
         task.updatedAt = now;

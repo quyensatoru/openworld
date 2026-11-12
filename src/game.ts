@@ -648,14 +648,14 @@ class Game {
       if (p) toast(`${p.name} đã rời văn phòng`);
       this.updateTvs();
     });
-    net.on('upd', ({ id, patch }) => {
+    net.on('upd', ({ id, patch, walk }) => {
       const s = getState();
       if (s.me?.id === id) {
         setState({ me: { ...s.me, ...patch } });
       } else if (s.players[id]) {
         setState({ players: { ...s.players, [id]: { ...s.players[id], ...patch } } });
       }
-      this.world?.applyPatch(id, patch);
+      this.world?.applyPatch(id, patch, walk);
       if ('status' in patch || 'zone' in patch || 'seat' in patch) this.rtc?.evaluate(id === s.me?.id ? undefined : id);
       if ('media' in patch || 'zone' in patch) this.updateTvs();
       if ('media' in patch) this.syncPeers();
@@ -750,6 +750,7 @@ class Game {
     });
     net.on('activityToken', ({ token }) => setState({ activityToken: token }));
     net.on('agentBook', ({ book }) => setState({ agentBook: book }));
+    net.on('agentAccess', ({ v }) => setState({ agentAccess: v }));
     net.on('approvals', ({ list }) => {
       const s = getState();
       const fresh = list.filter((x) => x.state === 'pending' && (x.owner === s.me?.id || x.anyone) && !s.approvals.some((y) => y.id === x.id));
@@ -810,7 +811,7 @@ class Game {
     setState({ floor: floorOf(m.you.x) });
     for (const p of m.players) world.upsertRemote(p);
     world.setTasks(m.tasks);
-    setState({ activity: m.activity as Record<string, ActivityEvent[]>, meetings: m.meetings ?? [], approvals: m.approvals ?? [] });
+    setState({ activity: m.activity as Record<string, ActivityEvent[]>, meetings: m.meetings ?? [], approvals: m.approvals ?? [], agentAccess: m.access ?? null });
     this.applyCinema(m.cinema, '', 'welcome');
     this.applyJukebox(m.jukebox ?? null, '', 'welcome');
     if (m.kara) this.applyKara(m.kara);

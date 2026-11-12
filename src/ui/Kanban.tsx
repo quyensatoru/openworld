@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { DEPTS, DEPT_BY_ID, isDept, mentionedDepts, type DeptId } from '../../shared/agents';
+import { DEPTS, DEPT_BY_ID, canAssign, isDept, mentionedDepts, type DeptId } from '../../shared/agents';
 import { COLUMNS, PRIORITY_META, type Priority, type Task, type TaskColumn } from '../../shared/protocol';
 import { game } from '../game';
 import { getState, nameOf, setState, useStore } from '../store';
@@ -270,6 +270,11 @@ function TaskEditor({ task, onClose }: { task: Task; onClose: () => void }) {
             </option>
           ))}
         </select>
+        {!canAssign(getState().agentAccess, getState().me?.id ?? '') && (
+          <span className="muted" style={{ display: 'block', marginTop: 4, fontWeight: 400, fontSize: 12 }}>
+            ⛔ Bạn chưa được giao việc cho nhân viên AI — việc vẫn lên bảng nhưng máy trực không tự nhận. Xem 🧠 → Quyền giao việc.
+          </span>
+        )}
       </label>
       <label style={{ fontSize: 13, fontWeight: 600 }}>
         Cột

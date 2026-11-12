@@ -1,7 +1,7 @@
 // The virtual employees' head office (the library on floor 1): who is working in which department,
 // the company playbook distilled from their sessions, and how to connect a machine.
 import { useEffect, useMemo, useState } from 'react';
-import { AGENT_MODELS, DEPTS, DEPT_BY_ID, MEET_ROOMS, isDept, type AgentModel, type DeptId, type DeptProfile, type DeptSkill, type Lesson, type Meeting } from '../../shared/agents';
+import { AGENT_MODELS, DEPTS, DEPT_BY_ID, MEET_ROOMS, canAssign, isDept, type AgentModel, type DeptId, type DeptProfile, type DeptSkill, type Lesson, type Meeting } from '../../shared/agents';
 import type { PlayerState, Task } from '../../shared/protocol';
 import { game } from '../game';
 import { serverNow, setState, useStore } from '../store';
@@ -31,7 +31,7 @@ export function AgentsPanel() {
   const close = () => setState({ agentsOpen: false });
   const working = agents.filter((a) => a.agent!.state === 'working').length;
   const waiting = Object.values(tasks).filter((t) => t.dept && t.col === 'todo' && !t.assignee).length;
-  const set = (agentsTab: 'depts' | 'book' | 'profiles' | 'connect') => setState({ agentsTab });
+  const set = (agentsTab: 'depts' | 'book' | 'profiles' | 'access' | 'connect') => setState({ agentsTab });
 
   return (
     <div className="modal-bg" onClick={close}>
@@ -68,6 +68,9 @@ export function AgentsPanel() {
           <button className={tab === 'profiles' ? 'on' : ''} onClick={() => set('profiles')}>
             📋 Hồ sơ phòng ban
           </button>
+          <button className={tab === 'access' ? 'on' : ''} onClick={() => set('access')}>
+            🔑 Quyền giao việc
+          </button>
           <button className={tab === 'connect' ? 'on' : ''} onClick={() => set('connect')}>
             🔌 Kết nối
           </button>
@@ -76,6 +79,7 @@ export function AgentsPanel() {
           {tab === 'depts' && <Depts agents={agents} tasks={Object.values(tasks)} />}
           {tab === 'book' && <Book />}
           {tab === 'profiles' && <Profiles />}
+          {tab === 'access' && <Access />}
           {tab === 'connect' && <Connect />}
         </div>
       </div>
@@ -543,12 +547,129 @@ function Connect() {
             Mỗi phiên dùng <b>hồ sơ của phòng</b> (tab 📋): prompt, model, được sửa file nào. Lệnh terminal chỉ được chạy khi hồ sơ phòng xin <b>và</b> bạn cho phép trong <code>--allow</code> (hoặc thêm <code>--trust-profiles</code> để tin hồ sơ).
           </li>
           <li>Mọi điều Claude nói và mọi công cụ nó dùng được stream lên màn hình bàn của agent đó; log đầy đủ nằm trên máy trực.</li>
-          <li>Ai trong Office cũng giao việc được cho máy trực (qua chat/Kanban) — chỉ trỏ <code>--dir</code> vào dự án bạn chấp nhận cho agent đụng vào.</li>
+          <li>
+            Mặc định máy trực <b>chỉ nhận việc từ bạn</b>. Muốn đồng nghiệp giao việc được thì chọn họ ở tab 🔑 Quyền giao việc. Chỉ trỏ <code>--dir</code> vào dự án bạn chấp nhận cho agent đụng vào.
+          </li>
           <li>
             Việc chuyền tay quá 6 lần sẽ dừng lại chờ người duyệt. Log từng phiên ở <code>~/.office-agent/logs</code>. Ctrl+C để dừng — việc dở được trả về Kanban.
           </li>
         </ul>
       </section>
+    </div>
+  );
+}
+
+type AccessMode = 'me' | 'some' | 'all';
+
+/** 🔑 Who may give work to the AI: each runner owner picks, for their own machine. */
+function Access() {
+  const me = useStore((s) => s.me?.id ?? '');
+  const acc = useStore((s) => s.agentAccess);
+  const team = useStore((s) => s.team);
+  const mine = acc?.owners.find((o) => o.id === me);
+  const others = acc?.owners.filter((o) => o.id !== me) ?? [];
+  const [mode, setMode] = useState<AccessMode>(mine ? (mine.all ? 'all' : mine.users.length ? 'some' : 'me') : 'me');
+  const [q, setQ] = useState('');
+  const people = useMemo(
+    () =>
+      Object.values(team)
+        .filter((m) => m.id !== me && !m.id.startsWith('ag-'))
+        .sort((a, b) => a.name.localeCompare(b.name, 'vi')),
+    [team, me],
+  );
+  const nameOf = (id: string) => team[id]?.name ?? 'một người đã rời';
+  const save = (all: boolean, users: string[]) => game.agents({ a: 'access', all, users });
+  const pick = (m: AccessMode) => {
+    setMode(m);
+    if (!mine) return;
+    if (m === 'all') save(true, mine.users);
+    else if (m === 'me') save(false, []);
+    else save(false, mine.users);
+  };
+  const toggle = (id: string) => {
+    if (!mine) return;
+    save(false, mine.users.includes(id) ? mine.users.filter((u) => u !== id) : [...mine.users, id]);
+  };
+  const ok = canAssign(acc, me);
+  const via = acc?.owners.filter((o) => o.id === me || o.all || o.users.includes(me)) ?? [];
+  const shown = people.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()));
+  const policy = (o: { id: string; name: string; all: boolean; users: string[] }) =>
+    o.all ? 'mọi người trong văn phòng' : o.users.length ? `${o.name || 'chủ máy'} và ${o.users.length} người được chọn` : `chỉ ${o.name || 'chủ máy'}`;
+
+  return (
+    <div className="ag-access">
+      <section className={`ag-me ${ok ? 'yes' : 'no'}`}>
+        {ok ? (
+          <>
+            ✅ Bạn giao việc được cho nhân viên AI — qua máy trực của <b>{via.map((o) => (o.id === me ? 'bạn' : o.name)).join(', ')}</b>.
+          </>
+        ) : acc?.owners.length ? (
+          <>
+            ⛔ Bạn chưa giao việc được cho nhân viên AI. Nhờ <b>{acc.owners.map((o) => o.name).join(' hoặc ')}</b> chọn bạn ở tab này.
+          </>
+        ) : (
+          <>⛔ Văn phòng chưa có máy trực nào chạy, nên chưa ai giao việc cho nhân viên AI được.</>
+        )}
+      </section>
+
+      {mine ? (
+        <section>
+          <h3>Ai được giao việc cho máy trực của bạn</h3>
+          <p className="ag-hint">
+            Tính cả tin <code>@phòng</code> / <code>@ai</code> trong chat, việc gắn phòng ban trên Kanban, lời mời họp, và tin nhắn gọi tên nhân viên đang chạy trên máy bạn. Người không có quyền nhắn thì máy bạn bỏ qua và họ nhận được thông báo.
+          </p>
+          <div className="ag-modes">
+            <label>
+              <input type="radio" checked={mode === 'me'} onChange={() => pick('me')} /> Chỉ mình tôi
+            </label>
+            <label>
+              <input type="radio" checked={mode === 'some'} onChange={() => pick('some')} /> Những người tôi chọn
+            </label>
+            <label>
+              <input type="radio" checked={mode === 'all'} onChange={() => pick('all')} /> Mọi người trong văn phòng
+            </label>
+          </div>
+          {mode === 'some' && (
+            <>
+              <input className="input" placeholder="Tìm người…" value={q} onChange={(e) => setQ(e.target.value)} />
+              <div className="ag-people">
+                {shown.map((p) => (
+                  <label key={p.id} className={mine.users.includes(p.id) ? 'on' : ''}>
+                    <input type="checkbox" checked={mine.users.includes(p.id)} onChange={() => toggle(p.id)} />
+                    <AvatarDot name={p.name} avatar={p.avatar} size={22} />
+                    {p.name}
+                  </label>
+                ))}
+                {!shown.length && <p className="muted">Không có ai khớp.</p>}
+              </div>
+              {mine.users.some((u) => !team[u]) && <p className="muted">Và {mine.users.filter((u) => !team[u]).length} người không còn trong danh sách.</p>}
+            </>
+          )}
+          <ul className="ag-notes">
+            <li>Người được quyền chỉ giao được việc — lệnh ngoài <code>--allow</code> (xuất dữ liệu, gửi file ra ngoài, xoá…) vẫn hiện thẻ 🔐 để <b>bạn</b> duyệt.</li>
+            <li>Sổ kinh nghiệm và hồ sơ phòng ban chỉ người chạy máy trực mới sửa được, vì chúng điều khiển cách các máy làm việc.</li>
+          </ul>
+        </section>
+      ) : (
+        <section>
+          <h3>Máy trực của bạn</h3>
+          <p className="ag-hint">Bạn chưa chạy máy trực nào. Khi chạy (tab 🔌 Kết nối), máy của bạn mặc định chỉ nhận việc từ bạn, và bạn chọn thêm người ở đây.</p>
+        </section>
+      )}
+
+      {!!others.length && (
+        <section>
+          <h3>Các máy trực khác</h3>
+          <ul className="ag-owners">
+            {others.map((o) => (
+              <li key={o.id}>
+                🖥️ <b>{o.name || nameOf(o.id)}</b> — nhận việc từ {policy(o)}
+                {!o.all && o.users.includes(me) ? ' (có bạn)' : ''}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

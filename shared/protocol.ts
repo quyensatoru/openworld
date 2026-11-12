@@ -8,7 +8,7 @@ import type { WedFx, WedMsg, WedState } from './wedding';
 // Every message is JSON with a short `t` (type) field.
 
 import type { AvatarConfig } from './avatar';
-import type { AgentBook, AgentMsg, AgentTag, Approval, DeptId, Meeting } from './agents';
+import type { AgentAccess, AgentBook, AgentMsg, AgentTag, Approval, DeptId, Meeting } from './agents';
 
 export type Status = 'online' | 'working' | 'meeting' | 'break' | 'focus' | 'away';
 export type AnimState = 'idle' | 'walk' | 'run' | 'sit';
@@ -250,10 +250,12 @@ export type ServerMsg =
       activity: Record<string, ActivityEvent[]>;
       meetings?: Meeting[];
       approvals?: Approval[];
+      access?: AgentAccess;
     }
   | { t: 'join'; p: PlayerState }
   | { t: 'leave'; id: string }
-  | { t: 'upd'; id: string; patch: Partial<PlayerState> }
+  /** walk: an agent goes there on foot (each browser finds the way) instead of appearing there */
+  | { t: 'upd'; id: string; patch: Partial<PlayerState>; walk?: boolean }
   | { t: 'mv'; id: string; x: number; z: number; ry: number; anim: AnimState }
   | { t: 'chat'; m: ChatMsg }
   | { t: 'emote'; id: string; e: Emote }
@@ -283,6 +285,7 @@ export type ServerMsg =
   | { t: 'agentBook'; book: AgentBook }
   | { t: 'meetings'; list: Meeting[] }
   | { t: 'approvals'; list: Approval[] }
+  | { t: 'agentAccess'; v: AgentAccess }
   | { t: 'kicked'; reason: string }
   | { t: 'err'; msg: string }
   | { t: 'pong' };

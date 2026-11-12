@@ -1328,7 +1328,9 @@ export class World {
   remoteMove(id: string, x: number, z: number, ry: number, anim: AnimState) {
     const v = this.players.get(id);
     if (!v || v.isMe) return;
-    v.samples.push({ t: performance.now(), x, z, ry, anim });
+    const now = performance.now();
+    if (v.samples.length && v.samples[v.samples.length - 1].t > now) v.samples = v.samples.filter((s) => s.t <= now); // a walk cut short
+    v.samples.push({ t: now, x, z, ry, anim });
     if (v.samples.length > 30) v.samples.splice(0, v.samples.length - 30);
     v.state.x = x;
     v.state.z = z;
@@ -1336,13 +1338,69 @@ export class World {
     v.state.anim = anim;
   }
 
-  applyPatch(id: string, patch: Partial<PlayerState>) {
+  /**
+   * Someone (an agent) goes somewhere on foot: get up, follow the shortest way round the furniture,
+   * then settle (sit down, or stand facing who they came to). Played as timed samples, so it moves
+   * like anyone else; a browser that opens later just sees them already there.
+   */
+  private walkTo(v: PlayerView, x: number, z: number, ry: number, anim: AnimState) {
+    const SPEED = 1.45;
+    const now = performance.now();
+    const far = Math.hypot(x - v.x, z - v.z);
+    const path = far > 0.4 && floorOf(v.x) === floorOf(x) && this.sharesFloor(v.x, v.z) ? this.nav.findPath(v.x, v.z, x, z) : null;
+    if (!path?.length || far > 60) {
+      this.remoteMove(v.id, x, z, ry, anim);
+      return;
+    }
+    const out: Sample[] = [];
+    let t = now;
+    let px = v.x;
+    let pz = v.z;
+    const dir = (ax: number, az: number, bx: number, bz: number, fallback: number) => (Math.hypot(bx - ax, bz - az) > 0.05 ? Math.atan2(bx - ax, bz - az) : fallback);
+    if (v.anim === 'sit') {
+      out.push({ t, x: px, z: pz, ry: v.ry, anim: 'sit' });
+      t += 450;
+    }
+    let heading = dir(px, pz, path[0].x, path[0].z, v.ry);
+    out.push({ t, x: px, z: pz, ry: heading, anim: 'walk' });
+    t += 160;
+    for (const w of [...path, { x, z }]) {
+      const d = Math.hypot(w.x - px, w.z - pz);
+      if (d < 0.05) continue;
+      const nh = dir(px, pz, w.x, w.z, heading);
+      if (Math.abs(Math.atan2(Math.sin(nh - heading), Math.cos(nh - heading))) > 0.35) {
+        out.push({ t, x: px, z: pz, ry: nh, anim: 'walk' }); // turn at the corner
+        t += 160;
+      }
+      heading = nh;
+      t += (d / SPEED) * 1000;
+      out.push({ t, x: w.x, z: w.z, ry: heading, anim: 'walk' });
+      px = w.x;
+      pz = w.z;
+    }
+    t += 250;
+    out.push({ t, x, z, ry, anim: anim === 'sit' ? 'sit' : 'idle' });
+    v.samples = out;
+    v.state.x = x;
+    v.state.z = z;
+    v.state.ry = ry;
+    v.state.anim = anim;
+  }
+
+  applyPatch(id: string, patch: Partial<PlayerState>, walk = false) {
     const v = this.players.get(id);
     if (!v) return;
     const prevSeat = v.state.seat;
+    const was = { x: v.state.x, z: v.state.z };
     Object.assign(v.state, patch);
     if (patch.avatar) this.loadAvatar(v, patch.avatar);
-    if (!v.isMe && patch.x != null && patch.z != null) this.remoteMove(id, patch.x, patch.z, patch.ry ?? v.state.ry, patch.anim ?? v.state.anim);
+    if (!v.isMe && patch.x != null && patch.z != null) {
+      if (walk) {
+        v.state.x = was.x;
+        v.state.z = was.z;
+        this.walkTo(v, patch.x, patch.z, patch.ry ?? v.state.ry, patch.anim ?? v.state.anim);
+      } else this.remoteMove(id, patch.x, patch.z, patch.ry ?? v.state.ry, patch.anim ?? v.state.anim);
+    }
     if (v.isMe && 'seat' in patch && this.controller) {
       // Server refused or cleared our seat.
       if (!patch.seat && this.controller.seat && prevSeat) this.controller.standUp();

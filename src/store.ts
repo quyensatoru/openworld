@@ -1,4 +1,4 @@
-import type { AgentBook, Approval, Meeting } from '../shared/agents';
+import type { AgentAccess, AgentBook, Approval, Meeting } from '../shared/agents';
 import type { CaroGame, SnakeFrame } from '../shared/arcade';
 import type { KaraState, MicFx } from '../shared/karaoke';
 import type { Floor } from '../shared/map';
@@ -66,7 +66,9 @@ export interface OfficeStore {
   kanbanOpen: boolean;
   /** the virtual employees' panel (departments, playbook, how to connect) */
   agentsOpen: boolean;
-  agentsTab: 'depts' | 'book' | 'profiles' | 'connect';
+  agentsTab: 'depts' | 'book' | 'profiles' | 'access' | 'connect';
+  /** who may give work to whose runner */
+  agentAccess: AgentAccess | null;
   agentBook: AgentBook | null;
   creatorOpen: boolean;
   settingsOpen: boolean;
@@ -216,6 +218,7 @@ export const useStore = create<OfficeStore>(() => ({
   kanbanOpen: false,
   agentsOpen: false,
   agentsTab: 'depts',
+  agentAccess: null,
   agentBook: null,
   creatorOpen: false,
   settingsOpen: false,

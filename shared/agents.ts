@@ -242,6 +242,8 @@ export interface Meeting {
   startedAt: number;
   endedAt: number | null;
   summary: string;
+  /** the person on whose behalf it was called (a runner only sends someone if its owner trusts them) */
+  origin?: string;
 }
 
 /** A runner session asks to do something its profile does not allow by itself (a shell command,
@@ -275,7 +277,22 @@ export type AgentMsg =
   | { a: 'profileReset'; dept: DeptId }
   | { a: 'meeting'; topic: string; agenda?: string; depts: DeptId[] }
   | { a: 'meetingEnd'; id: string }
-  | { a: 'approve'; id: string; decision: 'once' | 'session' | 'deny' };
+  | { a: 'approve'; id: string; decision: 'once' | 'session' | 'deny' }
+  | { a: 'access'; all: boolean; users: string[] };
+
+/** Who may give work to whose agents. Every runner owner decides for their own machine; by default
+ *  only they themselves. A person may give work to the AI when at least one owner trusts them. */
+export interface AgentAccess {
+  owners: { id: string; name: string; all: boolean; users: string[] }[];
+}
+
+export function canAssign(acc: AgentAccess | null | undefined, uid: string): boolean {
+  return !!acc?.owners.some((o) => o.id === uid || o.all || o.users.includes(uid));
+}
+
+export function isAgentOwner(acc: AgentAccess | null | undefined, uid: string): boolean {
+  return !!acc?.owners.some((o) => o.id === uid);
+}
 
 /** Server → browser: the playbook, the debriefs waiting to be distilled, the department profiles. */
 export interface AgentBook {
