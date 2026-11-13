@@ -182,6 +182,7 @@ function BrainTab() {
       )}
 
       <Machines />
+      <Rounds />
       <AutoApprovals />
 
       <section>
@@ -276,6 +277,64 @@ function Machines() {
           </div>
         );
       })}
+    </section>
+  );
+}
+
+/** "Vòng cải tiến mới": QA looks for bugs and Biz ranks improvements side by side, Dev does the top
+ *  of both after — one press. Earlier rounds are listed so everyone sees what was already done. */
+function Rounds() {
+  const rounds = useStore((s) => s.brain?.rounds ?? []);
+  const machines = useStore((s) => s.brain?.machines ?? []);
+  const projects = useMemo(() => [...new Set(machines.filter((m) => !m.offline && m.project).map((m) => m.project))].sort(), [machines]);
+  const [project, setProject] = useState('');
+  const [sure, setSure] = useState(false);
+  const pick = projects.includes(project) ? project : (projects[0] ?? '');
+  const running = rounds.find((r) => !r.closed && (!pick || r.project === pick));
+  const day = (ms: number) => new Date(ms).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+  const start = () => {
+    game.agents({ a: 'improve', project: pick });
+    setSure(false);
+  };
+  return (
+    <section className="br-rounds">
+      <h3>🔁 Vòng cải tiến{rounds.length ? ` · ${rounds.length}` : ''}</h3>
+      <p className="ag-hint">Một nút tạo ba việc: 🧪 Kiểm thử rà lỗi và 🤝 Kinh doanh xếp ưu tiên cải tiến chạy song song, 💻 Phát triển làm các mục ưu tiên nối sau. Mỗi việc đọc được các vòng trước đã làm gì nên không đề xuất trùng; xong hết Tổng quản báo kết quả trong luồng của bạn.</p>
+      <div className="br-round-go">
+        {projects.length > 1 && (
+          <select className="input" value={pick} onChange={(e) => setProject(e.target.value)} aria-label="Dự án">
+            {projects.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        )}
+        {sure ? (
+          <>
+            <button className="btn primary" onClick={start}>
+              Tạo 3 việc{pick ? ` cho ${pick}` : ''}
+            </button>
+            <button className="btn" onClick={() => setSure(false)}>
+              Thôi
+            </button>
+          </>
+        ) : (
+          <button className="btn" onClick={() => setSure(true)} disabled={!!running} title={running ? 'Vòng trước của dự án này vẫn đang chạy' : undefined}>
+            🔁 Vòng cải tiến mới
+          </button>
+        )}
+      </div>
+      {running && <p className="ag-hint">Vòng ngày {day(running.at)}{running.project ? ` của ${running.project}` : ''} đang chạy — xong vòng đó mới mở được vòng mới.</p>}
+      {rounds.map((r) => (
+        <details key={r.id} className="br-round">
+          <summary>
+            {r.closed ? '✅' : '⏳'} Vòng {day(r.at)}
+            {r.project ? ` · ${r.project}` : ''} <small className="muted">· {r.byName}</small>
+          </summary>
+          <p className="br-text">{r.summary || 'Các phòng chưa ghi kết quả.'}</p>
+        </details>
+      ))}
     </section>
   );
 }

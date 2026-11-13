@@ -23,6 +23,7 @@ import {
   DEFAULT_BRAIN,
   RATE_REASON_MAX,
   REPORT_PREFIX,
+  ROUND_LIMITS,
   parseDecision,
   parseReport,
   parseVerdict,
@@ -34,9 +35,11 @@ import {
   type BrainJob,
   type BrainLease,
   type BrainLog,
+  type BrainParcel,
   type BrainSource,
   type BrainVerdict,
   type BrainView,
+  type ImproveRound,
 } from '../shared/brain';
 import { DEPTS, DEPT_BY_ID, isDept, lessonFits, rankLessons, type Debrief, type DeptId, type Lesson, type RunnerMachine } from '../shared/agents';
 import { PRIORITY_META, clampStr, settled, type ActivityEvent, type ChatMsg, type Priority, type ServerMsg, type Task } from '../shared/protocol';
@@ -118,6 +121,11 @@ const OWNS: Partial<Record<DeptId, string>> = {
 };
 const oneLine = (s: string, n: number) => clampStr(String(s ?? '').replace(/\s+/g, ' '), n);
 const shortId = (id: string) => id.replace(/-/g, '').slice(0, 8);
+/** The last note appended to a card ("— Ai (dd/mm hh:mm): …"), without who and when. */
+const lastNote = (desc: string) => {
+  const i = desc.lastIndexOf('\n\n— ');
+  return i < 0 ? '' : desc.slice(i + 4).replace(/^[^\n]*?\(\d\d\/\d\d [^)]*\):\s*/, '');
+};
 /** A claim on something to think about: who holds it, until when, and a fresh tag for this very claim. */
 const claim = (by: string, until: number): BrainLease => ({ by, until, tag: crypto.randomUUID().slice(0, 8) });
 /** Is this answer for the claim that is out right now? `tag` is what the runner sent back with it
@@ -149,6 +157,10 @@ export class Brain {
   private checks: Check[] = [];
   /** runners long-polling for something to think about */
   private waiters = new Set<() => void>();
+  /** improvement rounds, newest first, mirrored from D1 (null = not read yet) */
+  private rounds: ImproveRound[] | null = null;
+  /** a round is being opened right now (a double click opens one, not two) */
+  private opening = false;
 
   constructor(private host: BrainHost) {}
 
@@ -210,6 +222,7 @@ export class Brain {
   watch(uid: string) {
     this.watchers.add(uid);
     this.host.sendTo(uid, { t: 'brain', v: this.view() });
+    if (!this.rounds) void this.allRounds().then((r) => r.length && this.push());
   }
 
   left(uid: string) {
@@ -229,6 +242,7 @@ export class Brain {
       budget: this.budget(),
       online: this.online(),
       machines: this.host.machinesView(),
+      rounds: (this.rounds ?? []).slice(0, 8),
     };
   }
 
@@ -277,6 +291,127 @@ export class Brain {
     this.sessions = [...this.sessions.filter((s) => now - s.at < 2 * HOUR), { at: now, origin: origin || 'system' }];
     void this.host.storage.put('brainSessions', this.sessions).catch(() => {});
     this.push();
+  }
+
+  // ------------------------------------------------------------------ improvement rounds
+  /** The rounds, newest first — read from D1 the first time they are needed. */
+  private async allRounds(): Promise<ImproveRound[]> {
+    if (!this.rounds) this.rounds = await db.listRounds(this.host.DB, 20).catch(() => null);
+    return this.rounds ?? [];
+  }
+
+  private day(ms: number) {
+    const d = new Date(ms + this.host.tz * 60_000);
+    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  }
+
+  /** What a round did, read off its cards: one line each — department, title, state, and the last
+   *  note (where results are written). null = its cards are gone from the board. */
+  private roundOf(r: ImproveRound, tasks: Map<string, Task>): { summary: string; closed: boolean } | null {
+    const cards = [...tasks.values()].filter((t) => r.tasks.includes(t.id) || (r.root && t.thread === r.root && t.createdAt >= r.at)).sort((a, b) => a.createdAt - b.createdAt);
+    if (!cards.length) return null;
+    const state = (t: Task) => (t.col === 'done' ? 'xong' : t.col === 'review' ? 'chờ duyệt' : t.col === 'doing' ? 'đang làm' : 'chưa làm');
+    const lines = cards.map((t) => {
+      const note = lastNote(t.desc);
+      return oneLine(`${t.dept ? DEPT_BY_ID.get(t.dept)!.short : '?'} #${shortId(t.id)} ${t.title} [${state(t)}]${note ? `: ${note}` : ''}`, ROUND_LIMITS.line);
+    });
+    return { summary: clampStr(lines.join('\n'), ROUND_LIMITS.summary), closed: cards.every((t) => settled(t) && !this.host.parked(t)) };
+  }
+
+  /** Rounds still running take what their cards say now; a round's text outlives its cards in D1. */
+  private async refreshRounds(tasks: Map<string, Task>): Promise<void> {
+    let changed = false;
+    for (const r of await this.allRounds()) {
+      if (r.closed) continue;
+      const now = this.roundOf(r, tasks);
+      const next = now ?? { summary: r.summary, closed: true };
+      if (next.summary === r.summary && next.closed === r.closed) continue;
+      Object.assign(r, next);
+      await db.saveRound(this.host.DB, r, Date.now()).catch(() => {});
+      changed = true;
+    }
+    if (changed) this.push();
+  }
+
+  /** Earlier rounds in this project, for a new round's cards and for Tổng quản's prompt. */
+  private history(rounds: ImproveRound[], project: string, perRound: number): string[] {
+    return rounds
+      .filter((r) => !project || !r.project || r.project === project)
+      .slice(0, ROUND_LIMITS.history)
+      .map((r) => `Vòng ${this.day(r.at)}${r.project ? ` (${r.project})` : ''}${r.closed ? '' : ' — đang chạy'}:\n${clampStr(r.summary || '(chưa có kết quả)', perRound)}`);
+  }
+
+  /**
+   * "Vòng cải tiến mới" (the 🧠 panel). The same split as a person asking for one in words, without a
+   * decision to pay for: QA looks for bugs and Biz ranks improvements at the same time, Dev waits
+   * for both and does the top of each. Every card carries what earlier rounds did, so nothing is
+   * proposed twice, and the person who pressed it gets the one 📋 report when all three are done.
+   */
+  async startRound(uid: string, whoName: string, rawProject: unknown): Promise<void> {
+    const err = (msg: string) => this.host.sendTo(uid, { t: 'err', msg });
+    if (!this.host.canAssign(uid)) return err(this.host.noRightMsg());
+    const projects = this.projects();
+    const want = typeof rawProject === 'string' ? rawProject.trim() : '';
+    const project = want ? projects.find((p) => p === want) : projects.length <= 1 ? (projects[0] ?? '') : undefined;
+    if (project === undefined) return err(want ? `Không có máy trực nào đang làm ở dự án ${clampStr(want, 60)}.` : 'Có nhiều dự án đang có máy trực — chọn dự án cho vòng cải tiến.');
+    if (this.opening) return;
+    this.opening = true;
+    try {
+      const tasks = await this.host.getTasks();
+      await this.refreshRounds(tasks);
+      const rounds = await this.allRounds();
+      const open = rounds.find((r) => !r.closed && r.project === project);
+      if (open) return err(`Vòng cải tiến ngày ${this.day(open.at)}${project ? ` của ${project}` : ''} vẫn đang chạy — xong vòng đó rồi mở vòng mới nhé.`);
+      const now = Date.now();
+      const id = crypto.randomUUID();
+      const root = crypto.randomUUID();
+      const where = project ? ` cho dự án ${project}` : '';
+      const hist = this.history(rounds, project, Math.floor(ROUND_LIMITS.historyChars / ROUND_LIMITS.history));
+      const done = hist.length ? hist.join('\n') : '(chưa có vòng nào trước đây)';
+      await this.host.chat({ id: root, ch: Brain.thread(uid), from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: `🔁 ${whoName} mở vòng cải tiến mới${where}: Kiểm thử rà lỗi và Kinh doanh xếp ưu tiên cải tiến chạy song song, Phát triển làm các mục ưu tiên nối sau. Xong hết mình báo kết quả trong luồng này.`, ts: now });
+      const it: BrainItem = { id: crypto.randomUUID(), source: 'chat', who: uid, whoName, text: `Vòng cải tiến mới${where}`, root, at: now, followUps: [], state: 'done', tries: 0, round: id };
+      const plan: BrainParcel[] = [
+        {
+          dept: 'qa',
+          title: `Vòng cải tiến: rà lỗi${where}`,
+          desc: `Vòng cải tiến mới do ${whoName} mở. Phần của Kiểm thử: rà lỗi dự án — chạy các bộ test/kiểm tra sẵn có, thử các luồng chính (cả trên điện thoại nếu có giao diện), đọc lại các thay đổi gần đây. Ghi vào note danh sách lỗi theo mức độ (Cao/Trung bình/Thấp), mỗi lỗi: cách tái hiện, file/khu vực nghi ngờ. Không sửa code. KHÔNG handoff Phát triển: việc của Phát triển đã xếp nối sau phần này và sẽ đọc note của bạn. Kinh doanh đang xếp ưu tiên cải tiến song song.\n\nCác vòng trước đã làm (lỗi đã sửa thì chỉ báo lại nếu tái phát):\n${done}`,
+          priority: 'normal',
+          after: [],
+        },
+        {
+          dept: 'biz',
+          title: `Vòng cải tiến: xếp ưu tiên cải tiến, tính năng mới${where}`,
+          desc: `Vòng cải tiến mới do ${whoName} mở. Phần của Kinh doanh & CSKH: đánh giá sản phẩm, chọn 3–5 cải tiến hoặc tính năng mới đáng làm nhất và xếp theo ưu tiên. Mỗi mục: tên ngắn, vì sao (đau thực tế của người dùng), tiêu chí chấp nhận kiểm được, ngoài phạm vi. Ghi danh sách vào note của việc này. KHÔNG đề xuất lại những gì các vòng trước đã làm (bên dưới). KHÔNG handoff Phát triển: việc của Phát triển đã xếp nối sau và sẽ đọc note của bạn. Kiểm thử đang rà lỗi song song.\n\nCác vòng trước đã làm:\n${done}`,
+          priority: 'normal',
+          after: [],
+        },
+        {
+          dept: 'dev',
+          title: `Vòng cải tiến: sửa lỗi QA và làm các mục ưu tiên của Biz${where}`,
+          desc: `Phần này nối sau hai việc của cùng vòng: Kiểm thử rà lỗi ({QA}) và Kinh doanh xếp ưu tiên ({BIZ}) — đọc note của chúng bằng task_get. Sửa các lỗi Kiểm thử ghi (Cao trước), rồi làm các mục Kinh doanh xếp ưu tiên theo thứ tự; mỗi mục xong thì bàn giao Kiểm thử kiểm theo tiêu chí. Không deploy, không push. Mục nào quá lớn thì làm phần đầu và ghi rõ phần còn lại vào note.\n\nCác vòng trước đã làm (đừng làm lại):\n${done}`,
+          priority: 'normal',
+          after: [0, 1],
+        },
+      ];
+      const made = await this.dispatch(it, { action: 'route', reply: '', project, plan });
+      if (made.length !== plan.length) return err('Chưa tạo được đủ việc cho vòng cải tiến, bạn thử lại nhé.');
+      // the Dev card names the two it waits for, so the session reads their notes
+      const [qa, biz, dev] = made;
+      dev.desc = dev.desc.replace('{QA}', `#${shortId(qa.id)}`).replace('{BIZ}', `#${shortId(biz.id)}`);
+      await this.host.saveTask(dev, BRAIN_ID);
+      it.tasks = made.map((t) => t.id);
+      it.project = made[0].project;
+      it.report = 'wait';
+      this.items.push(it);
+      this.save();
+      const round: ImproveRound = { id, project: it.project ?? project, at: now, byName: whoName, root, tasks: it.tasks, summary: '', closed: false };
+      this.rounds = [round, ...rounds].slice(0, 20);
+      await db.saveRound(this.host.DB, round, now).catch(() => {});
+      await this.log(it, { action: 'route', reply: `Mở vòng cải tiến: ${made.map((t) => `#${shortId(t.id)} ${DEPT_BY_ID.get(t.dept!)!.short}`).join(', ')}` }, made.map((t) => t.dept!));
+      this.push();
+    } finally {
+      this.opening = false;
+    }
   }
 
   // ------------------------------------------------------------------ the front door
@@ -617,6 +752,8 @@ export class Brain {
             return `- #${shortId(t.id)} [${t.col}] ${t.dept ? DEPT_BY_ID.get(t.dept)!.short : 'chưa giao'}: ${oneLine(t.title, 90)}${stopped ? ' (DỪNG vì hỏng giữa chừng nhiều lần, chưa xong — gộp vào luồng này là nó chạy lại)' : ''}`;
           })
       : [];
+    // what earlier improvement rounds already did, so nothing is proposed or routed twice
+    const rounds = this.history((await this.allRounds()).filter((r) => !r.project || projects.includes(r.project) || r.project === threadProject), '', ROUND_LIMITS.prompt);
     const asked = it.root ? this.items.filter((x) => x !== it && x.root === it.root && x.at < it.at).slice(-4).map((x) => `- ${x.whoName}: “${oneLine(x.text, 200)}”`) : [];
     const followUps = it.followUps.filter((f) => f.a).map((f) => `Bạn đã hỏi: “${oneLine(f.q, 200)}” — Họ trả lời: “${oneLine(f.a, 400)}”`);
     return [
@@ -631,6 +768,7 @@ export class Brain {
       threadProject ? `Luồng này đang làm ở dự án: ${threadProject}` : '',
       lessons.length ? `\n## Sổ kinh nghiệm\n${lessons.join('\n')}` : '',
       outcomes.length ? `\n## Kết quả gần đây\n${outcomes.join('\n')}` : '',
+      rounds.length ? `\n## Vòng cải tiến trước (mục đã làm — đừng đề xuất hay giao lại)\n${rounds.join('\n')}` : '',
       inThread.length || asked.length ? `\n## Luồng này (tin nhắn dưới đây được gửi trong luồng đó)\n${[...(asked.length ? ['Đã nhắn trước đó:', ...asked] : []), ...(inThread.length ? ['Việc của luồng:', ...inThread] : [])].join('\n')}` : '',
       '',
       '## Yêu cầu cần quyết định',
@@ -851,8 +989,10 @@ export class Brain {
   /** Work moved on the board: a request whose every piece is finished gets its report written. */
   async progress(): Promise<void> {
     const waiting = this.items.filter((i) => i.report === 'wait');
-    if (!waiting.length) return;
+    const live = this.rounds?.some((r) => !r.closed) || waiting.some((i) => i.round);
+    if (!waiting.length && !live) return;
     const tasks = await this.host.getTasks();
+    if (live) await this.refreshRounds(tasks).catch(() => {});
     let changed = false;
     for (const it of waiting) {
       const work = this.workOf(it, tasks);

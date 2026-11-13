@@ -2,6 +2,7 @@
 
 import { sanitizeAvatar, type AvatarConfig } from '../shared/avatar';
 import { isDept, type Debrief, type Lesson } from '../shared/agents';
+import type { ImproveRound } from '../shared/brain';
 import type { ChatMsg, Priority, ReportRate, Task, TaskColumn, TeamMember, WorklogDay } from '../shared/protocol';
 import { SCHEMA_ALTERS, SCHEMA_STATEMENTS } from './schema';
 
@@ -233,6 +234,27 @@ async function ratingsOf(db: D1Database, userId: string, limit = 400): Promise<M
     .bind(userId, limit)
     .all<{ msg_id: string; vote: number; reason: string }>();
   return new Map(results.map((r) => [r.msg_id, { v: r.vote > 0 ? 1 : -1, ...(r.reason ? { reason: r.reason } : {}) }]));
+}
+
+// ---------------------------------------------------------------- improvement rounds
+type RoundRow = { id: string; project: string; root: string; by_name: string; task_ids: string; summary: string; closed: number; created_at: number };
+
+export async function listRounds(db: D1Database, limit = 20): Promise<ImproveRound[]> {
+  const { results } = await db
+    .prepare('SELECT id, project, root, by_name, task_ids, summary, closed, created_at FROM improve_rounds ORDER BY created_at DESC LIMIT ?')
+    .bind(limit)
+    .all<RoundRow>();
+  return results.map((r) => ({ id: r.id, project: r.project, root: r.root, byName: r.by_name, at: r.created_at, tasks: r.task_ids ? r.task_ids.split(',') : [], summary: r.summary, closed: !!r.closed }));
+}
+
+export async function saveRound(db: D1Database, r: ImproveRound, now: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO improve_rounds (id, project, root, by_name, task_ids, summary, closed, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+       ON CONFLICT(id) DO UPDATE SET task_ids = ?5, summary = ?6, closed = ?7, updated_at = ?9`,
+    )
+    .bind(r.id, r.project, r.root, r.byName, r.tasks.join(','), r.summary, r.closed ? 1 : 0, r.at, now)
+    .run();
 }
 
 /** Keeps the newest `keep` lines of every channel, so a busy channel never wipes a quiet one. */

@@ -1546,6 +1546,9 @@ export class AgentHub {
       case 'brainCancel':
         await this.brain.cancel(id, String(m.id));
         return;
+      case 'improve':
+        await this.brain.startRound(id, by, m.project);
+        return;
       case 'revive':
         await this.reviveOne(id, String(m.id), by);
         return;

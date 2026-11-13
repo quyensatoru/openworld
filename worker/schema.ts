@@ -1,5 +1,5 @@
 // Keep in sync with migrations/0001_init.sql. Applied idempotently by the Durable Object on first use.
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 export const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL, desk TEXT, last_seen INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, descr TEXT NOT NULL DEFAULT '', col TEXT NOT NULL, ord REAL NOT NULL, assignee TEXT, priority TEXT NOT NULL DEFAULT 'normal', created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER)`,
@@ -18,6 +18,9 @@ export const SCHEMA_STATEMENTS = [
   // migrations/0009_report_ratings.sql
   `CREATE TABLE IF NOT EXISTS report_ratings (msg_id TEXT PRIMARY KEY, thread TEXT NOT NULL, user_id TEXT NOT NULL, vote INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', lesson_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_ratings_user ON report_ratings (user_id, updated_at)`,
+  // migrations/0010_improve_rounds.sql
+  `CREATE TABLE IF NOT EXISTS improve_rounds (id TEXT PRIMARY KEY, project TEXT NOT NULL DEFAULT '', root TEXT NOT NULL DEFAULT '', by_name TEXT NOT NULL, task_ids TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', closed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_rounds_at ON improve_rounds (created_at)`,
 ];
 
 /** Columns added to existing tables; each fails harmlessly once the column exists. */

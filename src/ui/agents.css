@@ -827,3 +827,30 @@
   font-size: 12px;
   word-break: break-all;
 }
+
+/* "Vòng cải tiến mới" and the rounds before it */
+.br-round-go {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 6px 0 8px;
+}
+.br-round-go select {
+  width: auto;
+  min-width: 140px;
+}
+.br-round {
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: rgba(45, 49, 66, 0.045);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.br-round summary {
+  cursor: pointer;
+}
+.br-round .br-text {
+  white-space: pre-line;
+  word-break: break-word;
+}

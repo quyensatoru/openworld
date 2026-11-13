@@ -81,6 +81,8 @@ export interface BrainItem {
   /** when the report was claimed / how many times writing it failed */
   reportLease?: BrainLease;
   reportTries?: number;
+  /** the improvement round this request is (the "Vòng cải tiến mới" button, not a person's words) */
+  round?: string;
 }
 
 export interface BrainLease {
@@ -168,12 +170,36 @@ export interface BrainView {
   online: boolean;
   /** the on-call machines, and whether they can reach Claude */
   machines: RunnerMachine[];
+  /** improvement rounds, newest first (what earlier rounds already did) */
+  rounds?: ImproveRound[];
 }
+
+/** One "Vòng cải tiến": QA looks for bugs and Biz ranks improvements side by side, Dev does the top
+ *  of both afterwards. Kept in D1 so the next round knows what was already done. */
+export interface ImproveRound {
+  id: string;
+  project: string;
+  at: number;
+  byName: string;
+  /** the chat thread it is discussed in (Tổng quản's opening line) */
+  root: string;
+  /** its cards: QA, Biz, then Dev */
+  tasks: string[];
+  /** what the round did, one line per card (refreshed from the board while the cards exist) */
+  summary: string;
+  /** every card of it is finished (done / review) */
+  closed: boolean;
+}
+
+/** How much of earlier rounds goes into a new round's cards and into Tổng quản's prompt. */
+export const ROUND_LIMITS = { summary: 1500, line: 420, history: 3, historyChars: 1000, prompt: 320 };
 
 /** Browser → server. */
 export type BrainMsg =
   | { a: 'brainConfig'; config: BrainConfig }
   | { a: 'brainCancel'; id: string }
+  /** start a new improvement round in a project ('' = the only project on call) */
+  | { a: 'improve'; project?: string }
   /** 👍 (1) / 👎 (-1) on a 📋 report in one's own thread; the reason is optional */
   | { a: 'rate'; id: string; v: 1 | -1; reason?: string };
 
