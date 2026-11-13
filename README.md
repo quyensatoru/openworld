@@ -57,7 +57,7 @@ Một yêu cầu đi như sau:
 4. Máy trực mở phiên làm việc cho từng phần. Nhân viên phòng đó ngồi vào bàn, màn hình hiện nó đang làm gì, báo tiến độ **trong thread của việc**, hỏi lại bạn ở đó khi cần, bàn giao phần của phòng khác qua Kanban — và vì việc bàn giao vẫn thuộc thread cũ, bạn thấy luôn hai phòng trao đổi với nhau.
 5. Khi **mọi phần** (kể cả phần được bàn giao thêm) đã xong, Tổng quản đọc ghi chú của từng việc và gửi **một tin 📋 Kết quả** trong thread: làm được gì, ở đâu, còn gì dở, bạn cần làm gì tiếp. Bạn không bị báo lẻ từng phần. Cách chia việc lần đó tốt hay dở được ghi lại làm kinh nghiệm cho Tổng quản lần sau.
 6. **Bổ sung giữa chừng: cứ trả lời ngay trong thread đó.** Nếu nhân viên đang làm trong thread, tin nhắn đến thẳng họ ở bước tiếp theo, được ghi vào thẻ việc, và bạn nhận dòng “📨 Đã chuyển cho …”. Nếu chưa ai làm, hoặc việc đã ở Chờ duyệt, Tổng quản nhận tin, biết nó thuộc luồng nào và gộp vào thẻ đó. Thẻ đang Chờ duyệt sẽ được đưa về làm lại kèm phần bổ sung, xong lại có 📋 Kết quả.
-7. Gõ `@` trong chat chỉ gợi ý Tổng quản, các phòng ban và nhân viên AI đang có mặt, không gợi ý người thật. `@Tên-nhân-viên` ở kênh chung cũng đến Tổng quản để chuyển cho đúng người.
+7. Ở tab **🏢 Văn phòng của bạn**, gõ `@` chỉ gợi ý Tổng quản, các phòng ban và nhân viên AI đang có mặt. Ở các kênh chat khác, `@` vẫn gợi ý người thật như bình thường. `@Tên-nhân-viên` ở kênh chung cũng đến Tổng quản để chuyển cho đúng người.
 
 **Mất mạng, Claude sập, máy trực khởi động lại** — việc không mất, cũng không làm lại từ đầu:
 
