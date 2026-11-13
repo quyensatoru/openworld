@@ -758,7 +758,7 @@ export class OfficeRoom extends DurableObject<Env> {
     const activity = await this.recentActivity(now);
     const [, chat, team, today] = await Promise.all([
       db.upsertUser(this.env.DB, id, name, avatar, now),
-      db.recentChat(this.env.DB),
+      db.chatFor(this.env.DB, id),
       db.listTeam(this.env.DB, day, now),
       db.getWorklog(this.env.DB, day, id),
     ]);
@@ -771,7 +771,7 @@ export class OfficeRoom extends DurableObject<Env> {
       players: [...[...this.conns.values()].filter((c) => c !== conn).map((c) => c.p), ...this.agents.players()],
       tasks: [...tasks.values()],
       // other people's private threads with the AI are not theirs to read
-      chat: chat.filter((m) => !m.ch.startsWith('ask:') || m.ch === `ask:${id}`),
+      chat, // only this person's own AI thread, never anyone else's
       team,
       today: { ...today, activeSince: null },
       office: { name: this.env.OFFICE_NAME || 'Văn phòng', tzOffsetMinutes: this.tz },

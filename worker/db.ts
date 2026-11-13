@@ -166,9 +166,26 @@ export async function insertChat(db: D1Database, m: ChatMsg): Promise<void> {
     .run();
 }
 
+/**
+ * What one person gets back on joining: the newest lines of each channel they can read, counted per
+ * channel — the private AI threads are busy enough to push the shared chat out of a single "newest
+ * N overall" window.
+ */
+export async function chatFor(db: D1Database, userId: string, perChannel = 80): Promise<ChatMsg[]> {
+  const pick = 'SELECT id, ch, sender, name, text, ts, root FROM chat_messages WHERE ch = ? ORDER BY ts DESC LIMIT ?';
+  const { results } = await db
+    .prepare(`SELECT * FROM (${pick}) UNION ALL SELECT * FROM (${pick}) UNION ALL SELECT * FROM (${pick}) ORDER BY ts ASC`)
+    .bind('global', perChannel, 'work', perChannel, `ask:${userId}`, perChannel)
+    .all<{ id: string; ch: string; sender: string; name: string; text: string; ts: number; root: string | null }>();
+  return results.map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}) }));
+}
+
+/** Keeps the newest `keep` lines of every channel, so a busy channel never wipes a quiet one. */
 export async function pruneChat(db: D1Database, keep = 500): Promise<void> {
   await db
-    .prepare('DELETE FROM chat_messages WHERE ts < (SELECT ts FROM chat_messages ORDER BY ts DESC LIMIT 1 OFFSET ?)')
+    .prepare(
+      'DELETE FROM chat_messages WHERE id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY ch ORDER BY ts DESC) AS rn FROM chat_messages) WHERE rn > ?)',
+    )
     .bind(keep)
     .run();
 }
