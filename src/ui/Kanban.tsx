@@ -20,11 +20,18 @@ export function Kanban() {
   const listRefs = useRef<Partial<Record<TaskColumn, HTMLDivElement | null>>>({});
   const close = () => setState({ kanbanOpen: false });
 
+  const stopped = useStore((s) => s.stopped);
   const working = useMemo(() => {
     const m = new Map<string, string[]>();
     for (const p of [...Object.values(players), ...(me ? [me] : [])]) if (p.taskId) m.set(p.taskId, [...(m.get(p.taskId) ?? []), p.name]);
     return m;
   }, [players, me]);
+  // a session on the card that is waiting (Claude out of quota until some time, an approval…): say what for
+  const waits = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of Object.values(players)) if (p.taskId && p.agent?.state === 'waiting' && p.statusText) m.set(p.taskId, p.statusText);
+    return m;
+  }, [players]);
 
   const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const byCol = useMemo(() => {
@@ -121,7 +128,7 @@ export function Kanban() {
                       return (
                         <Fragment key={t.id}>
                           {showDrop && <div className="kb-drop" />}
-                          <Card task={t} working={working.get(t.id)} dragging={dragged} onDrag={setDragId} onOpen={() => setEditing(t.id)} avatar={players[t.assignee ?? '']?.avatar ?? team[t.assignee ?? '']?.avatar ?? (t.assignee === me?.id ? me?.avatar : undefined)} />
+                          <Card task={t} working={working.get(t.id)} waiting={waits.get(t.id)} stopped={t.col === 'review' && stopped.includes(t.id)} dragging={dragged} onDrag={setDragId} onOpen={() => setEditing(t.id)} avatar={players[t.assignee ?? '']?.avatar ?? team[t.assignee ?? '']?.avatar ?? (t.assignee === me?.id ? me?.avatar : undefined)} />
                         </Fragment>
                       );
                     });
@@ -140,7 +147,7 @@ export function Kanban() {
   );
 }
 
-function Card({ task, working, dragging, onDrag, onOpen, avatar }: { task: Task; working?: string[]; dragging: boolean; onDrag: (id: string | null) => void; onOpen: () => void; avatar?: Parameters<typeof AvatarDot>[0]['avatar'] }) {
+function Card({ task, working, waiting, stopped, dragging, onDrag, onOpen, avatar }: { task: Task; working?: string[]; waiting?: string; stopped?: boolean; dragging: boolean; onDrag: (id: string | null) => void; onOpen: () => void; avatar?: Parameters<typeof AvatarDot>[0]['avatar'] }) {
   const assignee = task.assignee ? nameOf(task.assignee) : null;
   return (
     <div
@@ -174,7 +181,24 @@ function Card({ task, working, dragging, onDrag, onOpen, avatar }: { task: Task;
           <span>Chưa giao</span>
         )}
         {task.priority !== 'normal' && <span style={{ color: PRIORITY_META[task.priority].color, fontWeight: 600 }}>· {PRIORITY_META[task.priority].label}</span>}
-        {working && <span className="live" title={working.join(', ')}>🔨 đang làm</span>}
+        {working && !waiting && <span className="live" title={working.join(', ')}>🔨 đang làm</span>}
+        {waiting && (
+          <span className="live wait" title={`${working?.join(', ') ?? ''}: ${waiting}`}>
+            {waiting}
+          </span>
+        )}
+        {stopped && (
+          <button
+            className="btn tiny kb-revive"
+            title="Việc đã hỏng giữa chừng nhiều lần nên dừng lại. Bấm để đưa về To do và cho chạy lại (giống nhắn “làm tiếp” trong thread)."
+            onClick={(e) => {
+              e.stopPropagation();
+              game.agents({ a: 'revive', id: task.id });
+            }}
+          >
+            ▶ Làm tiếp
+          </button>
+        )}
         {task.col === 'done' && task.doneAt && <span style={{ marginLeft: 'auto' }}>{timeAgo(task.doneAt)}</span>}
       </div>
     </div>

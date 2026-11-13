@@ -265,6 +265,8 @@ export type ServerMsg =
       activity: Record<string, ActivityEvent[]>;
       meetings?: Meeting[];
       approvals?: Approval[];
+      /** cards that stopped after breaking down too often (they get a "Làm tiếp" button) */
+      stopped?: string[];
       access?: AgentAccess;
       brain?: BrainView;
     }
@@ -301,6 +303,7 @@ export type ServerMsg =
   | { t: 'agentBook'; book: AgentBook }
   | { t: 'meetings'; list: Meeting[] }
   | { t: 'approvals'; list: Approval[] }
+  | { t: 'stopped'; ids: string[] }
   | { t: 'agentAccess'; v: AgentAccess }
   | { t: 'brain'; v: BrainView }
   | { t: 'kicked'; reason: string }

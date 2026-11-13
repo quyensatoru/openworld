@@ -30,6 +30,7 @@ import {
   type BrainDecision,
   type BrainItem,
   type BrainJob,
+  type BrainLease,
   type BrainLog,
   type BrainSource,
   type BrainVerdict,
@@ -65,6 +66,8 @@ export interface BrainHost {
   showBrain(online: boolean, what: string): Promise<void>;
   /** the on-call machines seen in the last few minutes */
   machines(): RunnerMachine[];
+  /** …plus the ones gone quiet lately, and how many sessions each runs (for the 🧠 panel) */
+  machinesView(): RunnerMachine[];
   /** times the sessions working on a task broke down */
   taskFails(id: string): number;
   /** stopped after breaking down too often, waiting for a person (not finished work) */
@@ -78,7 +81,7 @@ interface Check {
   id: string;
   at: number;
   state: 'pending' | 'thinking' | 'done';
-  lease?: { by: string; until: number };
+  lease?: BrainLease;
   system: string;
   prompt: string;
   verdict?: BrainVerdict | null;
@@ -113,6 +116,11 @@ const OWNS: Partial<Record<DeptId, string>> = {
 };
 const oneLine = (s: string, n: number) => clampStr(String(s ?? '').replace(/\s+/g, ' '), n);
 const shortId = (id: string) => id.replace(/-/g, '').slice(0, 8);
+/** A claim on something to think about: who holds it, until when, and a fresh tag for this very claim. */
+const claim = (by: string, until: number): BrainLease => ({ by, until, tag: crypto.randomUUID().slice(0, 8) });
+/** Is this answer for the claim that is out right now? `tag` is what the runner sent back with it
+ *  (runners from before tags send none: then holding the claim is all that can be checked). */
+const holds = (lease: BrainLease | undefined, uid: string, tag: string) => !!lease && lease.by === uid && (!tag || !lease.tag || lease.tag === tag);
 /** The same person saying the same thing twice in this window is one request. */
 const DEDUPE_MS = 10 * 60_000;
 /** Claude unreachable: wait this long before thinking the same request again (doubles, capped). */
@@ -210,11 +218,15 @@ export class Brain {
     return {
       config: this.cfg,
       // waiting to be decided, and — once decided — work still out until its report goes back
-      queue: this.items.filter((i) => i.state !== 'done' || i.report === 'wait' || i.report === 'pending' || i.report === 'thinking').slice(-40),
+      // (claims stay in the office: a tag is what makes a runner's answer count)
+      queue: this.items
+        .filter((i) => i.state !== 'done' || i.report === 'wait' || i.report === 'pending' || i.report === 'thinking')
+        .slice(-40)
+        .map(({ lease, reportLease, ...i }) => i),
       recent: this.logs.slice(-25),
       budget: this.budget(),
       online: this.online(),
-      machines: this.host.machines(),
+      machines: this.host.machinesView(),
     };
   }
 
@@ -287,6 +299,7 @@ export class Brain {
       asked.at = now;
       this.save();
       this.push();
+      this.kick(); // a runner long-polling for a thought takes it now, not when its wait runs out
       await this.host.wakeAt(now + 10_000);
       return;
     }
@@ -303,7 +316,8 @@ export class Brain {
     }
     this.items.push({ id: crypto.randomUUID(), source, who, whoName, text: body, taskId, root, at: now, followUps: [], state: 'pending', tries: 0 });
     // the log is capped, but a request whose work is still out keeps its place until it is reported
-    if (this.items.length > 120) this.items = this.items.filter((x, i, arr) => i >= arr.length - 120 || x.report === 'wait' || x.report === 'pending' || x.report === 'thinking');
+    // (and so does one still waiting for its decision or for the person's answer)
+    if (this.items.length > 120) this.items = this.items.filter((x, i, arr) => i >= arr.length - 120 || x.state !== 'done' || x.report === 'wait' || x.report === 'pending' || x.report === 'thinking');
     this.save();
     this.push();
     if (!this.online()) await this.say('Chưa có máy trực nào đang chạy Tổng quản, nên mình ghi lại đây và sẽ xử lý ngay khi có máy lên.', Brain.thread(who), root);
@@ -331,15 +345,15 @@ export class Brain {
     const c = this.checks.find((x) => x.state === 'pending');
     if (c) {
       c.state = 'thinking';
-      c.lease = { by: uid, until: now + APPROVE_WAIT_MS };
-      return { id: c.id, kind: 'approve', model: this.cfg.model, system: c.system, prompt: c.prompt, timeoutMs: APPROVE_WAIT_MS };
+      c.lease = claim(uid, now + APPROVE_WAIT_MS);
+      return { id: c.id, kind: 'approve', model: this.cfg.model, system: c.system, prompt: c.prompt, timeoutMs: APPROVE_WAIT_MS, lease: c.lease.tag };
     }
     const r = this.items.find((i) => i.report === 'pending' && (i.notBefore ?? 0) <= now);
     if (r) {
       r.report = 'thinking';
-      r.reportLease = { by: uid, until: now + BRAIN_REPORT_MS + BRAIN_LEASE_MS };
+      r.reportLease = claim(uid, now + BRAIN_REPORT_MS + BRAIN_LEASE_MS);
       this.save();
-      return { id: r.id, kind: 'report', model: this.cfg.model, system: this.reportSystem(), prompt: await this.reportPrompt(r), timeoutMs: BRAIN_REPORT_MS };
+      return { id: r.id, kind: 'report', model: this.cfg.model, system: this.reportSystem(), prompt: await this.reportPrompt(r), timeoutMs: BRAIN_REPORT_MS, lease: r.reportLease.tag };
     }
     const it = this.items.find((i) => i.state === 'pending' && (i.notBefore ?? 0) <= now);
     if (!it) {
@@ -354,19 +368,26 @@ export class Brain {
       return this.next(uid);
     }
     it.state = 'thinking';
-    it.lease = { by: uid, until: now + BRAIN_DECIDE_MS + BRAIN_LEASE_MS };
+    it.lease = claim(uid, now + BRAIN_DECIDE_MS + BRAIN_LEASE_MS);
+    const lease = it.lease.tag;
     this.save();
     await this.host.showBrain(true, `nghĩ: ${oneLine(it.text, 40)}`);
     await this.host.pushActivity(BRAIN_ID, { ts: now, kind: 'prompt', icon: '🧠', text: `${it.whoName}: ${oneLine(it.text, 120)}` });
     this.push();
-    return { id: it.id, kind: 'decide', model: this.cfg.model, system: await this.system(), prompt: await this.user(it), timeoutMs: BRAIN_DECIDE_MS };
+    return { id: it.id, kind: 'decide', model: this.cfg.model, system: await this.system(), prompt: await this.user(it), timeoutMs: BRAIN_DECIDE_MS, lease };
   }
 
   /** The machine brings back whatever the model printed — or that it could not reach Claude. */
-  async result(uid: string, id: string, raw: string, error = ''): Promise<{ ok: boolean; error?: string }> {
+  /** Idempotent: only the answer to the claim that is out right now (same machine, same `tag`) is
+   *  applied. The runner re-sends an answer whose POST timed out, an answer can arrive after its claim
+   *  ran out and the thing was handed out again, after the person answered a question and it went
+   *  back in the queue, or after it was cancelled — none of those may count a second time. */
+  async result(uid: string, id: string, raw: string, error = '', tag = ''): Promise<{ ok: boolean; error?: string }> {
+    const stale = { ok: false, error: 'kết quả này đã nhận rồi hoặc không còn hiệu lực' };
     const c = this.checks.find((x) => x.id === id);
     if (c) {
       if (c.state === 'done') return { ok: true };
+      if (c.state !== 'thinking' || !holds(c.lease, uid, tag)) return stale;
       const v = error ? null : parseVerdict(raw);
       if (!v && !error && c.verdict === undefined) {
         // one more go in the right shape, then the person decides
@@ -383,15 +404,19 @@ export class Brain {
     }
     const it = this.items.find((x) => x.id === id);
     if (!it) return { ok: false, error: 'không còn yêu cầu này' };
+    // (a report is only ever written for a request already decided, so the two never mix)
     if (it.report === 'thinking' && it.reportLease) {
+      if (holds(it.reportLease, uid, tag)) return this.reported(it, error ? null : parseReport(raw), error);
       if (it.reportLease.by !== uid) return { ok: false, error: 'báo cáo này do máy khác viết' };
-      return this.reported(it, error ? null : parseReport(raw), error);
+      return stale;
     }
-    // only a request still waiting for its decision takes one: a retried POST, an error arriving after
-    // the answer already landed, or a request the person cancelled must never be decided again
+    // only the claim that is out takes a decision: a retried POST, an error arriving after the answer
+    // already landed, a request back in the queue (answered question, unreadable answer, lease ran out)
+    // or one the person cancelled must never be decided again
     if (it.state === 'done') return { ok: true };
-    if (it.state !== 'thinking' && it.state !== 'pending') return { ok: false, error: 'yêu cầu này không còn chờ quyết định' };
-    if (it.lease && it.lease.by !== uid) return { ok: false, error: 'yêu cầu này do máy khác nhận' };
+    if (it.state !== 'thinking' || !it.lease) return stale;
+    if (it.lease.by !== uid) return { ok: false, error: 'yêu cầu này do máy khác nhận' };
+    if (!holds(it.lease, uid, tag)) return stale;
     if (error) {
       // the machine could not reach Claude: that is not the request's fault, so it costs no try —
       // it waits a little (longer each time) and the person hears once that it is not forgotten

@@ -65,8 +65,12 @@ const serverSteps = [
   ['smoke', 'scripts/smoke-test.mjs'],
   ['agents', 'scripts/agents-test.mjs'],
   ['runner', 'scripts/runner-test.mjs'],
+  // the on-call machines' state in the 🧠 panel, and "Làm tiếp" on a card that stopped
+  ['stopped', 'scripts/stopped-test.mjs'],
   // 🧠 Tổng quản's edge cases (QA's regression checks): last, it changes the brain's settings
   ['brain', 'scripts/qa-brain-regress-test.mjs'],
+  // …and round 2: answers re-sent or never claimed, the person's answer waking a long-polling runner
+  ['brain2', 'scripts/qa-brain-round2-test.mjs'],
 ].filter(([s]) => want(s));
 
 if (serverSteps.length) {

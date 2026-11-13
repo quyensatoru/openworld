@@ -295,6 +295,8 @@ export type AgentMsg =
   | { a: 'meetingEnd'; id: string }
   | { a: 'approve'; id: string; decision: 'once' | 'session' | 'deny' }
   | { a: 'access'; all: boolean; users: string[] }
+  /** "Làm tiếp" on a card that stopped after breaking down: back to To do with fresh tries */
+  | { a: 'revive'; id: string }
   | BrainMsg;
 
 /** Who may give work to whose agents. Every runner owner decides for their own machine; by default
@@ -335,6 +337,10 @@ export interface RunnerMachine {
   at: number;
   /** it cannot reach Claude right now: until when it waits before trying again, and why */
   outage?: { until: number; why: string } | null;
+  /** (the 🧠 panel only) sessions it is running right now */
+  busy?: number;
+  /** (the 🧠 panel only) it has not asked for work for a few minutes: off, asleep or cut off */
+  offline?: boolean;
 }
 
 // ---------------------------------------------------------------- the playbook, scoped

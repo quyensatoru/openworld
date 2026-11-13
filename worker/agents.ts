@@ -223,6 +223,8 @@ export class AgentHub {
   private machines = new Map<string, RunnerMachine>();
   /** task id → times its sessions broke down */
   private fails: Record<string, number> = {};
+  /** machines the 🧠 panel was last shown as offline */
+  private quietSeen = '';
   /** project → when its playbook was last distilled */
   private distilled: Record<string, number> = {};
   /** the one orchestrator above the departments */
@@ -249,6 +251,7 @@ export class AgentHub {
       taskOrigin: (t) => self.taskOrigin(t),
       showBrain: (online, what) => self.showBrain(online, what),
       machines: () => self.machineList(),
+      machinesView: () => self.machinesView(),
       taskFails: (id) => self.fails[id] ?? 0,
       revive: (root, by) => self.revive(root, by),
       // a card nobody works on any more is as stopped as one that broke down: "làm tiếp" runs both
@@ -540,7 +543,7 @@ export class AgentHub {
     // a person putting a card back in To do gives it a fresh set of tries
     if (t.col === 'todo' && this.fails[t.id]) {
       delete this.fails[t.id];
-      void this.host.storage.put('agentFails', this.fails).catch(() => {});
+      this.saveFails();
     }
     if (t.col !== 'todo' || t.assignee) return;
     if (!this.canAssign(uid)) {
@@ -633,6 +636,14 @@ export class AgentHub {
     return [...this.machines.values()].filter((m) => now - m.at < MACHINE_QUIET_MS);
   }
 
+  /** …and for people to read: also the ones that went quiet lately (offline), with how busy each is. */
+  machinesView(): RunnerMachine[] {
+    const now = Date.now();
+    const busy = new Map<string, number>();
+    for (const a of this.agents.values()) if (a.kind === 'runner' && a.machine) busy.set(a.machine, (busy.get(a.machine) ?? 0) + 1);
+    return [...this.machines.values()].filter((m) => now - m.at < MACHINE_GONE_MS).map((m) => ({ ...m, busy: busy.get(m.id) ?? 0, offline: now - m.at >= MACHINE_QUIET_MS }));
+  }
+
   private saveMachines() {
     void this.host.storage.put('agentMachines', [...this.machines.values()]).catch(() => {});
   }
@@ -655,6 +666,9 @@ export class AgentHub {
     let gone = false;
     for (const [id, m] of this.machines) if (now - m.at > 86400_000) ((gone = true), this.machines.delete(id));
     if (gone) this.saveMachines();
+    // the 🧠 panel shows a machine going offline (or dropping off the list) when it happens
+    const quiet = [...this.machines.values()].filter((m) => now - m.at >= MACHINE_QUIET_MS && now - m.at < MACHINE_GONE_MS).map((m) => m.id).join();
+    if (quiet !== this.quietSeen) ((this.quietSeen = quiet), this.brain.refresh());
     const thinking = await this.brain.sweep(now);
     this.comeBack(now);
     for (const m of this.meetings) {
@@ -1385,8 +1399,39 @@ export class AgentHub {
       await this.host.saveTask(t, by);
       out.push(t);
     }
-    if (out.length) void this.host.storage.put('agentFails', this.fails).catch(() => {});
+    if (out.length) this.saveFails();
     return out;
+  }
+
+  /** Someone pressed "Làm tiếp" on a card that stopped (or that nobody works on any more): the same
+   *  as saying "làm tiếp" in its thread, for that one card. */
+  private async reviveOne(uid: string, id: string, byName: string) {
+    if (!this.canAssign(uid)) {
+      this.host.sendTo(uid, { t: 'err', msg: this.noRightMsg() });
+      return;
+    }
+    const t = (await this.host.getTasks()).get(id);
+    if (!t || !(this.parked(t) || this.orphaned(t, Date.now(), false))) return;
+    delete this.fails[t.id];
+    t.desc = this.appendNote(t.desc, BRAIN_NAME, `${byName} bấm Làm tiếp — đưa việc về To do để chạy lại.`);
+    t.col = 'todo';
+    t.assignee = null;
+    t.updatedAt = Date.now();
+    this.setOrigin(t.id, uid);
+    await this.host.saveTask(t, uid);
+    this.saveFails();
+  }
+
+  /** Cards that stopped after breaking down MAX_FAILS times — every browser shows them a "Làm tiếp". */
+  stoppedView(): string[] {
+    return Object.entries(this.fails)
+      .filter(([, n]) => n >= MAX_FAILS)
+      .map(([id]) => id);
+  }
+
+  private saveFails() {
+    void this.host.storage.put('agentFails', this.fails).catch(() => {});
+    this.host.broadcast({ t: 'stopped', ids: this.stoppedView() });
   }
 
   /** The runner's session ended (or crashed): unfinished work goes back on the board. A task whose
@@ -1408,7 +1453,7 @@ export class AgentHub {
         t.assignee = null;
       } else {
         const n = (this.fails[t.id] = (this.fails[t.id] ?? 0) + 1);
-        void this.host.storage.put('agentFails', this.fails).catch(() => {});
+        this.saveFails();
         const what = why || `mã ${Number.isFinite(code) ? code : '?'}`;
         if (n >= MAX_FAILS) {
           t.desc = this.appendNote(t.desc, a.name, `Đã thử ${n} lần mà phiên làm việc đều dừng giữa chừng (lần cuối: ${what}). Mình dừng lại để một người xem giúp.`);
@@ -1500,6 +1545,9 @@ export class AgentHub {
         return;
       case 'brainCancel':
         await this.brain.cancel(id, String(m.id));
+        return;
+      case 'revive':
+        await this.reviveOne(id, String(m.id), by);
         return;
       case 'lesson': {
         const text = clampStr(m.text, LESSON_MAX);

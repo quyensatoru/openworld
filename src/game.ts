@@ -753,6 +753,7 @@ class Game {
     net.on('agentBook', ({ book }) => setState({ agentBook: book }));
     net.on('agentAccess', ({ v }) => setState({ agentAccess: v }));
     net.on('brain', ({ v }) => setState({ brain: v }));
+    net.on('stopped', ({ ids }) => setState({ stopped: ids }));
     net.on('approvals', ({ list }) => {
       const s = getState();
       const fresh = list.filter((x) => x.state === 'pending' && (x.owner === s.me?.id || x.anyone) && !s.approvals.some((y) => y.id === x.id));
@@ -813,7 +814,7 @@ class Game {
     setState({ floor: floorOf(m.you.x) });
     for (const p of m.players) world.upsertRemote(p);
     world.setTasks(m.tasks);
-    setState({ activity: m.activity as Record<string, ActivityEvent[]>, meetings: m.meetings ?? [], approvals: m.approvals ?? [], agentAccess: m.access ?? null, brain: m.brain ?? null });
+    setState({ activity: m.activity as Record<string, ActivityEvent[]>, meetings: m.meetings ?? [], approvals: m.approvals ?? [], stopped: m.stopped ?? [], agentAccess: m.access ?? null, brain: m.brain ?? null });
     this.applyCinema(m.cinema, '', 'welcome');
     this.applyJukebox(m.jukebox ?? null, '', 'welcome');
     if (m.kara) this.applyKara(m.kara);

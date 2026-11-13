@@ -246,23 +246,32 @@ function BrainTab() {
   );
 }
 
-/** The on-call machines: which project each works in, and whether it can reach Claude right now. */
+/** The on-call machines: which project each works in, and whether it is working, waiting for Claude
+ *  (a quota ran out, say — until when) or offline. */
 function Machines() {
   const machines = useStore((s) => s.brain?.machines ?? []);
   if (!machines.length) return null;
+  const hhmm = (ms: number) => new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
   return (
     <section>
       <h3>Máy trực · {machines.length}</h3>
       {machines.map((m) => {
-        const down = m.outage && m.outage.until > Date.now();
+        const off = !!m.offline;
+        const down = !off && !!m.outage && m.outage.until > Date.now();
+        const icons = m.depts.map((d) => DEPT_BY_ID.get(d)?.icon).join(' ');
+        const status = off
+          ? `📴 offline từ ${hhmm(m.at)} — máy tắt, ngủ hoặc mất mạng; việc đang dở về lại bảng sau 20 phút`
+          : down
+            ? `⏳ chờ Claude (${m.outage!.why}) — tự làm tiếp lúc ${hhmm(m.outage!.until)}, việc đang dở được giữ nguyên`
+            : m.busy
+              ? `🔨 đang làm ${m.busy} việc · ${icons}`
+              : `✅ rảnh, sẵn sàng nhận việc · ${icons}`;
         return (
-          <div key={m.id} className={`br-machine${down ? ' down' : ''}`}>
+          <div key={m.id} className={`br-machine${down ? ' down' : ''}${off ? ' off' : ''}`}>
             <span className="br-dot" />
             <div>
               <b>{m.project || 'chưa rõ dự án'}</b> <span className="muted">· {m.label} · của {m.ownerName || '…'}</span>
-              <small>
-                {down ? `📶 mất kết nối tới Claude (${m.outage!.why}) — tự thử lại lúc ${new Date(m.outage!.until).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}, việc đang dở được giữ nguyên` : m.depts.map((d) => DEPT_BY_ID.get(d)?.icon).join(' ')}
-              </small>
+              <small>{status}</small>
             </div>
           </div>
         );

@@ -1207,6 +1207,22 @@ input[type='range'] {
   border-radius: 999px;
   font-weight: 600;
 }
+/* a session on the card waiting (quota until a time, an approval…) */
+.kb-card .live.wait {
+  background: #fff4e5;
+  color: #b26a00;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 62%;
+}
+/* a card that stopped after breaking down: run it again */
+.kb-card .kb-revive {
+  margin-left: auto;
+  padding: 2px 9px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
 .kb-drop {
   height: 4px;
   border-radius: 2px;

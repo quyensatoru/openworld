@@ -63,8 +63,9 @@ export interface BrainItem {
   state: BrainItemState;
   /** decisions spent on this item (a request never costs more than BRAIN_MAX_TRIES) */
   tries: number;
-  /** while state === 'thinking': the runner holding it, and until when */
-  lease?: { by: string; until: number };
+  /** while state === 'thinking': the runner holding it, until when, and the job it was handed as
+   *  (a fresh tag per claim — an answer to an earlier claim of the same request is stale) */
+  lease?: BrainLease;
   /** Claude could not be reached for it: don't try again before this */
   notBefore?: number;
   /** times the machine failed to think it through (network, Claude down) — never the person's fault */
@@ -76,8 +77,15 @@ export interface BrainItem {
    *  'wait' = work still running · 'pending'/'thinking' = being written · 'sent' = they have it */
   report?: 'wait' | 'pending' | 'thinking' | 'sent';
   /** when the report was claimed / how many times writing it failed */
-  reportLease?: { by: string; until: number };
+  reportLease?: BrainLease;
   reportTries?: number;
+}
+
+export interface BrainLease {
+  by: string;
+  until: number;
+  /** the tag of the job this claim was handed out as (BrainJob.lease) */
+  tag?: string;
 }
 
 /** Two thinking rounds per request: one to decide, one more after the person answers a question. */
@@ -173,6 +181,9 @@ export interface BrainJob {
   prompt: string;
   /** give up on the model after this long */
   timeoutMs?: number;
+  /** which claim this is: the runner sends it back with the answer, so an answer posted twice (a retry
+   *  after a timeout) or arriving after the request was handed out again is recognised as stale */
+  lease?: string;
 }
 
 /** Tổng quản's answer about one action a session wants to take. */

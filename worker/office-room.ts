@@ -229,7 +229,7 @@ export class OfficeRoom extends DurableObject<Env> {
       if (b.op === 'adopt') return Response.json(await this.agents.adopt(b.uid, b.body ?? {}));
       if (b.op === 'feed') return Response.json(await this.agents.feed(b.uid, b.body ?? {}));
       if (b.op === 'brain') return Response.json({ job: await this.agents.brain.job(b.uid, Math.min(20, Number(b.wait) || 0) * 1000) });
-      if (b.op === 'brainResult') return Response.json(await this.agents.brain.result(b.uid, String(b.body?.id ?? ''), String(b.body?.raw ?? ''), clampStr(String(b.body?.error ?? ''), 300)));
+      if (b.op === 'brainResult') return Response.json(await this.agents.brain.result(b.uid, String(b.body?.id ?? ''), String(b.body?.raw ?? ''), clampStr(String(b.body?.error ?? ''), 300), clampStr(String(b.body?.lease ?? ''), 40)));
       return new Response('bad op', { status: 400 });
     }
     if (url.pathname === '/nudge-status') {
@@ -783,6 +783,7 @@ export class OfficeRoom extends DurableObject<Env> {
       activity,
       meetings: this.agents.meetingsView(),
       approvals: this.agents.approvalsView(),
+      stopped: this.agents.stoppedView(),
       access: await this.agents.accessReady(),
       brain: this.agents.brain.view(),
     });

@@ -808,6 +808,12 @@
 .br-machine.down .br-dot {
   background: #f0a35e;
 }
+.br-machine.off {
+  opacity: 0.7;
+}
+.br-machine.off .br-dot {
+  background: #9aa3ad;
+}
 .br-machine small {
   display: block;
   margin-top: 2px;

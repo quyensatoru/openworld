@@ -87,6 +87,8 @@ export interface OfficeStore {
   meetings: Meeting[];
   /** runner sessions asking a person to allow something */
   approvals: Approval[];
+  /** cards that stopped after breaking down too often ("Làm tiếp" runs them again) */
+  stopped: string[];
   chatDraft: string;
   unread: number;
   toasts: Toast[];
@@ -236,6 +238,7 @@ export const useStore = create<OfficeStore>(() => ({
   chatThread: null,
   meetings: [],
   approvals: [],
+  stopped: [],
   chatDraft: '',
   unread: 0,
   toasts: [],

@@ -162,11 +162,33 @@ const stateFile = path.join(home, `${RUNNER}.json`);
 // own sessions, and the office would hand the other one's work back to the board. The second one
 // refuses to start instead.
 const lockFile = path.join(home, `${RUNNER}.lock`);
+/** The command line of a live process — '' when there is no way to tell (no /proc, no ps). */
+function commandOf(pid) {
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+  } catch {
+    /* not Linux, or already gone */
+  }
+  if (process.platform === 'win32') return '';
+  try {
+    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 });
+  } catch {
+    return '';
+  }
+}
 function holder() {
   try {
     const pid = Number(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid) || 0;
     if (!pid || pid === process.pid) return 0;
-    process.kill(pid, 0); // throws when no such process
+    try {
+      process.kill(pid, 0); // throws when no such process
+    } catch (e) {
+      if (!e || e.code !== 'EPERM') throw e;
+    }
+    // the runner that wrote the lock died without cleaning up (SIGKILL, power cut, reboot) and its pid
+    // went to some other program since: that one is not a runner, the lock is stale
+    const cmd = commandOf(pid);
+    if (cmd && !/office-agent/.test(cmd)) return 0;
     return pid;
   } catch (e) {
     if (e && e.code === 'EPERM') return -1; // alive, someone else's
@@ -202,9 +224,11 @@ function takeLock() {
     if (i < 3) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
   }
   const pid = holder();
+  // "kill" only for a process seen to be a runner — never a guess at someone else's program
+  const sure = pid > 0 && /office-agent/.test(commandOf(pid));
   die(
     `❌ Một runner khác${pid > 0 ? ` (pid ${pid})` : ''} đang chạy cho cùng Office và thư mục ${workdir}.\n` +
-      `   Hai runner trùng nhau sẽ thả phiên làm việc của nhau. Tắt runner cũ${pid > 0 ? ` (kill ${pid})` : ''} rồi chạy lại.\n` +
+      `   Hai runner trùng nhau sẽ thả phiên làm việc của nhau. Tắt runner cũ${sure ? ` (kill ${pid})` : ''} rồi chạy lại.\n` +
       `   Nếu chắc chắn không còn runner nào, xoá ${lockFile}.`,
   );
 }
@@ -751,7 +775,8 @@ function think(job) {
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
     child.on('error', (e) => reject(e));
-    const timer = setTimeout(() => child.kill('SIGTERM'), job.timeoutMs || 120_000);
+    let late = false;
+    const timer = setTimeout(() => ((late = true), child.kill('SIGTERM')), job.timeoutMs || 120_000);
     child.on('exit', (code) => {
       clearTimeout(timer);
       let m = null;
@@ -762,7 +787,7 @@ function think(job) {
       }
       // an API error comes back as a "result" too — that is Claude being unreachable, not an answer
       if (m && (m.is_error || limitOnly(m.result))) return reject(new Error(clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || 'lỗi API'));
-      if (code !== 0) return reject(new Error(code === null ? 'quá thời gian' : `claude thoát mã ${code}: ${clip(err, 200)}`));
+      if (code !== 0) return reject(Object.assign(new Error(code === null ? 'quá thời gian' : `claude thoát mã ${code}: ${clip(err, 200)}`), { late }));
       resolve(m && typeof m.result === 'string' ? m.result : out); // the office parses it either way
     });
     child.stdin.end(job.prompt);
@@ -781,9 +806,13 @@ async function thought(job) {
   } catch (e) {
     const msg = clip(e.message, 200);
     log(`🧠 ⚠️  ${LABEL[job.kind] || 'quyết định'}: ${msg}`);
-    if (TRANSIENT.test(msg) || !(await online())) enterOutage(msg);
-    // the office puts it back without blaming the request
-    await api('/api/agents/brain', { id: job.id, raw: '', error: msg || 'lỗi' }).catch(() => {});
+    const down = TRANSIENT.test(msg) || !(await online());
+    if (down) enterOutage(msg);
+    // Claude reachable but the model ran out of time: that is this thought's fault, and it costs one of
+    // its tries (an empty answer) — otherwise it would be thought again forever and the person would only
+    // hear "the connection is flaky". Anything else: the office puts it back without blaming the request.
+    const body = e && e.late && !down ? { raw: '' } : { raw: '', error: msg || 'lỗi' };
+    await api('/api/agents/brain', { id: job.id, lease: job.lease, ...body }).catch(() => {});
     return;
   }
   // the model answered: deliver THAT answer, never an error in its place — a POST that timed out may
@@ -791,7 +820,8 @@ async function thought(job) {
   // lease's slack; after that the lease runs out and the office hands it out again.
   for (let i = 0; i < 3; i++) {
     try {
-      const res = await api('/api/agents/brain', { id: job.id, raw }, 15_000);
+      // `lease` names this claim: a re-send of an answer that already landed is recognised and ignored
+      const res = await api('/api/agents/brain', { id: job.id, lease: job.lease, raw }, 15_000);
       log(`🧠 ${LABEL[job.kind] || 'quyết định'} xong sau ${((Date.now() - started) / 1000).toFixed(1)}s${res && res.ok === false ? ` — office: ${res.error}` : ''}`);
       return;
     } catch (e) {
