@@ -1103,6 +1103,8 @@ export class OfficeRoom extends DurableObject<Env> {
         const now = Date.now();
         // putting a department's task back in To do sets the runners going again: on this person's word
         if (msg.col === 'todo' && task.col !== 'todo' && task.dept) this.agents.taskTouched({ ...task, col: 'todo', assignee: null }, p.id);
+        // …and it really is free: runners only take cards nobody holds, and a session that is gone never lets go
+        if (msg.col === 'todo' && task.dept && this.agents.gone(task.assignee)) task.assignee = null;
         task.col = msg.col;
         task.ord = ord;
         task.updatedAt = now;

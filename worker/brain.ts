@@ -662,8 +662,11 @@ export class Brain {
       // only work still open can absorb anything — a finished card is never read again
       if (t && t.col !== 'done') {
         const note = `— ${it.whoName} nhắn thêm: ${it.text}`;
-        // the card keeps its head (what the work is) and the addition always fits at the end
-        t.desc = t.desc ? `${t.desc.slice(0, Math.max(0, 2000 - note.length - 2))}\n\n${note}` : note.slice(0, 2000);
+        // the card keeps its head (what the work is), its latest notes, and the addition at the end —
+        // cutting from the end would drop what was said most recently, a line at a time
+        const room = Math.max(0, 2000 - note.length - 2);
+        const kept = t.desc.length <= room ? t.desc : room > 800 ? `${t.desc.slice(0, 500)}\n…\n${t.desc.slice(t.desc.length - (room - 503))}` : t.desc.slice(0, room);
+        t.desc = t.desc ? `${kept}\n\n${note}` : note.slice(0, 2000);
         // a card waiting for review that the person adds to goes back to be done again, with the addition
         const rework = t.col === 'review';
         if (rework) {

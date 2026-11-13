@@ -135,6 +135,8 @@ const MACHINE_QUIET_MS = 3 * 60_000;
 const MACHINE_GONE_MS = 20 * 60_000;
 /** A session the machine no longer reports running is let go after this grace (claim → first poll). */
 const ORPHAN_GRACE_MS = 90_000;
+/** A card in "doing" that nobody was ever given (dragged there, or left half-moved) waits this long before it goes back. */
+const ORPHAN_CARD_MS = 2 * 60_000;
 /** Times a task's sessions may break down before a person is asked to look at it. */
 const MAX_FAILS = 3;
 /** Runner exit codes: 75 = gave up resuming after outages, 130 = the runner was stopped (no blame). */
@@ -249,7 +251,8 @@ export class AgentHub {
       machines: () => self.machineList(),
       taskFails: (id) => self.fails[id] ?? 0,
       revive: (root, by) => self.revive(root, by),
-      parked: (t) => self.parked(t),
+      // a card nobody works on any more is as stopped as one that broke down: "làm tiếp" runs both
+      parked: (t) => self.parked(t) || self.orphaned(t),
     };
     this.brain = new Brain(adapter);
   }
@@ -1180,6 +1183,7 @@ export class AgentHub {
       void this.host.storage.put('agentAccess', this.access).catch(() => {});
     }
     const all = await this.host.getTasks();
+    await this.unstick(all, now);
     if (Object.keys(this.origins).some((id) => !all.has(id) || all.get(id)!.col === 'done')) {
       this.origins = Object.fromEntries(Object.entries(this.origins).filter(([id]) => all.has(id) && all.get(id)!.col !== 'done'));
       void this.host.storage.put('agentOrigins', this.origins).catch(() => {});
@@ -1336,13 +1340,43 @@ export class AgentHub {
     return t.col === 'review' && (this.fails[t.id] ?? 0) >= MAX_FAILS;
   }
 
-  /** The person said to go on in a thread: every card there that stopped after breaking down goes
-   *  back to To do with a fresh set of tries. Returns the cards revived. */
+  /**
+   * A card in "doing" that no session works on: the one it names is gone (its runner was killed, the
+   * office lost it) or it never had one (moved there by hand). Nothing would ever pick it up again —
+   * runners only take To do, and letting a session go only frees cards of sessions still here.
+   */
+  orphaned(t: Task, now = Date.now(), grace = true) {
+    if (t.col !== 'doing' || !t.dept) return false;
+    if (t.assignee) return this.gone(t.assignee);
+    // a person's own card in "doing" is theirs to move — only work the office made goes back
+    return t.createdBy.startsWith('ag-') && (!grace || now - t.updatedAt > ORPHAN_CARD_MS);
+  }
+
+  /** Is this an AI employee's id the office no longer has? (its card is nobody's) */
+  gone(id: string | null) {
+    return !!id && AGENT_ID.test(id) && id !== BRAIN_ID && !this.agents.has(id);
+  }
+
+  /** Orphaned cards go back to To do, where a machine can take them. */
+  private async unstick(all: Map<string, Task>, now: number) {
+    for (const t of all.values()) {
+      if (!this.orphaned(t, now)) continue;
+      t.desc = this.appendNote(t.desc, BRAIN_NAME, 'Không còn ai làm việc này (phiên làm việc đã mất, có thể do máy trực khởi động lại), mình đưa về To do để làm tiếp.');
+      t.col = 'todo';
+      t.assignee = null;
+      t.updatedAt = now;
+      await this.host.saveTask(t, BRAIN_ID);
+    }
+  }
+
+  /** The person said to go on in a thread: every card there that stopped after breaking down, or
+   *  that nobody works on any more, goes back to To do with a fresh set of tries. Returns them. */
   async revive(root: string, by: string): Promise<Task[]> {
     if (!root) return [];
     const out: Task[] = [];
+    const now = Date.now();
     for (const t of (await this.host.getTasks()).values()) {
-      if (t.thread !== root || !this.parked(t)) continue;
+      if (t.thread !== root || !(this.parked(t) || this.orphaned(t, now, false))) continue;
       delete this.fails[t.id];
       t.desc = this.appendNote(t.desc, BRAIN_NAME, 'Người giao việc bảo làm tiếp — đưa việc về To do để chạy lại.');
       t.col = 'todo';

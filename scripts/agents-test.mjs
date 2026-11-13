@@ -649,6 +649,24 @@ function client(cookie, cid, name) {
   ok(!!retry.agent, 'and it can be taken again, with a fresh set of tries');
   if (retry.agent) await api('/api/agents/exit', { agent: retry.agent.id, code: 130 });
 
+  // a card left in "doing" under a session the office no longer has (its runner was killed hard, say)
+  // is not stuck there: the next poll puts it back in To do and offers it again
+  A.send({ t: 'task:update', id: csv?.id, patch: { assignee: 'ag-ghost0000001' } });
+  A.send({ t: 'task:move', id: csv?.id, col: 'doing', ord: 1 });
+  await A.wait((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col === 'doing' && m.task.assignee === 'ag-ghost0000001');
+  const unstuckP = A.next((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col === 'todo' && !m.task.assignee);
+  const hbG = await hb();
+  ok(!!(await unstuckP) && hbG.tasks.some((t) => t.id === csv?.id), 'a card whose session is gone goes back to To do by itself and is offered again');
+  // …and one dragged back to To do by hand is free to take, not still held by the lost session
+  const heldP = A.next((m) => m.t === 'task' && m.task.id === csv?.id && m.task.assignee === 'ag-ghost0000002');
+  A.send({ t: 'task:update', id: csv?.id, patch: { assignee: 'ag-ghost0000002' } });
+  A.send({ t: 'task:move', id: csv?.id, col: 'doing', ord: 1 });
+  await heldP;
+  await A.wait((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col === 'doing');
+  const freedP = A.next((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col === 'todo');
+  A.send({ t: 'task:move', id: csv?.id, col: 'todo', ord: 1 });
+  ok((await freedP)?.task.assignee === null, 'a card dragged back to To do lets go of a session that is gone');
+
   // clean up
   for (const t of [task, docsTask, qaTask, opsTask, fixTask, csv]) if (t) A.send({ t: 'task:delete', id: t.id });
   A.send({ t: 'agents', m: { a: 'brainConfig', config: { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false, approvals: 'lead' } } });
