@@ -207,14 +207,17 @@ export function Office() {
   );
 }
 
-/** Which floors' game UI is needed now: standing there, or a game / event of theirs reached this person
- *  (the servers only send a game's view to the people concerned). */
+/** Which floors' game UI is needed now: standing there, or a game / event of theirs reached this person.
+ *  Werewolf, mole and prop hunt send everyone their (empty) view on welcome, so having one is not
+ *  enough: it has to be a game this person plays in or has signed up for. */
 function useAreas() {
   const zone = useStore((s) => s.me?.zone ?? '');
   const cinema = zone === 'cinema' || ZONE_BY_ID.get(zone)?.kind === 'bar';
-  const wolf = useStore((s) => zone === 'wolfroom' || !!s.wolf);
-  const mole = useStore((s) => zone.startsWith('f5-') || !!s.mole || !!s.moleSplash || !!s.moleTask || s.cctv);
-  const ph = useStore((s) => zone.startsWith('f6-') || !!s.ph || !!s.phMark);
+  const wolf = useStore((s) => zone === 'wolfroom' || !!s.wolf?.me.inGame);
+  const mole = useStore(
+    (s) => zone.startsWith('f5-') || !!s.mole?.me.inGame || !!s.mole?.joined.some((j) => j.id === s.me?.id) || !!s.moleSplash || !!s.moleTask || s.cctv,
+  );
+  const ph = useStore((s) => zone.startsWith('f6-') || !!s.ph?.me.inGame || !!s.ph?.joined.some((j) => j.id === s.me?.id) || !!s.phMark);
   const wed = useStore((s) => inWedZone(zone) || !!s.wedBanner || !!s.wedGift || !!s.wedCatch || s.wedView !== null);
   return { cinema, wolf, mole, ph, wed };
 }
