@@ -89,6 +89,14 @@ async function until(fn, ms, every = 300) {
   ok(c1.length >= 2 && c1[1].resumed && c1[1].sid === c1[0].sid, 'and it was the same conversation, resumed — not started over');
   ok(/Tiếp tục đúng việc đang làm dở/.test(c1[1]?.prompt ?? ''), 'the resumed session is told to go on from where it stopped');
 
+  // ---- 1a. a second runner for the same office + folder refuses to start (it would drop the first one's sessions)
+  {
+    const dup = startRunner();
+    const code = await until(() => dup.child.exitCode, 15_000);
+    ok(code === 1 && /runner khác/.test(dup.out()), 'a second runner for the same folder refuses to start');
+    ok(r.child.exitCode === null, 'and the first one keeps running');
+  }
+
   // ---- 1b. the plan's quota runs out: the work waits for the reset, it is never "broken"
   const tq = await task(`HET-QUOTA ${run}`);
   ok(!!(await until(() => col(tq?.id)?.col === 'review', 60_000, 500)), 'after the reset the same work finishes');

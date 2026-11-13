@@ -1249,6 +1249,8 @@ export class AgentHub {
       if (t.project && mine && t.project !== mine.project) return { ok: false, error: `việc này làm ở dự án ${t.project}` };
       const origin = this.taskOrigin(t);
       if (!this.allowed(uid, origin)) return { ok: false, error: 'người giao việc này chưa được bạn cấp quyền' };
+      // the job list was counted once for every card in it: each claim spends a session, so look again
+      if (!this.brain.mayStart(origin)) return { ok: false, error: 'văn phòng đã chạm trần phiên/giờ, việc nằm chờ' };
       const a = await this.join(await this.runnerId(), 'runner', t.dept, uid, '', undefined, undefined, origin);
       a.thread = t.thread ?? null;
       t.assignee = a.p.id;

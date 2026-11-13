@@ -82,8 +82,13 @@ export interface BrainItem {
 
 /** Two thinking rounds per request: one to decide, one more after the person answers a question. */
 export const BRAIN_MAX_TRIES = 3;
-/** A claimed decision goes back in the queue if the runner does not answer in time. */
-export const BRAIN_LEASE_MS = 90_000;
+/** How long the runner lets the model think: a decision, and a final report. */
+export const BRAIN_DECIDE_MS = 120_000;
+export const BRAIN_REPORT_MS = 90_000;
+/** A claimed thought goes back in the queue if the runner has not answered this long AFTER its own
+ *  timeout ran out — the slack covers posting the answer back (and a retry or two), so a slow but
+ *  live machine never has its thought handed to a second one and decided twice. */
+export const BRAIN_LEASE_MS = 60_000;
 /** A question nobody answers stops waiting after this. */
 export const BRAIN_ASK_TTL = 6 * 3600_000;
 /** Items are kept this long after they are done (for the log). */

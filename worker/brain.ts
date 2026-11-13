@@ -12,12 +12,14 @@
 import {
   APPROVE_WAIT_MS,
   BRAIN_ASK_TTL,
+  BRAIN_DECIDE_MS,
   BRAIN_ID,
   BRAIN_KEEP_MS,
   BRAIN_LEASE_MS,
   BRAIN_LIMITS,
   BRAIN_MAX_TRIES,
   BRAIN_NAME,
+  BRAIN_REPORT_MS,
   DEFAULT_BRAIN,
   parseDecision,
   parseReport,
@@ -275,7 +277,8 @@ export class Brain {
     if (!body) return;
     const now = Date.now();
     // a reply inside a thread we asked a question in is the answer, not a new request
-    const asked = this.items.find((i) => i.state === 'asked' && (i.root === root || (i.who === who && root === '')));
+    // (only from the person it was asked of: someone else talking in the same thread is not the answer)
+    const asked = this.items.find((i) => i.state === 'asked' && i.who === who && (i.root === root || root === ''));
     if (asked && source === 'chat') {
       const open = asked.followUps[asked.followUps.length - 1];
       if (open && !open.a) open.a = body;
@@ -334,9 +337,9 @@ export class Brain {
     const r = this.items.find((i) => i.report === 'pending' && (i.notBefore ?? 0) <= now);
     if (r) {
       r.report = 'thinking';
-      r.reportLease = { by: uid, until: now + BRAIN_LEASE_MS };
+      r.reportLease = { by: uid, until: now + BRAIN_REPORT_MS + BRAIN_LEASE_MS };
       this.save();
-      return { id: r.id, kind: 'report', model: this.cfg.model, system: this.reportSystem(), prompt: await this.reportPrompt(r), timeoutMs: 90_000 };
+      return { id: r.id, kind: 'report', model: this.cfg.model, system: this.reportSystem(), prompt: await this.reportPrompt(r), timeoutMs: BRAIN_REPORT_MS };
     }
     const it = this.items.find((i) => i.state === 'pending' && (i.notBefore ?? 0) <= now);
     if (!it) {
@@ -344,16 +347,19 @@ export class Brain {
       return null;
     }
     if (it.tries >= BRAIN_MAX_TRIES) {
-      await this.finish(it, { action: 'answer', reply: 'Mình vẫn chưa hiểu rõ yêu cầu này. Bạn mô tả lại giúp mình trong một câu: muốn kết quả cuối cùng là gì?' }, []);
-      return null;
+      // out of tries: the person hears it (never a silent drop), and the machine gets the next one
+      const reply = 'Mình vẫn chưa hiểu rõ yêu cầu này. Bạn mô tả lại giúp mình trong một câu: muốn kết quả cuối cùng là gì?';
+      await this.say(reply, Brain.thread(it.who), it.root);
+      await this.finish(it, { action: 'answer', reply }, []);
+      return this.next(uid);
     }
     it.state = 'thinking';
-    it.lease = { by: uid, until: now + BRAIN_LEASE_MS };
+    it.lease = { by: uid, until: now + BRAIN_DECIDE_MS + BRAIN_LEASE_MS };
     this.save();
     await this.host.showBrain(true, `nghĩ: ${oneLine(it.text, 40)}`);
     await this.host.pushActivity(BRAIN_ID, { ts: now, kind: 'prompt', icon: '🧠', text: `${it.whoName}: ${oneLine(it.text, 120)}` });
     this.push();
-    return { id: it.id, kind: 'decide', model: this.cfg.model, system: await this.system(), prompt: await this.user(it), timeoutMs: 120_000 };
+    return { id: it.id, kind: 'decide', model: this.cfg.model, system: await this.system(), prompt: await this.user(it), timeoutMs: BRAIN_DECIDE_MS };
   }
 
   /** The machine brings back whatever the model printed — or that it could not reach Claude. */
@@ -381,6 +387,10 @@ export class Brain {
       if (it.reportLease.by !== uid) return { ok: false, error: 'báo cáo này do máy khác viết' };
       return this.reported(it, error ? null : parseReport(raw), error);
     }
+    // only a request still waiting for its decision takes one: a retried POST, an error arriving after
+    // the answer already landed, or a request the person cancelled must never be decided again
+    if (it.state === 'done') return { ok: true };
+    if (it.state !== 'thinking' && it.state !== 'pending') return { ok: false, error: 'yêu cầu này không còn chờ quyết định' };
     if (it.lease && it.lease.by !== uid) return { ok: false, error: 'yêu cầu này do máy khác nhận' };
     if (error) {
       // the machine could not reach Claude: that is not the request's fault, so it costs no try —
@@ -619,8 +629,10 @@ export class Brain {
     if (d.action === 'ask') {
       const q = oneLine(d.question || d.reply, BRAIN_LIMITS.question);
       if (!q) {
-        // nothing to ask after all — treat it as an answer so the request does not stall
-        await this.finish(it, { ...d, action: 'answer', reply: reply || 'Mình chưa rõ yêu cầu, bạn nói thêm một câu nhé.' }, []);
+        // nothing to ask after all — treat it as an answer so the request does not stall (said out loud)
+        const answer = reply || 'Mình chưa rõ yêu cầu, bạn nói thêm một câu nhé.';
+        await this.say(answer, thread, it.root);
+        await this.finish(it, { ...d, action: 'answer', reply: answer }, []);
         return;
       }
       it.followUps.push({ q, a: '' });
@@ -822,6 +834,9 @@ export class Brain {
       // a card that stopped after breaking down is not finished work: the person was told, and the
       // report waits until it runs again ("làm tiếp") and really settles
       if (!work.every((t) => settled(t) && !this.host.parked(t))) continue;
+      // `at` restarts below (it times the report), and workOf only finds handed-over cards created
+      // after `at` — so pin every card of the work now, or the report would forget the handoffs
+      it.tasks = [...new Set([...(it.tasks ?? []), ...work.map((t) => t.id)])];
       it.report = 'pending';
       it.reportTries = 0;
       it.notBefore = undefined;
@@ -962,7 +977,9 @@ export class Brain {
   async cancel(uid: string, id: string) {
     const it = this.items.find((x) => x.id === id && x.state !== 'done');
     if (!it || it.who !== uid) return;
+    // a machine still thinking about it is told "done" when its answer comes back, and nothing is applied
     it.state = 'done';
+    it.lease = undefined;
     this.save();
     this.push();
   }

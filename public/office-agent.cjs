@@ -18,6 +18,9 @@
 // where it stopped. If the office itself is unreachable, sessions keep working and their results
 // are delivered when it is back. If this runner restarts, it picks its sessions back up.
 //
+// The connection code can be given as OFFICE_TOKEN=<mã> in the environment instead of --token.
+// Only one runner may run per machine + office + folder; a second one refuses to start.
+//
 // Options:
 //   --depts dev,qa,ops,design,docs,biz,lead   departments this machine works for (default: all)
 //   --project <tên>      the project name the office files work and lessons under (default: the git
@@ -66,10 +69,17 @@ const die = (m) => {
   console.error(m);
   process.exit(1);
 };
-if (!opt.url || !opt.token) die('Cách dùng: node office-agent.cjs --url https://<office> --token <mã-kết-nối> --dir <thư mục dự án> [--depts dev,qa] [--max 3]');
+// the connection code may also come from the environment (OFFICE_TOKEN), where `ps` does not show it
+const token = typeof opt.token === 'string' ? opt.token : String(process.env.OFFICE_TOKEN || '');
+if (!opt.url || !token) die('Cách dùng: node office-agent.cjs --url https://<office> --token <mã-kết-nối> --dir <thư mục dự án> [--depts dev,qa] [--max 3]\n   (hoặc đặt mã kết nối trong biến môi trường OFFICE_TOKEN thay cho --token)');
 const base = new URL(opt.url).origin;
-const token = String(opt.token);
 const workdir = path.resolve(String(opt.dir || process.cwd()).replace(/^~(?=$|\/)/, os.homedir()));
+// other users on this machine can read every process's command line: keep the code out of it
+try {
+  process.title = `node office-agent.cjs --url ${base} --dir ${workdir}`;
+} catch {
+  /* not supported here */
+}
 if (!fs.existsSync(workdir)) die(`Không thấy thư mục ${workdir}`);
 const depts = String(opt.depts || ALL.join(',')).split(',').map((s) => s.trim()).filter((d) => ALL.includes(d));
 if (!depts.length) die(`--depts phải gồm: ${ALL.join(', ')}`);
@@ -146,6 +156,67 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // department profile and the Claude Code session id. Results the office has not heard yet wait here
 // too, so a network cut never loses "this task is finished".
 const stateFile = path.join(home, `${RUNNER}.json`);
+
+// One process per runner. Two processes with the same id (same machine, office and folder — say the
+// old one is still up after the connection code changed) would each tell the office only about their
+// own sessions, and the office would hand the other one's work back to the board. The second one
+// refuses to start instead.
+const lockFile = path.join(home, `${RUNNER}.lock`);
+function holder() {
+  try {
+    const pid = Number(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid) || 0;
+    if (!pid || pid === process.pid) return 0;
+    process.kill(pid, 0); // throws when no such process
+    return pid;
+  } catch (e) {
+    if (e && e.code === 'EPERM') return -1; // alive, someone else's
+    // half-written by a runner starting this very moment: give it the benefit of the doubt
+    if (e instanceof SyntaxError) {
+      try {
+        return Date.now() - fs.statSync(lockFile).mtimeMs < 5000 ? -1 : 0;
+      } catch {
+        return 0;
+      }
+    }
+    return 0;
+  }
+}
+function takeLock() {
+  for (let i = 0; i < 4; i++) {
+    try {
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, at: Date.now() }), { flag: 'wx' });
+      return;
+    } catch (e) {
+      if (e.code !== 'EEXIST') return; // cannot lock here at all (read-only home…): run as before
+    }
+    if (!holder()) {
+      // left behind by a runner that was killed outright
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {
+        /* another one got to it first */
+      }
+      continue;
+    }
+    // the old one may be shutting down right now — give it a moment before giving up
+    if (i < 3) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+  }
+  const pid = holder();
+  die(
+    `❌ Một runner khác${pid > 0 ? ` (pid ${pid})` : ''} đang chạy cho cùng Office và thư mục ${workdir}.\n` +
+      `   Hai runner trùng nhau sẽ thả phiên làm việc của nhau. Tắt runner cũ${pid > 0 ? ` (kill ${pid})` : ''} rồi chạy lại.\n` +
+      `   Nếu chắc chắn không còn runner nào, xoá ${lockFile}.`,
+  );
+}
+takeLock();
+process.on('exit', () => {
+  try {
+    if (Number(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid) === process.pid) fs.unlinkSync(lockFile);
+  } catch {
+    /* not ours, or already gone */
+  }
+});
+
 let state = { sessions: {}, exits: [] };
 try {
   const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
@@ -253,8 +324,9 @@ async function checkOutage() {
   lastOutageEnd = Date.now();
 }
 
-function hooksFor(agent) {
-  const cmd = `curl -sf -m 4 -X POST -H 'Authorization: Bearer ${token}' -H 'X-Office-Agent: ${agent.id}' -H 'X-Office-Dept: ${agent.dept}' -H 'Content-Type: application/json' --data-binary @- '${base}/api/activity?v=2' 2>/dev/null || true # office-runner`;
+/** `auth` is a file holding the Authorization header: on the command line curl would show it in `ps`. */
+function hooksFor(agent, auth) {
+  const cmd = `curl -sf -m 4 -X POST -H @'${auth}' -H 'X-Office-Agent: ${agent.id}' -H 'X-Office-Dept: ${agent.dept}' -H 'Content-Type: application/json' --data-binary @- '${base}/api/activity?v=2' 2>/dev/null || true # office-runner`;
   const h = (matcher) => [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command: cmd }] }];
   return { hooks: { SessionStart: h(), UserPromptSubmit: h(), PostToolUse: h('*'), Notification: h(), Stop: h(), SessionEnd: h() } };
 }
@@ -494,8 +566,11 @@ function start(entry, resume = false, why = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-agent-'));
   const settings = path.join(dir, 'settings.json');
   const mcp = path.join(dir, 'mcp.json');
-  fs.writeFileSync(settings, JSON.stringify(hooksFor(agent)));
-  fs.writeFileSync(mcp, JSON.stringify({ mcpServers: { office: { type: 'http', url: `${base}/api/mcp`, headers: { Authorization: `Bearer ${token}`, 'X-Office-Agent': agent.id } } } }));
+  const auth = path.join(dir, 'auth.txt');
+  // the connection code is in these files: readable by this user only
+  fs.writeFileSync(auth, `Authorization: Bearer ${token}\n`, { mode: 0o600 });
+  fs.writeFileSync(settings, JSON.stringify(hooksFor(agent, auth)), { mode: 0o600 });
+  fs.writeFileSync(mcp, JSON.stringify({ mcpServers: { office: { type: 'http', url: `${base}/api/mcp`, headers: { Authorization: `Bearer ${token}`, 'X-Office-Agent': agent.id } } } }), { mode: 0o600 });
   const logFile = path.join(logs, `${new Date().toISOString().replace(/[:.]/g, '-')}-${agent.name.replace(/[^\w-]+/g, '_')}${resume ? '-tiep' : ''}.log`);
   const out = fs.createWriteStream(logFile, { flags: 'a' });
   const f = flagsFor(profile || {}, entry.approvals);
@@ -699,17 +774,30 @@ const LABEL = { decide: 'quyết định', approve: 'duyệt quyền', report: '
 
 async function thought(job) {
   const started = Date.now();
+  let raw;
   try {
-    const raw = await think(job);
+    raw = await think(job);
     outageStreak = 0;
-    const res = await api('/api/agents/brain', { id: job.id, raw });
-    log(`🧠 ${LABEL[job.kind] || 'quyết định'} xong sau ${((Date.now() - started) / 1000).toFixed(1)}s${res && res.ok === false ? ` — office: ${res.error}` : ''}`);
   } catch (e) {
     const msg = clip(e.message, 200);
     log(`🧠 ⚠️  ${LABEL[job.kind] || 'quyết định'}: ${msg}`);
     if (TRANSIENT.test(msg) || !(await online())) enterOutage(msg);
     // the office puts it back without blaming the request
     await api('/api/agents/brain', { id: job.id, raw: '', error: msg || 'lỗi' }).catch(() => {});
+    return;
+  }
+  // the model answered: deliver THAT answer, never an error in its place — a POST that timed out may
+  // well have landed, and the office takes the same answer twice as once. Three tries fit in the
+  // lease's slack; after that the lease runs out and the office hands it out again.
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await api('/api/agents/brain', { id: job.id, raw }, 15_000);
+      log(`🧠 ${LABEL[job.kind] || 'quyết định'} xong sau ${((Date.now() - started) / 1000).toFixed(1)}s${res && res.ok === false ? ` — office: ${res.error}` : ''}`);
+      return;
+    } catch (e) {
+      log(`🧠 ⚠️  chưa gửi được ${LABEL[job.kind] || 'quyết định'} về Office: ${clip(e.message, 120)}`);
+      if (i < 2) await sleep(3000 * (i + 1));
+    }
   }
 }
 
