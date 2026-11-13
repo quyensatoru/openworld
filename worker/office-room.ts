@@ -1154,6 +1154,8 @@ export class OfficeRoom extends DurableObject<Env> {
         this.broadcast({ t: 'taskDel', id });
         for (const o of this.conns.values()) if (o.p.taskId === id) this.update(o, { taskId: null });
         await db.deleteTask(this.env.DB, id);
+        // a round or a 📋 report waiting on this card must notice it is gone, or it waits forever
+        await this.agents.brain.progress().catch(() => {});
         return;
       }
 

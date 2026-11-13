@@ -222,7 +222,15 @@ export class Brain {
   watch(uid: string) {
     this.watchers.add(uid);
     this.host.sendTo(uid, { t: 'brain', v: this.view() });
-    if (!this.rounds) void this.allRounds().then((r) => r.length && this.push());
+    // first read since the room woke: a round left open may have lost its cards meanwhile — settle it now
+    if (!this.rounds)
+      void this.allRounds()
+        .then(async (r) => {
+          if (!r.length) return;
+          this.push();
+          if (r.some((x) => !x.closed)) await this.refreshRounds(await this.host.getTasks());
+        })
+        .catch(() => {});
   }
 
   left(uid: string) {

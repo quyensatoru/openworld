@@ -137,8 +137,20 @@ function client(cookie, cid, name) {
   v = await view();
   ok(v?.rounds?.filter((r) => r.project === P).length === 2 && v.rounds.find((r) => r.id === r1?.id)?.summary.includes(`Mục-${run}`), 'both rounds are listed, the first one still with its results');
 
-  for (const t of cards) A.send({ t: 'task:delete', id: t.id });
-  await sleep(200);
+  // ---- the cards of a round still running are deleted: it closes by itself, so the button frees up
+  const r2 = v?.rounds?.find((r) => r.project === P && r.id !== r1?.id);
+  ok(r2 && !r2.closed, 'the second round runs');
+  A.send({ t: 'task:delete', id: qa.id });
+  await sleep(400);
+  v = await view();
+  ok(v?.rounds?.find((r) => r.id === r2?.id)?.closed === false, 'one card deleted: the round still runs on the others');
+  for (const t of cards) if (t.id !== qa.id) A.send({ t: 'task:delete', id: t.id });
+  await sleep(600);
+  v = await view();
+  const r2now = v?.rounds?.find((r) => r.id === r2?.id);
+  ok(r2now?.closed === true, `all its cards deleted: the round closes without anyone pressing (closed=${r2now?.closed})`);
+  ok(!(v?.queue ?? []).some((i) => i.round === r2?.id), 'Tổng quản stops waiting to report on it');
+  ok(v?.rounds?.find((r) => r.id === r1?.id)?.summary.includes(`Mục-${run}`), 'the earlier round keeps its results');
   A.close();
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);
