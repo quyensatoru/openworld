@@ -21,6 +21,8 @@ import {
   BRAIN_NAME,
   BRAIN_REPORT_MS,
   DEFAULT_BRAIN,
+  RATE_REASON_MAX,
+  REPORT_PREFIX,
   parseDecision,
   parseReport,
   parseVerdict,
@@ -937,10 +939,52 @@ export class Brain {
   private async sendReport(it: BrainItem, reply: string) {
     it.report = 'sent';
     it.notBefore = undefined;
+    it.reportMsg = crypto.randomUUID();
     this.save();
     this.push();
-    await this.host.chat({ id: crypto.randomUUID(), ch: Brain.thread(it.who), from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: `📋 Kết quả: ${clampStr(reply.replace(/\s+/g, ' '), 1200)}`, ts: Date.now(), ...(it.root ? { root: it.root } : {}) });
+    await this.host.chat({ id: it.reportMsg, ch: Brain.thread(it.who), from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: `${REPORT_PREFIX}: ${clampStr(reply.replace(/\s+/g, ' '), 1200)}`, ts: Date.now(), ...(it.root ? { root: it.root } : {}) });
     await this.host.pushActivity(BRAIN_ID, { ts: Date.now(), kind: 'say', icon: '📋', text: `Báo cáo cho ${it.whoName}: ${oneLine(reply, 140)}` });
+  }
+
+  /**
+   * 👍 / 👎 on a 📋 report. Only the person the report was written for can rate it (it sits in their
+   * own thread, "Văn phòng của bạn"). A 👎 with a reason becomes a lesson for Tổng quản in the
+   * project the work was done in, so the next decisions see it; a 👍 (or a 👎 without a reason) is
+   * only counted. Rating again replaces the earlier one, and takes back its lesson if need be.
+   * Returns whether the playbook changed.
+   */
+  async rate(uid: string, by: string, msgId: string, vote: number, rawReason?: string): Promise<boolean> {
+    const v: 1 | -1 = vote > 0 ? 1 : -1;
+    const m = /^[\w-]{6,80}$/.test(msgId) ? await db.getChat(this.host.DB, msgId) : null;
+    if (!m || m.from !== BRAIN_ID || !m.text.startsWith(REPORT_PREFIX)) {
+      this.host.sendTo(uid, { t: 'err', msg: 'Chỉ chấm được tin 📋 Kết quả của Tổng quản.' });
+      return false;
+    }
+    if (m.ch !== Brain.thread(uid)) {
+      this.host.sendTo(uid, { t: 'err', msg: 'Chỉ người nhận báo cáo này mới chấm được.' });
+      return false;
+    }
+    const reason = v < 0 ? oneLine(rawReason ?? '', RATE_REASON_MAX) : '';
+    const before = await db.getRating(this.host.DB, msgId);
+    let lessonId: string | null = before?.lessonId ?? null;
+    let changed = false;
+    if (v < 0 && reason) {
+      const it = this.items.find((x) => x.reportMsg === msgId) ?? (m.root ? this.items.find((x) => x.root === m.root && x.report === 'sent') : undefined);
+      // the lesson belongs to the project the work was done in (the request's, else its thread's cards')
+      let project = it?.project ?? '';
+      if (!project && m.root) project = [...(await this.host.getTasks()).values()].find((t) => t.thread === m.root && t.project)?.project ?? '';
+      const asked = it ? `“${oneLine(it.text, 140)}”` : 'một yêu cầu';
+      lessonId ??= crypto.randomUUID();
+      await db.saveLesson(this.host.DB, { id: lessonId, dept: 'lead', project, machine: '', text: `👎 ${by} chưa hài lòng với kết quả ${asked}: ${reason}`, by, at: Date.now() });
+      changed = true;
+    } else if (lessonId) {
+      await db.deleteLesson(this.host.DB, lessonId).catch(() => false);
+      lessonId = null;
+      changed = true;
+    }
+    await db.saveRating(this.host.DB, { msgId, thread: m.root ?? m.id, userId: uid, vote: v, reason, lessonId }, Date.now());
+    this.host.sendTo(uid, { t: 'chatRate', id: msgId, rate: { v, ...(reason ? { reason } : {}) } });
+    return changed;
   }
 
   /** Nobody could write the report: the person still hears how each piece ended. */

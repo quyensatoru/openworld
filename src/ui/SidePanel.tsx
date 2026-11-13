@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AGENT_ID, DEPTS, DEPT_BY_ID } from '../../shared/agents';
-import { BRAIN_ID } from '../../shared/brain';
+import { BRAIN_ID, RATE_REASON_MAX, REPORT_PREFIX } from '../../shared/brain';
 import { ZONE_BY_ID } from '../../shared/map';
 import { STATUS_META, type ChatMsg } from '../../shared/protocol';
 import { game } from '../game';
@@ -185,6 +185,21 @@ function Chat() {
     setCaret(0);
   };
 
+  // a template fills the box (nothing is sent): the first [ … ] is selected, so typing replaces it
+  const fillTemplate = (text: string) => {
+    setState({ chatDraft: text });
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      const a = text.indexOf('[');
+      const b = text.indexOf(']', a);
+      if (a >= 0 && b > a) el.setSelectionRange(a, b + 1);
+      else el.setSelectionRange(text.length, text.length);
+      setCaret(el.selectionStart ?? text.length);
+    });
+  };
+
   const avatarOf = (id: string) => players[id]?.avatar ?? team[id]?.avatar ?? (id === meId ? getState().me?.avatar : undefined);
 
   return (
@@ -248,6 +263,15 @@ function Chat() {
           </button>
         )}
       </div>
+      {officeTab && !openThread && !draft.trim() && (
+        <div className="ask-templates" aria-label="Mẫu giao việc">
+          {ASK_TEMPLATES.map((t) => (
+            <button key={t.label} type="button" className="chip" onClick={() => fillTemplate(t.text)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
       <form className="chat-input" onSubmit={send}>
         {showMentions && (
           <div className="mention-pop">
@@ -301,6 +325,14 @@ function Chat() {
   );
 }
 
+/** Ready-made requests for Tổng quản: tap one, fill in the [ … ] parts, send. */
+const ASK_TEMPLATES = [
+  { label: '🐞 Sửa lỗi', text: 'Sửa lỗi: [lỗi gì] — gặp khi [làm gì thì bị]. Dự án: [tên dự án]' },
+  { label: '✨ Tính năng mới', text: 'Làm tính năng: [mô tả]. Xong khi: [tiêu chí]. Dự án: [tên dự án]' },
+  { label: '🔎 Rà soát', text: 'Rà soát [phần nào] của [tên dự án], liệt kê vấn đề và đề xuất cải tiến theo thứ tự ưu tiên' },
+  { label: '🚀 Deploy', text: 'Kiểm tra rồi deploy [tên dự án] lên production, báo lại phiên bản để quay lại nếu cần' },
+];
+
 function Message({ m, myName, avatar, cont, repeat }: { m: ChatMsg; myName: string; avatar?: Parameters<typeof AvatarDot>[0]['avatar']; cont: boolean; repeat: number }) {
   if (m.from === 'system')
     return (
@@ -339,7 +371,60 @@ function Message({ m, myName, avatar, cont, repeat }: { m: ChatMsg; myName: stri
             ),
           )}
         </div>
+        {m.from === BRAIN_ID && m.ch.startsWith('ask:') && m.text.startsWith(REPORT_PREFIX) && <RateBar m={m} />}
       </div>
+    </div>
+  );
+}
+
+/** 👍 / 👎 under a 📋 report. 👎 asks for a reason (optional) — that is what Tổng quản learns from. */
+function RateBar({ m }: { m: ChatMsg }) {
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState(m.rate?.reason ?? '');
+  const rate = m.rate;
+  const down = () => {
+    setReason(rate?.reason ?? '');
+    setAsking(true);
+  };
+  const send = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    game.rateReport(m.id, -1, reason.trim());
+    setAsking(false);
+  };
+  return (
+    <div className="rate-bar">
+      {!asking && (
+        <div className="rb-row">
+          <button type="button" className={`rb-btn${rate?.v === 1 ? ' on' : ''}`} title="Kết quả ổn" aria-pressed={rate?.v === 1} onClick={() => game.rateReport(m.id, 1)}>
+            👍
+          </button>
+          <button type="button" className={`rb-btn${rate?.v === -1 ? ' on' : ''}`} title="Chưa đạt — cho Tổng quản biết vì sao" aria-pressed={rate?.v === -1} onClick={down}>
+            👎
+          </button>
+          <span className="rb-note">
+            {rate?.v === 1 ? 'Bạn thấy kết quả ổn' : rate?.v === -1 ? (rate.reason ? `Chưa đạt: ${rate.reason}` : 'Bạn thấy chưa đạt') : 'Kết quả thế nào?'}
+          </span>
+        </div>
+      )}
+      {asking && (
+        <form className="rb-why" onSubmit={send}>
+          <input
+            autoFocus
+            className="input"
+            maxLength={RATE_REASON_MAX}
+            placeholder="Chưa đạt ở đâu? (không bắt buộc) — Tổng quản sẽ rút kinh nghiệm"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setAsking(false))}
+          />
+          <button className="btn primary" type="submit">
+            Gửi 👎
+          </button>
+          <button className="btn" type="button" onClick={() => setAsking(false)}>
+            Huỷ
+          </button>
+        </form>
+      )}
     </div>
   );
 }

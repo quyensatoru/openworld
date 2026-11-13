@@ -1,10 +1,19 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { loadProfile } from '../profile';
 import { setState, useStore } from '../store';
-import { avatars } from '../world/avatar/manifest';
-import { CharacterCreator } from './CharacterCreator';
-import { Office } from './Office';
 import { Toasts } from './Toasts';
+
+// The 3D office (three.js, the world, every panel) is its own chunk: the login screen comes up on a
+// small bundle, and the rest downloads while the passcode is being typed (see warmUp).
+const loadOffice = () => import('./Office');
+const loadCreator = () => import('./CharacterCreator');
+const Office = lazy(() => loadOffice().then((m) => ({ default: m.Office })));
+const CharacterCreator = lazy(() => loadCreator().then((m) => ({ default: m.CharacterCreator })));
+
+/** Start fetching the office code without waiting for it (a failed fetch is retried by lazy()). */
+function warmUp() {
+  loadOffice().catch(() => {});
+}
 
 async function boot() {
   try {
@@ -12,7 +21,12 @@ async function boot() {
     const s = (await res.json()) as { authed: boolean; office: string; needPasscode: boolean };
     setState({ officeName: s.office, needPasscode: s.needPasscode });
     document.title = s.office;
-    if (!s.authed) return setState({ phase: 'login' });
+    if (!s.authed) {
+      setState({ phase: 'login' });
+      // the login card is up: fetch the office in the background while the passcode is typed
+      window.setTimeout(warmUp, 300);
+      return;
+    }
     afterLogin();
   } catch {
     setState({ phase: 'login' });
@@ -20,7 +34,8 @@ async function boot() {
 }
 
 export function afterLogin() {
-  avatars.init(); // start downloading character models early
+  // start downloading character models early (never in the way of the login screen: we are past it)
+  import('../world/avatar/manifest').then((m) => m.avatars.init()).catch(() => {});
   const p = loadProfile();
   setState({ phase: p.name && p.avatar ? 'office' : 'creator' });
 }
@@ -38,8 +53,21 @@ export function App() {
         </div>
       )}
       {phase === 'login' && <Login />}
-      {phase === 'creator' && <CharacterCreator mode="first" onDone={() => setState({ phase: 'office' })} />}
-      {phase === 'office' && <Office />}
+      {(phase === 'creator' || phase === 'office') && (
+        <Suspense
+          fallback={
+            <div className="screen">
+              <div style={{ display: 'grid', placeItems: 'center', gap: 14 }}>
+                <div className="spinner" />
+                <p className="muted">Đang tải văn phòng…</p>
+              </div>
+            </div>
+          }
+        >
+          {phase === 'creator' && <CharacterCreator mode="first" onDone={() => setState({ phase: 'office' })} />}
+          {phase === 'office' && <Office />}
+        </Suspense>
+      )}
       <Toasts />
     </>
   );

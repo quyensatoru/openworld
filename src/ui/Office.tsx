@@ -11,16 +11,13 @@ import { Safe } from './Safe';
 import { FpLookControls } from './FpLook';
 import { CharacterCreator } from './CharacterCreator';
 import { BigScreen } from './BigScreen';
-import { BarPanel, CinemaPanel } from './Cinema';
 import { ArcadePill, ArcadeWindow, LiftPanel } from './Arcade';
 import { KaraPhonesAsk, KaraScore, KaraZoomBar, KaraokePanel } from './Karaoke';
-import { WolfEnd, WolfNight, WolfPanel } from './Werewolf';
 import { MOLE_ROOMS } from '../../shared/mole';
-import { MoleActions, MoleCams, MoleEject, MoleEnd, MoleFog, MoleHud, MoleMeeting, MolePanel, MoleReveal, MoleSplash, MoleVent } from './Mole';
-import { MoleTaskModal } from './MoleTasks';
-import { PropActions, PropBlind, PropCrosshair, PropHud, PropHurt, PropPanel, PropResult, PropSplash } from './PropHunt';
 import { PH_ROOM_IDS, phZone } from '../../shared/prophunt';
-import { WeddingActions, WeddingBanner, WeddingGrab, WeddingHero, WeddingLightbox, WeddingPanel, WeddingPops } from './Wedding';
+import { inWedZone } from '../../shared/wedding';
+import { Area, part } from './lazy-area';
+import { Tour } from './Tour';
 import { ClaudeConnect, ClaudeScreenModal } from './ClaudeScreen';
 import { MeetingTvButton } from './MeetingTv';
 import { VoiceStatus } from './VoiceStatus';
@@ -32,12 +29,52 @@ import { SidePanel } from './SidePanel';
 import { Toolbar } from './Toolbar';
 import { VideoStrip } from './VideoStrip';
 
+// each floor's game UI is its own chunk, loaded the first time it is needed (see lazy-area.tsx)
+const cinemaUi = () => import('./Cinema');
+const CinemaPanel = part(cinemaUi, 'CinemaPanel');
+const BarPanel = part(cinemaUi, 'BarPanel');
+const wolfUi = () => import('./Werewolf');
+const WolfPanel = part(wolfUi, 'WolfPanel');
+const WolfNight = part(wolfUi, 'WolfNight');
+const WolfEnd = part(wolfUi, 'WolfEnd');
+const moleUi = () => import('./Mole');
+const MolePanel = part(moleUi, 'MolePanel');
+const MoleHud = part(moleUi, 'MoleHud');
+const MoleActions = part(moleUi, 'MoleActions');
+const MoleVent = part(moleUi, 'MoleVent');
+const MoleFog = part(moleUi, 'MoleFog');
+const MoleCams = part(moleUi, 'MoleCams');
+const MoleMeeting = part(moleUi, 'MoleMeeting');
+const MoleEject = part(moleUi, 'MoleEject');
+const MoleSplash = part(moleUi, 'MoleSplash');
+const MoleReveal = part(moleUi, 'MoleReveal');
+const MoleEnd = part(moleUi, 'MoleEnd');
+const MoleTaskModal = part(() => import('./MoleTasks'), 'MoleTaskModal');
+const phUi = () => import('./PropHunt');
+const PropPanel = part(phUi, 'PropPanel');
+const PropHud = part(phUi, 'PropHud');
+const PropActions = part(phUi, 'PropActions');
+const PropBlind = part(phUi, 'PropBlind');
+const PropCrosshair = part(phUi, 'PropCrosshair');
+const PropHurt = part(phUi, 'PropHurt');
+const PropSplash = part(phUi, 'PropSplash');
+const PropResult = part(phUi, 'PropResult');
+const wedUi = () => import('./Wedding');
+const WeddingPanel = part(wedUi, 'WeddingPanel');
+const WeddingActions = part(wedUi, 'WeddingActions');
+const WeddingHero = part(wedUi, 'WeddingHero');
+const WeddingGrab = part(wedUi, 'WeddingGrab');
+const WeddingBanner = part(wedUi, 'WeddingBanner');
+const WeddingPops = part(wedUi, 'WeddingPops');
+const WeddingLightbox = part(wedUi, 'WeddingLightbox');
+
 export function Office() {
   const ref = useRef<HTMLDivElement>(null);
   const kanbanOpen = useStore((s) => s.kanbanOpen);
   const creatorOpen = useStore((s) => s.creatorOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const helpOpen = useStore((s) => s.helpOpen);
+  const tourOpen = useStore((s) => s.tourOpen);
   const installHelp = useStore((s) => s.installHelp);
   const panel = useStore((s) => s.panel);
   // theater mode: seated in the cinema while a film plays → hide almost everything, fade the rest when idle
@@ -48,12 +85,15 @@ export function Office() {
   const phRound = useStore((s) => !!s.ph?.me.inGame && ['roles', 'hide', 'seek', 'roundEnd'].includes(s.ph.phase));
   const theater = useStore((s) => s.me?.zone === 'cinema' && !!s.me.seat?.startsWith('cine-') && !!s.cinema && s.cinema.pausedAt == null) || inBar || inKara;
   const idle = useIdle(2500, theater);
+  const want = useAreas();
 
   useEffect(() => {
     game.start(ref.current!);
-    if (!loadPref('helpSeen', false)) {
-      setState({ helpOpen: true });
-      savePref('helpSeen', true);
+    // first visit: the short guide, once (marked seen as it opens, so a reload does not bring it back;
+    // people who already saw the old full help are not new any more)
+    if (!loadPref('tourSeen', false)) {
+      if (!loadPref('helpSeen', false)) setState({ tourOpen: true });
+      savePref('tourSeen', true);
     }
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -63,7 +103,7 @@ export function Office() {
         setState({ panel: 'chat' });
         setTimeout(() => document.querySelector<HTMLInputElement>('.chat-input input')?.focus(), 30);
       } else if (e.key === 'Escape') {
-        setState({ kanbanOpen: false, settingsOpen: false, helpOpen: false, installHelp: false, bigScreen: null, screenOf: null, arcadeOpen: false });
+        setState({ kanbanOpen: false, settingsOpen: false, helpOpen: false, tourOpen: false, installHelp: false, bigScreen: null, screenOf: null, arcadeOpen: false });
         if (getState().karaZoom) game.karaZoom(false);
       } else if (e.key.toLowerCase() === 'k' && !e.ctrlKey && !e.metaKey) {
         setState((s) => ({ kanbanOpen: !s.kanbanOpen }));
@@ -88,23 +128,33 @@ export function Office() {
         <Safe><PlayerCard /></Safe>
         <Safe><Minimap /></Safe>
         {panel && <Safe><SidePanel /></Safe>}
-        <Safe><CinemaPanel /></Safe>
-        <Safe><BarPanel /></Safe>
+        <Area want={want.cinema} label="rạp phim">
+          <Safe><CinemaPanel /></Safe>
+          <Safe><BarPanel /></Safe>
+        </Area>
         <Safe><ArcadePill /></Safe>
         <Safe><KaraokePanel /></Safe>
         <Safe><KaraZoomBar /></Safe>
-        <Safe><WolfPanel /></Safe>
-        <Safe><MolePanel /></Safe>
-        <Safe><MoleHud /></Safe>
-        <Safe><MoleActions /></Safe>
-        <Safe><MoleVent /></Safe>
-        <Safe><PropPanel /></Safe>
-        <Safe><PropHud /></Safe>
-        <Safe><PropActions /></Safe>
-        <Safe><WeddingPanel /></Safe>
-        <Safe><WeddingActions /></Safe>
-        <Safe><WeddingHero /></Safe>
-        <Safe><WeddingGrab /></Safe>
+        <Area want={want.wolf} label="Ma Sói">
+          <Safe><WolfPanel /></Safe>
+        </Area>
+        <Area want={want.mole} label="Nội Gián">
+          <Safe><MolePanel /></Safe>
+          <Safe><MoleHud /></Safe>
+          <Safe><MoleActions /></Safe>
+          <Safe><MoleVent /></Safe>
+        </Area>
+        <Area want={want.ph} label="Trốn tìm">
+          <Safe><PropPanel /></Safe>
+          <Safe><PropHud /></Safe>
+          <Safe><PropActions /></Safe>
+        </Area>
+        <Area want={want.wed} label="tiệc cưới">
+          <Safe><WeddingPanel /></Safe>
+          <Safe><WeddingActions /></Safe>
+          <Safe><WeddingHero /></Safe>
+          <Safe><WeddingGrab /></Safe>
+        </Area>
         <Safe><LiftPanel /></Safe>
         <Safe><Prompt /></Safe>
         <Safe><VoiceStatus /></Safe>
@@ -113,26 +163,36 @@ export function Office() {
         <Safe><Toolbar /></Safe>
         <Safe><Banners /></Safe>
       </div>
-      <Safe><WolfNight /></Safe>
-      <Safe><MoleFog /></Safe>
-      <Safe><MoleCams /></Safe>
-      <Safe><MoleMeeting /></Safe>
-      <Safe><MoleEject /></Safe>
-      <Safe><MoleSplash /></Safe>
-      <Safe><MoleReveal /></Safe>
-      <Safe><MoleEnd /></Safe>
-      <Safe><MoleTaskModal /></Safe>
-      <Safe><PropBlind /></Safe>
-      <Safe><PropCrosshair /></Safe>
-      <Safe><PropHurt /></Safe>
-      <Safe><PropSplash /></Safe>
-      <Safe><PropResult /></Safe>
-      <Safe><WeddingBanner /></Safe>
-      <Safe><WeddingPops /></Safe>
-      <Safe><WeddingLightbox /></Safe>
+      <Area want={want.wolf}>
+        <Safe><WolfNight /></Safe>
+      </Area>
+      <Area want={want.mole}>
+        <Safe><MoleFog /></Safe>
+        <Safe><MoleCams /></Safe>
+        <Safe><MoleMeeting /></Safe>
+        <Safe><MoleEject /></Safe>
+        <Safe><MoleSplash /></Safe>
+        <Safe><MoleReveal /></Safe>
+        <Safe><MoleEnd /></Safe>
+        <Safe><MoleTaskModal /></Safe>
+      </Area>
+      <Area want={want.ph}>
+        <Safe><PropBlind /></Safe>
+        <Safe><PropCrosshair /></Safe>
+        <Safe><PropHurt /></Safe>
+        <Safe><PropSplash /></Safe>
+        <Safe><PropResult /></Safe>
+      </Area>
+      <Area want={want.wed}>
+        <Safe><WeddingBanner /></Safe>
+        <Safe><WeddingPops /></Safe>
+        <Safe><WeddingLightbox /></Safe>
+      </Area>
       <Safe><KaraScore /></Safe>
       <Safe><KaraPhonesAsk /></Safe>
-      <Safe><WolfEnd /></Safe>
+      <Area want={want.wolf}>
+        <Safe><WolfEnd /></Safe>
+      </Area>
       <Safe><ClaudeScreenModal /></Safe>
       <Safe><ArcadeWindow /></Safe>
       {kanbanOpen && <Kanban />}
@@ -141,9 +201,22 @@ export function Office() {
       {creatorOpen && <CharacterCreator mode="edit" onDone={() => setState({ creatorOpen: false })} />}
       {settingsOpen && <Settings />}
       {helpOpen && <Help />}
+      {tourOpen && <Tour />}
       {installHelp && <InstallHelp />}
     </div>
   );
+}
+
+/** Which floors' game UI is needed now: standing there, or a game / event of theirs reached this person
+ *  (the servers only send a game's view to the people concerned). */
+function useAreas() {
+  const zone = useStore((s) => s.me?.zone ?? '');
+  const cinema = zone === 'cinema' || ZONE_BY_ID.get(zone)?.kind === 'bar';
+  const wolf = useStore((s) => zone === 'wolfroom' || !!s.wolf);
+  const mole = useStore((s) => zone.startsWith('f5-') || !!s.mole || !!s.moleSplash || !!s.moleTask || s.cctv);
+  const ph = useStore((s) => zone.startsWith('f6-') || !!s.ph || !!s.phMark);
+  const wed = useStore((s) => inWedZone(zone) || !!s.wedBanner || !!s.wedGift || !!s.wedCatch || s.wedView !== null);
+  return { cinema, wolf, mole, ph, wed };
 }
 
 /** true after `ms` without mouse/keyboard activity (only tracked while `on`). */
@@ -215,6 +288,9 @@ function TopBar() {
         <span className="loc-caret">▾</span>
       </button>
       <Safe><WeatherChip /></Safe>
+      <button className="help-pill glass" onClick={() => setState({ tourOpen: true })} title="Hướng dẫn nhanh" aria-label="Hướng dẫn nhanh">
+        ?
+      </button>
       </div>
       {open && <PlacesMenu zone={zone ?? ''} onPick={() => setOpen(false)} />}
     </div>

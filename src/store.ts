@@ -76,6 +76,8 @@ export interface OfficeStore {
   creatorOpen: boolean;
   settingsOpen: boolean;
   helpOpen: boolean;
+  /** the five-step first-visit guide (ui/Tour.tsx) */
+  tourOpen: boolean;
   /** iPhone: how to get rid of the browser bars (add to home screen) */
   installHelp: boolean;
   selected: string | null; // clicked player id
@@ -231,6 +233,7 @@ export const useStore = create<OfficeStore>(() => ({
   creatorOpen: false,
   settingsOpen: false,
   helpOpen: false,
+  tourOpen: false,
   installHelp: false,
   selected: null,
   prompt: null,

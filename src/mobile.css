@@ -74,7 +74,8 @@
     height: 70px;
   }
   .loc-pill {
-    max-width: calc(100vw - 110px);
+    /* leaves room for the weather chip and the "?" guide button */
+    max-width: calc(100vw - 152px);
   }
   .loc-zone {
     overflow: hidden;

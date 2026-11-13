@@ -727,6 +727,9 @@ class Game {
         if (task.assignee === getState().me?.id || by === getState().me?.id) chime('done');
       }
     });
+    net.on('chatRate', ({ id, rate }) => {
+      setState({ chat: getState().chat.map((m) => (m.id === id ? { ...m, rate: rate ?? undefined } : m)) });
+    });
     net.on('taskDel', ({ id }) => {
       setState((s) => {
         const tasks = { ...s.tasks };
@@ -2627,6 +2630,11 @@ class Game {
   }
 
   /** The virtual employees' panel: the playbook, debriefs waiting, lesson edits. */
+  /** 👍 / 👎 (with an optional reason) on one of Tổng quản's 📋 reports in my own thread */
+  rateReport(id: string, v: 1 | -1, reason?: string) {
+    this.agents({ a: 'rate', id, v, ...(reason ? { reason } : {}) });
+  }
+
   agents(m: AgentMsg) {
     this.net?.send({ t: 'agents', m });
   }

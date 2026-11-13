@@ -58,7 +58,7 @@ async function join(name, shot) {
   await page.click('.creator-panel footer .btn.primary');
   await page.waitForFunction(() => window.__office?.getState().me && window.__office.getState().connected, { timeout: 45000 });
   // close the first-visit help
-  await page.evaluate(() => window.__office.setState({ helpOpen: false }));
+  await page.evaluate(() => window.__office.setState({ helpOpen: false, tourOpen: false }));
   return { page, errors };
 }
 

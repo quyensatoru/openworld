@@ -69,7 +69,7 @@ export function savePref(key: string, value: unknown): void {
 // hand someone else your identity. The settings travel too: without them the app fell back to the
 // phone defaults ("⚡ Nhẹ": a third of the screen's resolution) and the people looked jagged.
 const ME_RE = /^#me=([A-Za-z0-9_-]+)$/;
-const HANDOFF_PREFS = ['quality', 'fpsCap', 'fpLook', 'ambience', 'wolfSpeech', 'helpSeen', 'minimapOpen', 'jukeboxVolume', 'karaVolume', 'karaMonitorVol', 'karaFx', 'karaPhones'];
+const HANDOFF_PREFS = ['quality', 'fpsCap', 'fpLook', 'ambience', 'wolfSpeech', 'helpSeen', 'tourSeen', 'minimapOpen', 'jukeboxVolume', 'karaVolume', 'karaMonitorVol', 'karaFx', 'karaPhones'];
 
 function b64url(s: string): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(s)))

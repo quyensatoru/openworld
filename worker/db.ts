@@ -2,7 +2,7 @@
 
 import { sanitizeAvatar, type AvatarConfig } from '../shared/avatar';
 import { isDept, type Debrief, type Lesson } from '../shared/agents';
-import type { ChatMsg, Priority, Task, TaskColumn, TeamMember, WorklogDay } from '../shared/protocol';
+import type { ChatMsg, Priority, ReportRate, Task, TaskColumn, TeamMember, WorklogDay } from '../shared/protocol';
 import { SCHEMA_ALTERS, SCHEMA_STATEMENTS } from './schema';
 
 const DAY_MS = 86_400_000;
@@ -185,7 +185,54 @@ export async function chatFor(db: D1Database, userId: string, shared = 150, own 
     )
     .bind('global', shared, 'work', shared, mine, own, 'global', 'work', mine)
     .all<{ id: string; ch: string; sender: string; name: string; text: string; ts: number; root: string | null }>();
-  return results.map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}) }));
+  // the person's own 👍 / 👎 on the reports in their thread come back with them
+  const rates = await ratingsOf(db, userId).catch(() => new Map<string, ReportRate>());
+  return results.map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}), ...(rates.has(r.id) ? { rate: rates.get(r.id) } : {}) }));
+}
+
+export async function getChat(db: D1Database, id: string): Promise<ChatMsg | null> {
+  const r = await db
+    .prepare('SELECT id, ch, sender, name, text, ts, root FROM chat_messages WHERE id = ?')
+    .bind(id)
+    .first<{ id: string; ch: string; sender: string; name: string; text: string; ts: number; root: string | null }>();
+  return r ? { id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}) } : null;
+}
+
+// ---------------------------------------------------------------- 👍 / 👎 on Tổng quản's reports
+export interface RatingRow {
+  msgId: string;
+  thread: string;
+  userId: string;
+  vote: 1 | -1;
+  reason: string;
+  lessonId: string | null;
+}
+
+export async function getRating(db: D1Database, msgId: string): Promise<RatingRow | null> {
+  const r = await db
+    .prepare('SELECT msg_id, thread, user_id, vote, reason, lesson_id FROM report_ratings WHERE msg_id = ?')
+    .bind(msgId)
+    .first<{ msg_id: string; thread: string; user_id: string; vote: number; reason: string; lesson_id: string | null }>();
+  return r ? { msgId: r.msg_id, thread: r.thread, userId: r.user_id, vote: r.vote > 0 ? 1 : -1, reason: r.reason, lessonId: r.lesson_id } : null;
+}
+
+export async function saveRating(db: D1Database, r: RatingRow, now: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO report_ratings (msg_id, thread, user_id, vote, reason, lesson_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+       ON CONFLICT(msg_id) DO UPDATE SET vote = ?4, reason = ?5, lesson_id = ?6, updated_at = ?7`,
+    )
+    .bind(r.msgId, r.thread, r.userId, r.vote, r.reason, r.lessonId, now)
+    .run();
+}
+
+/** One person's ratings, newest first (enough to cover every report a join loads). */
+async function ratingsOf(db: D1Database, userId: string, limit = 400): Promise<Map<string, ReportRate>> {
+  const { results } = await db
+    .prepare('SELECT msg_id, vote, reason FROM report_ratings WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?')
+    .bind(userId, limit)
+    .all<{ msg_id: string; vote: number; reason: string }>();
+  return new Map(results.map((r) => [r.msg_id, { v: r.vote > 0 ? 1 : -1, ...(r.reason ? { reason: r.reason } : {}) }]));
 }
 
 /** Keeps the newest `keep` lines of every channel, so a busy channel never wipes a quiet one. */

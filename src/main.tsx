@@ -1,5 +1,4 @@
 import { createRoot } from 'react-dom/client';
-import { game } from './game';
 import { bootSettled, bootStarting } from './profile';
 import { getState, setState } from './store';
 import { App } from './ui/App';
@@ -9,7 +8,8 @@ import './mobile.css';
 
 // Test hook for scripts/e2e.mjs: dev server, or a build made with VITE_DEBUG_HOOK=1 (perf runs
 // against production code; deploys don't set it).
-if (import.meta.env.DEV || import.meta.env.VITE_DEBUG_HOOK === '1') Object.assign(window, { __office: { game, getState, setState } });
+// The game lives in the office chunk, so the hook is attached once that chunk has loaded.
+if (import.meta.env.DEV || import.meta.env.VITE_DEBUG_HOOK === '1') void import('./game').then(({ game }) => Object.assign(window, { __office: { game, getState, setState } }));
 
 // Leave a mark that this start happened; clear it once we have been up long enough to call it a
 // success. A tab the browser killed for running out of memory never gets to clear it, and the

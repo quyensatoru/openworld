@@ -145,6 +145,14 @@ export interface ChatMsg {
   meet?: string;
   /** id of the message that opened this thread — everything about one piece of work hangs off it */
   root?: string;
+  /** a 📋 report of Tổng quản, as the person it was written for rated it */
+  rate?: ReportRate;
+}
+
+/** 👍 / 👎 on a final report. A 👎 with a reason becomes a lesson for Tổng quản; a 👍 is only counted. */
+export interface ReportRate {
+  v: 1 | -1;
+  reason?: string;
 }
 
 export interface WorklogDay {
@@ -276,6 +284,8 @@ export type ServerMsg =
   | { t: 'upd'; id: string; patch: Partial<PlayerState>; walk?: boolean }
   | { t: 'mv'; id: string; x: number; z: number; ry: number; anim: AnimState }
   | { t: 'chat'; m: ChatMsg }
+  /** the rating of a report changed (sent to the person who rated it) */
+  | { t: 'chatRate'; id: string; rate: ReportRate | null }
   | { t: 'emote'; id: string; e: Emote }
   | { t: 'wave'; from: string; name: string }
   | { t: 'task'; task: Task; by: string }

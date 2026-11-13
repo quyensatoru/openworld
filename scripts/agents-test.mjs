@@ -615,6 +615,25 @@ function client(cookie, cid, name) {
   await api('/api/agents/brain', { id: rj?.id, raw: JSON.stringify({ status: 'done', reply: `Nút xuất CSV đã có ở trang đơn hàng ${run}. Bạn duyệt trên bảng là xong.`, lesson: 'Việc nhỏ một phần cho Phát triển là đủ, không cần thêm Kiểm thử.' }) });
   const rep = await repP;
   ok(rep?.m.root === csvRoot && rep.m.text.includes(`trang đơn hàng ${run}`), 'the person gets one final report, in the thread of their request');
+
+  // 👍 / 👎 on the report: only its person rates it; 👍 is only counted, a 👎 with a reason becomes a
+  // lesson in the work's project that the next decision of Tổng quản is shown
+  const repId = rep?.m.id;
+  const notHers = B.next((m) => m.t === 'err', 3000);
+  B.send({ t: 'agents', m: { a: 'rate', id: repId, v: -1, reason: 'chấm hộ' } });
+  ok(/Chỉ người nhận/.test((await notHers)?.msg ?? ''), 'only the person a report was written for can rate it');
+  const upP = A.next((m) => m.t === 'chatRate' && m.id === repId);
+  const upBook = A.next((m) => m.t === 'agentBook', 1500);
+  A.send({ t: 'agents', m: { a: 'rate', id: repId, v: 1 } });
+  ok((await upP)?.rate?.v === 1, '👍 on a report is saved');
+  ok(!(await upBook), 'a 👍 is only counted: the playbook does not change');
+  const why = `Thiếu cột tổng tiền trong file CSV ${run}`;
+  const downP = A.next((m) => m.t === 'chatRate' && m.id === repId && m.rate?.v === -1);
+  const downBook = A.next((m) => m.t === 'agentBook' && m.book.lessons.some((l) => l.text.includes(why)));
+  A.send({ t: 'agents', m: { a: 'rate', id: repId, v: -1, reason: why } });
+  ok((await downP)?.rate.reason === why, '👎 with a reason is saved');
+  const rateLesson = (await downBook)?.book.lessons.find((l) => l.text.includes(why));
+  ok(rateLesson?.dept === 'lead' && rateLesson.project === `shop-${run}` && !rateLesson.machine, 'and becomes a lesson for Tổng quản, in the project the work was done in');
   await api('/api/agents/exit', { agent: c1.agent?.id, code: 0 });
 
   // adding to finished work later: nobody works in the thread any more, so Tổng quản takes the line,
@@ -623,6 +642,7 @@ function client(cookie, cid, name) {
   const addJ = (await api('/api/agents/brain?wait=8')).job;
   const csvShort = csv?.id.replace(/-/g, '').slice(0, 8);
   ok(addJ?.kind !== 'report' && addJ?.prompt.includes('## Luồng này') && addJ.prompt.includes(`#${csvShort}`), 'Tổng quản is shown the thread a late addition was sent in, with its cards');
+  ok(!!addJ?.prompt.includes(why), "the next decision of Tổng quản has the 👎 reason in its playbook");
   const backP = A.next((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col === 'todo' && m.task.desc.includes(`cột ngày tạo vào file CSV nhé ${run}`));
   const mergeSay = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.root === csvRoot && m.m.from === 'ag-brain000000' && m.m.text.includes('làm lại'));
   await api('/api/agents/brain', { id: addJ?.id, raw: JSON.stringify({ action: 'merge', mergeInto: `#${csvShort}`, reply: '' }) });
@@ -671,9 +691,15 @@ function client(cookie, cid, name) {
   for (const t of [task, docsTask, qaTask, opsTask, fixTask, csv]) if (t) A.send({ t: 'task:delete', id: t.id });
   A.send({ t: 'agents', m: { a: 'brainConfig', config: { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false, approvals: 'lead' } } });
   A.send({ t: 'activity:revoke' });
+  if (rateLesson) A.send({ t: 'agents', m: { a: 'lessonDel', id: rateLesson.id } });
   await sleep(400);
   A.close();
   B.close();
+  // a reload brings the rating back with the report
+  const A2 = client(cookie, `agtestA_${run}`, 'An Tester');
+  const w2 = await A2.hello();
+  ok(w2?.chat?.find((m) => m.id === repId)?.rate?.v === -1, 'the rating is still on the report after a reload');
+  A2.close();
   console.log(failures ? `\n${failures} failure(s)` : '\nall good');
   process.exit(failures ? 1 : 0);
 })().catch((err) => {

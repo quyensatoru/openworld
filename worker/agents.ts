@@ -1549,6 +1549,10 @@ export class AgentHub {
       case 'revive':
         await this.reviveOne(id, String(m.id), by);
         return;
+      case 'rate':
+        // only a rating that wrote or took back a lesson changes the playbook
+        if (!(await this.brain.rate(id, by, String(m.id), m.v, m.reason))) return;
+        break;
       case 'lesson': {
         const text = clampStr(m.text, LESSON_MAX);
         if (!text) return;

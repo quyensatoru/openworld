@@ -76,6 +76,8 @@ export interface BrainItem {
   /** action 'route': the final report back to the person, once every piece of the work is finished.
    *  'wait' = work still running · 'pending'/'thinking' = being written · 'sent' = they have it */
   report?: 'wait' | 'pending' | 'thinking' | 'sent';
+  /** the 📋 report's chat message, once sent (what a 👍 / 👎 points at) */
+  reportMsg?: string;
   /** when the report was claimed / how many times writing it failed */
   reportLease?: BrainLease;
   reportTries?: number;
@@ -169,7 +171,15 @@ export interface BrainView {
 }
 
 /** Browser → server. */
-export type BrainMsg = { a: 'brainConfig'; config: BrainConfig } | { a: 'brainCancel'; id: string };
+export type BrainMsg =
+  | { a: 'brainConfig'; config: BrainConfig }
+  | { a: 'brainCancel'; id: string }
+  /** 👍 (1) / 👎 (-1) on a 📋 report in one's own thread; the reason is optional */
+  | { a: 'rate'; id: string; v: 1 | -1; reason?: string };
+
+/** The opening of Tổng quản's final report — what the 👍 / 👎 buttons hang on. */
+export const REPORT_PREFIX = '📋 Kết quả';
+export const RATE_REASON_MAX = 300;
 
 /** Server → runner: one decision to make. The office writes the whole prompt; the runner just runs it. */
 export interface BrainJob {

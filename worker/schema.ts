@@ -1,5 +1,5 @@
 // Keep in sync with migrations/0001_init.sql. Applied idempotently by the Durable Object on first use.
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 export const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL, desk TEXT, last_seen INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, descr TEXT NOT NULL DEFAULT '', col TEXT NOT NULL, ord REAL NOT NULL, assignee TEXT, priority TEXT NOT NULL DEFAULT 'normal', created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER)`,
@@ -15,6 +15,9 @@ export const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS agent_lessons (id TEXT PRIMARY KEY, dept TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, by_name TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS agent_debriefs (id TEXT PRIMARY KEY, agent TEXT NOT NULL, agent_name TEXT NOT NULL, dept TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', owner TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS idx_debriefs_done ON agent_debriefs (done, created_at)`,
+  // migrations/0009_report_ratings.sql
+  `CREATE TABLE IF NOT EXISTS report_ratings (msg_id TEXT PRIMARY KEY, thread TEXT NOT NULL, user_id TEXT NOT NULL, vote INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', lesson_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_ratings_user ON report_ratings (user_id, updated_at)`,
 ];
 
 /** Columns added to existing tables; each fails harmlessly once the column exists. */
