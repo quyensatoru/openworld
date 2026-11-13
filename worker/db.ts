@@ -169,13 +169,21 @@ export async function insertChat(db: D1Database, m: ChatMsg): Promise<void> {
 /**
  * What one person gets back on joining: the newest lines of each channel they can read, counted per
  * channel — the private AI threads are busy enough to push the shared chat out of a single "newest
- * N overall" window.
+ * N overall" window — plus the opener of every thread those lines belong to. The chat shows a
+ * thread by its opener, so a long thread whose opener fell out of the window vanished whole.
  */
-export async function chatFor(db: D1Database, userId: string, perChannel = 80): Promise<ChatMsg[]> {
-  const pick = 'SELECT id, ch, sender, name, text, ts, root FROM chat_messages WHERE ch = ? ORDER BY ts DESC LIMIT ?';
+export async function chatFor(db: D1Database, userId: string, shared = 150, own = 300): Promise<ChatMsg[]> {
+  const cols = 'id, ch, sender, name, text, ts, root';
+  const pick = `SELECT ${cols} FROM chat_messages WHERE ch = ? ORDER BY ts DESC LIMIT ?`;
+  const mine = `ask:${userId}`;
   const { results } = await db
-    .prepare(`SELECT * FROM (${pick}) UNION ALL SELECT * FROM (${pick}) UNION ALL SELECT * FROM (${pick}) ORDER BY ts ASC`)
-    .bind('global', perChannel, 'work', perChannel, `ask:${userId}`, perChannel)
+    .prepare(
+      `WITH picked AS (SELECT * FROM (${pick}) UNION ALL SELECT * FROM (${pick}) UNION ALL SELECT * FROM (${pick}))
+       SELECT * FROM picked
+       UNION SELECT ${cols} FROM chat_messages WHERE id IN (SELECT root FROM picked WHERE root IS NOT NULL) AND ch IN (?, ?, ?)
+       ORDER BY ts ASC`,
+    )
+    .bind('global', shared, 'work', shared, mine, own, 'global', 'work', mine)
     .all<{ id: string; ch: string; sender: string; name: string; text: string; ts: number; root: string | null }>();
   return results.map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}) }));
 }

@@ -667,7 +667,8 @@ class Game {
     });
     net.on('chat', ({ m }) => {
       const s = getState();
-      setState({ chat: [...s.chat.slice(-299), m] });
+      // (room for everything a join loads — see chatFor — so a new line never pushes a thread's opener out)
+      setState({ chat: [...s.chat.slice(-999), m] });
       const mine = m.from === s.me?.id;
       if (m.from !== 'system') this.world?.say(m.from, m.text);
       if (!mine) {
