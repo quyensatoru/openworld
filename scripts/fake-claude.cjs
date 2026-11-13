@@ -3,6 +3,8 @@
 // the runner, and misbehaves on cue. The task title in the prompt picks the misbehaviour:
 //   "MAT-MANG"  — the API is unreachable: retries, then an error result (as Claude Code does)
 //   "TREO"      — says one thing, then hangs forever (the runner gets killed meanwhile)
+//   "HET-QUOTA" — the plan's quota ran out: one "successful" answer that is only the limit notice,
+//                 saying it resets in 2 s (Claude Code really reports it like that)
 // A resumed session (--resume <id>) always finishes cleanly. Every call is logged to $FAKE_DIR/calls.jsonl.
 const fs = require('fs');
 const path = require('path');
@@ -20,6 +22,11 @@ process.stdin.on('end', () => {
     for (let i = 1; i <= 3; i++) out({ type: 'system', subtype: 'api_retry', attempt: i, max_retries: 3, retry_delay_ms: 10, error_status: null, error: 'unknown' });
     out({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: Connection error.', num_turns: 0 });
     process.exit(1);
+  }
+  if (!resumed && prompt.includes('HET-QUOTA')) {
+    out({ type: 'assistant', message: { content: [{ type: 'text', text: "You've hit your 5-hour limit" }] } });
+    out({ type: 'result', subtype: 'success', is_error: false, result: `Claude AI usage limit reached|${Math.floor(Date.now() / 1000) + 2}`, num_turns: 1 });
+    process.exit(0);
   }
   if (!resumed && prompt.includes('TREO')) {
     out({ type: 'assistant', message: { content: [{ type: 'text', text: 'Mình bắt đầu làm đây.' }] } });

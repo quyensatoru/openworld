@@ -64,7 +64,8 @@ Một yêu cầu đi như sau:
 - Mỗi phiên có session id riêng. Phiên bị ngắt vì Claude không trả lời (lỗi API, hết hạn mức, mất mạng, hoặc im lặng quá 12 phút) thì nhân viên **ngồi chờ ở bàn**, thread báo "sẽ tự làm tiếp", máy trực lùi dần (30 giây → tối đa 10 phút, hoặc đúng giờ hạn mức được mở lại) rồi chạy `claude --resume` **đúng cuộc hội thoại đó**. Bị ngắt 6 lần liền mới trả việc về bảng.
 - Mất liên lạc với Office: phiên vẫn làm, kết quả được giữ trong `~/.office-agent/<máy>.json` và gửi lên khi có mạng.
 - Máy trực chết hẳn: lúc chạy lại nó tự nhận lại các phiên cũ. Máy không liên lạc 20 phút thì Office trả việc về bảng cho máy khác.
-- Một việc mà phiên làm việc hỏng giữa chừng 3 lần sẽ dừng ở cột Chờ duyệt kèm lý do, không lặp vô tận.
+- **Hết quota** (“You've hit your 5-hour limit · resets 2:30pm …”, giới hạn tuần…): không tính là hỏng. Máy trực đọc giờ reset, không nhận việc mới, rồi làm tiếp đúng phiên đó khoảng 1 phút sau giờ reset.
+- Một việc mà phiên làm việc hỏng giữa chừng 3 lần sẽ dừng ở cột Chờ duyệt kèm lý do, không lặp vô tận. Việc dừng như vậy chưa tính là xong: các phần nối sau vẫn chờ, chưa có 📋 Kết quả. Muốn chạy lại thì nhắn **“làm tiếp”** ngay trong thread đó. Tổng quản đưa mọi việc đã dừng của thread về To do.
 - Tổng quản không trả lời được vì mất mạng thì yêu cầu được giữ, thử lại sau — không bị tính là "không hiểu yêu cầu".
 
 **Mỗi máy trực một dự án.** Máy trực báo tên dự án (tên repo trên git remote, hoặc `--project`). Tổng quản ghi dự án lên từng việc và chỉ máy của dự án đó nhận; nhiều dự án mà yêu cầu không rõ thì nó hỏi. **Sổ kinh nghiệm** cũng theo phạm vi: bài của dự án (mặc định), bài riêng một máy (shell, công cụ cài trên máy đó) và bài chung — phiên làm việc chỉ đọc bài đúng với dự án và máy của nó. Mỗi dự án tự đúc rút trên máy của mình; bài trùng ý bị chặn để gộp.
@@ -129,7 +130,7 @@ npx wrangler secret put SESSION_SECRET               # chuỗi ngẫu nhiên dà
 node scripts/gen-vapid.mjs                           # sinh cặp khoá thông báo (in ra hướng dẫn)
 npx wrangler secret put VAPID_PRIVATE_KEY            # dán khoá riêng vừa sinh
 npx wrangler secret put VAPID_SUBJECT                # mailto:ban@congty.com
-npm run deploy                                       # → https://office.<subdomain>.workers.dev
+npm run deploy                                       # chạy npm run check trước, lỗi thì dừng → https://office.<subdomain>.workers.dev
 ```
 
 Đổi `OFFICE_PASSCODE` là mọi phiên đăng nhập cũ hết hiệu lực. Tên văn phòng và múi giờ nằm ở `vars` trong `wrangler.jsonc`.
@@ -143,6 +144,8 @@ npm run deploy                                       # → https://office.<subdo
 ## Kiểm thử
 
 ```bash
+npm run check          # cổng kiểm trước deploy: typecheck + smoke + test:agents + test:runner, tự bật dev server riêng (cổng trống, dữ liệu tạm)
+CHECK_ONLY=typecheck,smoke npm run check   # chỉ chạy vài bước khi đang sửa
 npm run typecheck
 npm test               # 25 bước kiểm tra giao thức với 3 client giả (cần npm run dev đang chạy)
 npm run test:agents    # 🧠 Tổng quản, luồng chat riêng, MCP, máy trực, ngân sách, họp, quyền giao việc, dự án, tự duyệt, báo cáo cuối

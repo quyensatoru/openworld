@@ -248,6 +248,8 @@ export class AgentHub {
       showBrain: (online, what) => self.showBrain(online, what),
       machines: () => self.machineList(),
       taskFails: (id) => self.fails[id] ?? 0,
+      revive: (root, by) => self.revive(root, by),
+      parked: (t) => self.parked(t),
     };
     this.brain = new Brain(adapter);
   }
@@ -1183,7 +1185,8 @@ export class AgentHub {
       void this.host.storage.put('agentOrigins', this.origins).catch(() => {});
     }
     // a task waits for the ones its plan put before it, so one plan can fan out and still keep order
-    const blocked = (t: Task) => (t.after ?? []).some((id) => all.get(id) && !settled(all.get(id)!));
+    // …and a card that stopped after breaking down is not "finished" for the ones that need its result
+    const blocked = (t: Task) => (t.after ?? []).some((id) => all.get(id) && (!settled(all.get(id)!) || this.parked(all.get(id)!)));
     const tasks = [...all.values()]
       .filter(
         (t) =>
@@ -1326,6 +1329,30 @@ export class AgentHub {
     return { ...base, kind: 'task', task: { id: t.id, short: short(t.id), title: t.title, desc: t.desc, dept: t.dept, priority: t.priority } };
   }
 
+  /** Stopped after breaking down MAX_FAILS times, waiting for a person — not finished work. */
+  private parked(t: Task) {
+    return t.col === 'review' && (this.fails[t.id] ?? 0) >= MAX_FAILS;
+  }
+
+  /** The person said to go on in a thread: every card there that stopped after breaking down goes
+   *  back to To do with a fresh set of tries. Returns the cards revived. */
+  async revive(root: string, by: string): Promise<Task[]> {
+    if (!root) return [];
+    const out: Task[] = [];
+    for (const t of (await this.host.getTasks()).values()) {
+      if (t.thread !== root || !this.parked(t)) continue;
+      delete this.fails[t.id];
+      t.desc = this.appendNote(t.desc, BRAIN_NAME, 'Người giao việc bảo làm tiếp — đưa việc về To do để chạy lại.');
+      t.col = 'todo';
+      t.assignee = null;
+      t.updatedAt = Date.now();
+      await this.host.saveTask(t, by);
+      out.push(t);
+    }
+    if (out.length) void this.host.storage.put('agentFails', this.fails).catch(() => {});
+    return out;
+  }
+
   /** The runner's session ended (or crashed): unfinished work goes back on the board. A task whose
    *  sessions keep breaking is not retried forever — after MAX_FAILS a person is asked to look. */
   async exit(uid: string, b: Json): Promise<Json> {
@@ -1350,7 +1377,7 @@ export class AgentHub {
         if (n >= MAX_FAILS) {
           t.desc = this.appendNote(t.desc, a.name, `Đã thử ${n} lần mà phiên làm việc đều dừng giữa chừng (lần cuối: ${what}). Mình dừng lại để một người xem giúp.`);
           t.col = 'review';
-          await this.notice(`⚠️ “${oneLine(t.title, 80)}” đã hỏng giữa chừng ${n} lần (lần cuối: ${what}), mình để ở cột Chờ duyệt — bạn xem giúp rồi kéo về To do nếu muốn làm lại.`, this.taskOrigin(t), t.thread);
+          await this.notice(`⚠️ “${oneLine(t.title, 80)}” đã hỏng giữa chừng ${n} lần (lần cuối: ${what}), mình để ở cột Chờ duyệt. Khi muốn chạy lại, bạn nhắn “làm tiếp” ngay trong thread này (hoặc kéo thẻ về To do).`, this.taskOrigin(t), t.thread);
         } else {
           t.desc = this.appendNote(t.desc, a.name, `Phiên làm việc bị dừng giữa chừng (${what}), mình trả việc về To do để làm lại (lần ${n}/${MAX_FAILS}).`);
           t.col = 'todo';

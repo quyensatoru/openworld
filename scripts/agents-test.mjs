@@ -629,6 +629,26 @@ function client(cookie, cid, name) {
   ok(!!(await backP), 'a card waiting for review that the person adds to goes back to To do, carrying the addition');
   ok(!!(await mergeSay), 'and the person hears it will be redone, in the same thread');
 
+  // the work breaks down three times (a quota ran out, say) and stops; "làm tiếp" in the thread runs it again
+  for (let i = 1; i <= 3; i++) {
+    const cl = await api('/api/agents/claim', { kind: 'task', id: csv?.id, machine: R1, dir: '/home/an/shop' });
+    const moved = A.next((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col !== 'doing');
+    await api('/api/agents/exit', { agent: cl.agent?.id, code: 1, why: 'lỗi lạ' });
+    await moved;
+  }
+  const parkedSay = A.wait((m) => m.t === 'chat' && m.m.ch === askCh && m.m.root === csvRoot && m.m.from === 'system' && m.m.text.includes('làm tiếp'));
+  ok(!!(await parkedSay), 'a card that stopped tells the person they can just say "làm tiếp" in the thread');
+  A.send({ t: 'chat', ch: 'ask', text: `làm tiếp đi ${run}`, root: csvRoot });
+  const goJ = (await api('/api/agents/brain?wait=8')).job;
+  ok(/DỪNG vì hỏng/.test(goJ?.prompt ?? ''), 'Tổng quản sees which cards of the thread stopped');
+  const revivedP = A.next((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col === 'todo');
+  const againSay = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.root === csvRoot && m.m.from === 'ag-brain000000' && m.m.text.includes('chạy lại'));
+  await api('/api/agents/brain', { id: goJ?.id, raw: JSON.stringify({ action: 'merge', mergeInto: `#${csvShort}`, reply: '' }) });
+  ok(!!(await revivedP) && !!(await againSay), '"làm tiếp" puts the stopped card back in To do and says so');
+  const retry = await api('/api/agents/claim', { kind: 'task', id: csv?.id, machine: R1, dir: '/home/an/shop' });
+  ok(!!retry.agent, 'and it can be taken again, with a fresh set of tries');
+  if (retry.agent) await api('/api/agents/exit', { agent: retry.agent.id, code: 130 });
+
   // clean up
   for (const t of [task, docsTask, qaTask, opsTask, fixTask, csv]) if (t) A.send({ t: 'task:delete', id: t.id });
   A.send({ t: 'agents', m: { a: 'brainConfig', config: { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false, approvals: 'lead' } } });

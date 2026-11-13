@@ -65,6 +65,10 @@ export interface BrainHost {
   machines(): RunnerMachine[];
   /** times the sessions working on a task broke down */
   taskFails(id: string): number;
+  /** stopped after breaking down too often, waiting for a person (not finished work) */
+  parked(t: Task): boolean;
+  /** cards in a thread that stopped after breaking down go back to To do; returns them */
+  revive(root: string, by: string): Promise<Task[]>;
 }
 
 /** One action a session wants to take, waiting for Tổng quản's judgement. */
@@ -500,6 +504,7 @@ export class Brain {
       'Dùng "mergeInto" (yêu cầu này chính là việc đã có):',
       '- Chỉ gộp vào một việc còn mở trong "Bảng việc đang mở", ghi đúng mã #. Việc đã xong thì không gộp được — hãy "route" phần còn thiếu (giữ đúng dự án của luồng).',
       '- Gộp khi người gửi nói thêm, đổi ý hoặc nhắc lại cùng việc đó. Yêu cầu thật sự khác thì "route", đừng gộp cho gọn.',
+      '- Người gửi bảo "làm tiếp", "tiếp tục", "chạy lại" trong luồng có việc DỪNG (xem "Luồng này"): "merge" vào việc đó — mọi việc đã dừng của luồng sẽ tự chạy lại, đừng tạo việc mới.',
       '- Tin nhắn nằm trong một luồng đã có việc (xem "Luồng này") thường là bổ sung cho việc đó: gộp vào việc còn mở của luồng. Việc đang chờ duyệt mà người gửi muốn sửa/thêm thì cũng gộp — việc sẽ được đưa về làm lại kèm phần bổ sung.',
       '- Một yêu cầu chỉ gộp vào đúng MỘT việc, và khi gộp thì không kèm "plan".',
       '',
@@ -570,7 +575,10 @@ export class Brain {
           .filter((t) => t.thread === it.root)
           .sort((x, y) => x.createdAt - y.createdAt)
           .slice(-8)
-          .map((t) => `- #${shortId(t.id)} [${t.col}] ${t.dept ? DEPT_BY_ID.get(t.dept)!.short : 'chưa giao'}: ${oneLine(t.title, 90)}`)
+          .map((t) => {
+            const stopped = this.host.parked(t);
+            return `- #${shortId(t.id)} [${t.col}] ${t.dept ? DEPT_BY_ID.get(t.dept)!.short : 'chưa giao'}: ${oneLine(t.title, 90)}${stopped ? ' (DỪNG vì hỏng giữa chừng nhiều lần, chưa xong — gộp vào luồng này là nó chạy lại)' : ''}`;
+          })
       : [];
     const asked = it.root ? this.items.filter((x) => x !== it && x.root === it.root && x.at < it.at).slice(-4).map((x) => `- ${x.whoName}: “${oneLine(x.text, 200)}”`) : [];
     const followUps = it.followUps.filter((f) => f.a).map((f) => `Bạn đã hỏi: “${oneLine(f.q, 200)}” — Họ trả lời: “${oneLine(f.a, 400)}”`);
@@ -625,6 +633,18 @@ export class Brain {
       this.push();
       return;
     }
+    // going on with a thread whose work stopped after breaking down (a quota ran out, Claude was
+    // down…): those cards run again — that is what "làm tiếp" means there
+    const revived = (d.action === 'merge' || d.action === 'route') && it.root ? await this.host.revive(it.root, BRAIN_ID) : [];
+    const again = revived.length ? ` Mình cũng cho chạy lại ${revived.length} việc đã dừng giữa chừng: ${revived.map((t) => `#${shortId(t.id)}`).join(', ')}.` : '';
+    const owe = (ids: string[]) => {
+      // the person hears back once the cards are finished — unless an earlier request already waits on them
+      const open = ids.filter((id) => !this.items.some((x) => x !== it && x.tasks?.includes(id) && (x.report === 'wait' || x.report === 'pending' || x.report === 'thinking')));
+      if (!open.length) return;
+      it.tasks = [...new Set([...(it.tasks ?? []), ...open])];
+      it.project = it.project || revived[0]?.project;
+      it.report = 'wait';
+    };
     if (d.action === 'merge') {
       const t = d.mergeInto ? await this.findTask(d.mergeInto) : null;
       // only work still open can absorb anything — a finished card is never read again
@@ -643,14 +663,15 @@ export class Brain {
         // a session already working on it read the description long ago, so say it out loud too
         const owner = t.col === 'doing' && t.thread ? this.host.taskOrigin(t) : '';
         if (owner) await this.say(`${it.whoName} nhắn thêm cho “${oneLine(t.title, 60)}”: ${it.text}`, Brain.thread(owner), t.thread);
-        // the person hears back once the card is finished — unless an earlier request already waits on it
-        const covered = this.items.some((x) => x !== it && x.tasks?.includes(t.id) && (x.report === 'wait' || x.report === 'pending' || x.report === 'thinking'));
-        if (!covered) {
-          it.tasks = [t.id];
-          it.project = t.project;
-          it.report = 'wait';
-        }
-        await this.say(reply || (rework ? `Mình đưa việc #${shortId(t.id)} về làm lại kèm phần bạn bổ sung, xong sẽ báo kết quả nhé.` : `Mình gộp vào việc #${shortId(t.id)} rồi nhé.`), thread, it.root);
+        it.project = t.project;
+        owe([t.id, ...revived.map((x) => x.id)]);
+        await this.say(`${reply || (rework ? `Mình đưa việc #${shortId(t.id)} về làm lại kèm phần bạn bổ sung, xong sẽ báo kết quả nhé.` : `Mình gộp vào việc #${shortId(t.id)} rồi nhé.`)}${again}`, thread, it.root);
+        await this.finish(it, d, []);
+        return;
+      }
+      if (revived.length && !d.plan?.length) {
+        owe(revived.map((x) => x.id));
+        await this.say(`Mình cho chạy lại ${revived.length} việc đã dừng giữa chừng trong luồng này: ${revived.map((t) => `#${shortId(t.id)} ${oneLine(t.title, 50)}`).join('; ')}. Xong sẽ báo kết quả nhé.`, thread, it.root);
         await this.finish(it, d, []);
         return;
       }
@@ -665,16 +686,18 @@ export class Brain {
         it.tasks = [...new Set([...(it.tasks ?? []), ...made.map((t) => t.id)])];
         it.project = made[0].project;
         it.report = 'wait';
+        owe(revived.map((x) => x.id));
         const who = made.map((t) => `${DEPT_BY_ID.get(t.dept!)!.icon} ${DEPT_BY_ID.get(t.dept!)!.name}`);
         const line = reply || `Mình giao cho ${[...new Set(who)].join(', ')} rồi, bạn theo dõi trên bảng nhé.`;
         const throttled = !this.mayStart(it.who);
-        await this.say(throttled ? `${line} (Văn phòng đang chạm trần ${this.cfg.maxSessionsHour} phiên/giờ nên việc sẽ vào hàng chờ.)` : line, thread, it.root);
+        await this.say(`${throttled ? `${line} (Văn phòng đang chạm trần ${this.cfg.maxSessionsHour} phiên/giờ nên việc sẽ vào hàng chờ.)` : line}${again}`, thread, it.root);
         await this.finish(it, d, made.map((t) => t.dept!));
         return;
       }
       // an empty plan is an answer with extra steps
     }
-    await this.say(reply || 'Mình đã ghi nhận.', thread, it.root);
+    if (revived.length) owe(revived.map((x) => x.id));
+    await this.say(`${reply || (revived.length ? '' : 'Mình đã ghi nhận.')}${again}`.trim(), thread, it.root);
     await this.finish(it, { ...d, action: 'answer' }, []);
   }
 
@@ -796,7 +819,9 @@ export class Brain {
         changed = true;
         continue;
       }
-      if (!work.every(settled)) continue;
+      // a card that stopped after breaking down is not finished work: the person was told, and the
+      // report waits until it runs again ("làm tiếp") and really settles
+      if (!work.every((t) => settled(t) && !this.host.parked(t))) continue;
       it.report = 'pending';
       it.reportTries = 0;
       it.notBefore = undefined;

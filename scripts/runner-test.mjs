@@ -60,7 +60,7 @@ async function until(fn, ms, every = 300) {
   const runners = [];
   const startRunner = () => {
     const child = spawn(process.execPath, [RUNNER, '--url', BASE, '--token', token, '--dir', PROJ, '--depts', 'dev', '--max', '1', '--claude', FAKE, '--no-brain', '--project', `rt-${run}`], {
-      env: { ...process.env, HOME, FAKE_DIR, ANTHROPIC_BASE_URL: BASE },
+      env: { ...process.env, HOME, FAKE_DIR, ANTHROPIC_BASE_URL: BASE, OFFICE_RESET_GRACE_MS: '1500' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
@@ -88,6 +88,15 @@ async function until(fn, ms, every = 300) {
   const c1 = calls().filter((c) => c.prompt.includes(`MAT-MANG ${run}`) || c.resumed);
   ok(c1.length >= 2 && c1[1].resumed && c1[1].sid === c1[0].sid, 'and it was the same conversation, resumed — not started over');
   ok(/Tiếp tục đúng việc đang làm dở/.test(c1[1]?.prompt ?? ''), 'the resumed session is told to go on from where it stopped');
+
+  // ---- 1b. the plan's quota runs out: the work waits for the reset, it is never "broken"
+  const tq = await task(`HET-QUOTA ${run}`);
+  ok(!!(await until(() => col(tq?.id)?.col === 'review', 60_000, 500)), 'after the reset the same work finishes');
+  const tqMoves = inbox.filter((m) => m.t === 'task' && m.task.id === tq?.id).map((m) => m.task.col);
+  ok(tqMoves.includes('doing') && !tqMoves.slice(tqMoves.indexOf('doing')).includes('todo'), 'a used-up quota never sent the task back to To do');
+  const cq = calls().filter((c) => c.prompt.includes(`HET-QUOTA ${run}`) || (c.resumed && c.sid === calls().find((x) => x.prompt.includes(`HET-QUOTA ${run}`))?.sid));
+  ok(cq.length === 2 && cq[1].resumed && cq[1].sid === cq[0].sid, 'resumed in the same conversation');
+  ok(!/lần 1\/3|hỏng giữa chừng/.test(col(tq?.id)?.desc ?? ''), 'and the quota never counted as a breakdown');
 
   // ---- 2. the runner dies outright mid-session, and is started again
   const t2 = await task(`TREO ${run}`);
@@ -121,7 +130,7 @@ async function until(fn, ms, every = 300) {
     /* gone */
   }
 
-  for (const t of [t1, t2, t3]) if (t) send({ t: 'task:delete', id: t.id });
+  for (const t of [t1, tq, t2, t3]) if (t) send({ t: 'task:delete', id: t.id });
   send({ t: 'activity:revoke' });
   await sleep(500);
   for (const c of runners) c.kill('SIGKILL');

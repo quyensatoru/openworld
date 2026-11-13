@@ -172,15 +172,62 @@ let outageStreak = 0;
 let lastOutageEnd = 0;
 
 const TRANSIENT = /api.?error|connection|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|network|fetch failed|overloaded|\b5\d\d\b|rate.?limit|usage limit|hit your limit|timed? ?out|temporarily|unavailable/i;
+// the plan's quota ran out ("You've hit your 5-hour limit · resets 2:30pm (Asia/Ho_Chi_Minh)",
+// "Claude AI usage limit reached|1731500000", "weekly limit"…): nothing is broken, the work just
+// waits for the reset — it never counts as a failure, and nothing new is started until then
+// a minute after the reset, so the first try lands on a fresh quota (tests shorten it)
+const RESET_GRACE = Number(process.env.OFFICE_RESET_GRACE_MS) || 60_000;
+const LIMIT = /hit your [\w -]{0,24}limit|usage limit|limit reached|out of (extra )?usage|(5-hour|weekly|opus|session) limit/i;
+/** A whole answer that is only Claude Code saying the quota ran out (not work that mentions limits). */
+const limitOnly = (text) => typeof text === 'string' && text.length < 300 && LIMIT.test(text);
+
+/** Minutes the zone is ahead of UTC at `t`. */
+function zoneOffset(zone, t) {
+  try {
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+    const p = Object.fromEntries(f.formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+    return Math.round((Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute) - t) / 60_000);
+  } catch {
+    return -new Date(t).getTimezoneOffset();
+  }
+}
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/** When a quota message says it resets: "|1731500000", "resets 2:30pm (Asia/Ho_Chi_Minh)",
+ *  "resets Nov 15, 9am (Europe/Paris)", "resets at 14:30". 0 when it does not say. */
+function resetAt(text, now = Date.now()) {
+  const epoch = /\|(\d{10})\b/.exec(text);
+  if (epoch) return Number(epoch[1]) * 1000;
+  const m = /resets?\s+(?:at\s+|on\s+)?(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*\(([^)]+)\))?/i.exec(text);
+  if (!m) return 0;
+  let h = Number(m[3]);
+  const min = Number(m[4] || 0);
+  if (m[5]) h = (h % 12) + (m[5].toLowerCase() === 'pm' ? 12 : 0);
+  if (h > 23 || min > 59) return 0;
+  const t0 = Math.floor(now / 60_000) * 60_000;
+  const off = zoneOffset(m[6] || Intl.DateTimeFormat().resolvedOptions().timeZone, t0);
+  const wall = new Date(t0 + off * 60_000);
+  const month = m[1] ? MONTHS.indexOf(m[1].toLowerCase()) : -1;
+  if (m[1] && month >= 0) {
+    let at = Date.UTC(wall.getUTCFullYear(), month, Number(m[2]), h, min) - off * 60_000;
+    if (at < now - 86400_000) at = Date.UTC(wall.getUTCFullYear() + 1, month, Number(m[2]), h, min) - off * 60_000;
+    return at;
+  }
+  let at = Date.UTC(wall.getUTCFullYear(), wall.getUTCMonth(), wall.getUTCDate(), h, min) - off * 60_000;
+  if (at <= now) at += 86400_000;
+  return at;
+}
 
 /** Claude is down or unreachable: back off (30 s, 1, 2, 4, 8, 10 min…) and say so. */
 function enterOutage(why) {
   const now = Date.now();
   outageStreak = now - lastOutageEnd < 5 * 60_000 || outage ? outageStreak + 1 : 1;
   let delay = Math.min(10 * 60_000, 30_000 * 2 ** (outageStreak - 1));
-  // a usage limit says when it resets ("…|1731500000"): wait for that instead of knocking
-  const reset = /\|(\d{10})\b/.exec(why);
-  if (reset) delay = Math.max(delay, Number(reset[1]) * 1000 - now + 30_000);
+  // a quota that ran out says when it resets: wait for that instead of knocking every few minutes
+  if (LIMIT.test(why)) {
+    const reset = resetAt(why, now);
+    delay = reset > now ? Math.min(8 * 86400_000, reset - now + RESET_GRACE) : 15 * 60_000;
+  }
   outage = { until: now + delay, why: clip(why, 100) || 'mất kết nối tới Claude', n: outageStreak };
   log(`📶 Claude không trả lời (${outage.why}) — thử lại sau ${Math.round(delay / 1000)} giây`);
 }
@@ -510,7 +557,7 @@ function start(entry, resume = false, why = '') {
       }
     } else if (m.type === 'result') {
       gotResult = true;
-      if (m.is_error) run.error = clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || run.error || 'lỗi';
+      if (m.is_error || limitOnly(m.result)) run.error = clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || run.error || 'lỗi';
       out.write(`\n= ${m.subtype} · ${m.num_turns ?? '?'} lượt · ${m.total_cost_usd != null ? `$${Number(m.total_cost_usd).toFixed(3)}` : ''}\n`);
       if (!m.is_error) feed.push({ kind: 'result', icon: '✅', text: `Xong việc sau ${m.num_turns ?? '?'} bước` });
     }
@@ -564,9 +611,11 @@ function start(entry, resume = false, why = '') {
       return;
     }
     // broke off because Claude could not be reached: keep the session, resume it later
-    const transient = run.killed === 'stall' || run.retries > 0 || TRANSIENT.test(errText) || (!gotResult && !(await online()));
+    const limited = LIMIT.test(errText);
+    const transient = limited || run.killed === 'stall' || run.retries > 0 || TRANSIENT.test(errText) || (!gotResult && !(await online()));
     if (transient && run.killed !== 'timeout') {
-      entry.resumes = (entry.resumes || 0) + 1;
+      // waiting out a quota is not a breakdown: it never uses up the session's tries
+      if (!limited) entry.resumes = (entry.resumes || 0) + 1;
       if (entry.resumes > MAX_RESUMES) {
         log(`⚠️  ${agent.name}: đã làm tiếp ${MAX_RESUMES} lần vẫn bị ngắt — trả việc về Office`);
         await reportExit(agent.id, 75, `bị ngắt kết nối ${MAX_RESUMES} lần liền`);
@@ -637,7 +686,7 @@ function think(job) {
         /* not JSON */
       }
       // an API error comes back as a "result" too — that is Claude being unreachable, not an answer
-      if (m && m.is_error) return reject(new Error(clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || 'lỗi API'));
+      if (m && (m.is_error || limitOnly(m.result))) return reject(new Error(clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || 'lỗi API'));
       if (code !== 0) return reject(new Error(code === null ? 'quá thời gian' : `claude thoát mã ${code}: ${clip(err, 200)}`));
       resolve(m && typeof m.result === 'string' ? m.result : out); // the office parses it either way
     });
