@@ -65,6 +65,8 @@ const serverSteps = [
   ['smoke', 'scripts/smoke-test.mjs'],
   ['agents', 'scripts/agents-test.mjs'],
   ['runner', 'scripts/runner-test.mjs'],
+  // the post-deploy check (scripts/deploy.mjs) against this server, with a fake wrangler
+  ['deploy', 'scripts/deploy-test.mjs'],
   // the on-call machines' state in the 🧠 panel, and "Làm tiếp" on a card that stopped
   ['stopped', 'scripts/stopped-test.mjs'],
   // 🧠 Tổng quản's edge cases (QA's regression checks): last, it changes the brain's settings

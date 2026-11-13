@@ -133,6 +133,15 @@ npx wrangler secret put VAPID_SUBJECT                # mailto:ban@congty.com
 npm run deploy                                       # chạy npm run check trước, lỗi thì dừng → https://office.<subdomain>.workers.dev
 ```
 
+**Kiểm tra sau deploy** (`scripts/deploy.mjs`, `npm run deploy` tự chạy): trước khi `wrangler deploy` nó in ID bản production đang chạy kèm lệnh quay lại; deploy xong nó gọi URL production kiểm trang chính (và file script trang đó tải), `/api/session`, và nếu có `OFFICE_PASSCODE` thì đăng nhập + mở kết nối Office (`/api/ws`) — không ai vào văn phòng, không ghi gì. Lỗi thì in rõ lệnh rollback và thoát mã 1, **không tự rollback**.
+
+```bash
+OFFICE_PASSCODE=... npm run deploy                   # kiểm đủ cả đăng nhập + kết nối Office
+PROD_URL=https://office.congty.com npm run deploy    # khi dùng tên miền riêng (mặc định đọc URL *.workers.dev từ wrangler)
+npm run verify:prod -- https://office.xxx.workers.dev   # chỉ kiểm lại production, không deploy
+npx wrangler rollback <version-id> -m "lý do"        # quay lại bản trước (ID in ra lúc deploy; hoặc xem npx wrangler deployments list)
+```
+
 Đổi `OFFICE_PASSCODE` là mọi phiên đăng nhập cũ hết hiệu lực. Tên văn phòng và múi giờ nằm ở `vars` trong `wrangler.jsonc`.
 
 **TURN (nên bật)**: trong mạng công ty/Wi-Fi thường bị chặn kết nối trực tiếp giữa 2 máy → voice không nghe được (thanh trạng thái sẽ báo "Mạng chặn voice"). Cách bật: nếu có đồng nghiệp làm remote sau mạng chặn P2P (không nghe được nhau), tạo TURN key trong Cloudflare Dashboard → Realtime → TURN, rồi `wrangler secret put TURN_KEY_ID` và `TURN_KEY_API_TOKEN`.
@@ -144,7 +153,7 @@ npm run deploy                                       # chạy npm run check trư
 ## Kiểm thử
 
 ```bash
-npm run check          # cổng kiểm trước deploy: typecheck + smoke + test:agents + test:runner, tự bật dev server riêng (cổng trống, dữ liệu tạm)
+npm run check          # cổng kiểm trước deploy: typecheck + smoke + test:agents + test:runner + kiểm tra sau deploy (wrangler giả) + vòng cải tiến…, tự bật dev server riêng (cổng trống, dữ liệu tạm)
 CHECK_ONLY=typecheck,smoke npm run check   # chỉ chạy vài bước khi đang sửa
 npm run typecheck
 npm test               # 25 bước kiểm tra giao thức với 3 client giả (cần npm run dev đang chạy)
