@@ -154,11 +154,19 @@ export const TOOLS: { name: string; description: string; inputSchema: Json }[] =
   },
   {
     name: 'lesson_save',
-    description: '(Ban điều hành) Thêm hoặc sửa (replace_id) một bài học trong sổ kinh nghiệm. 1–2 câu, cụ thể, dùng được ngay.',
+    description:
+      '(Ban điều hành) Thêm hoặc sửa (replace_id) một bài học trong sổ kinh nghiệm. 1–2 câu, cụ thể, dùng được ngay. scope: "project" = chỉ đúng với dự án bạn đang đúc rút (lệnh, file, quy ước của repo này — mặc định cho hầu hết bài học); "machine" = chỉ đúng với một máy (shell, công cụ cài trên máy đó — ghi machine như trong bản tóm tắt); "all" = đúng ở MỌI dự án và mọi máy (cách làm việc chung). Bài trùng ý bài cũ sẽ bị từ chối kèm mã bài cũ để bạn gộp bằng replace_id.',
     inputSchema: {
       type: 'object',
-      properties: { ...me, dept: { type: 'string', enum: ['all', ...deptEnum] }, text: { type: 'string' }, project: { type: 'string', description: 'tên thư mục dự án nếu chỉ áp dụng cho dự án đó' }, replace_id: { type: 'string' } },
-      required: ['dept', 'text'],
+      properties: {
+        ...me,
+        dept: { type: 'string', enum: ['all', ...deptEnum] },
+        text: { type: 'string' },
+        scope: { type: 'string', enum: ['project', 'machine', 'all'] },
+        machine: { type: 'string', description: 'scope "machine": tên máy như trong bản tóm tắt (vd. "may-a·1f2e")' },
+        replace_id: { type: 'string' },
+      },
+      required: ['dept', 'text', 'scope'],
     },
   },
   {

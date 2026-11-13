@@ -10,6 +10,7 @@
 // prompt and parses the answer: the runner only shuttles text, so all the judgement about what is
 // worth asking and what is worth answering lives in this file.
 import {
+  APPROVE_WAIT_MS,
   BRAIN_ASK_TTL,
   BRAIN_ID,
   BRAIN_KEEP_MS,
@@ -19,6 +20,8 @@ import {
   BRAIN_NAME,
   DEFAULT_BRAIN,
   parseDecision,
+  parseReport,
+  parseVerdict,
   sanitizeBrainConfig,
   type BrainBudget,
   type BrainConfig,
@@ -27,9 +30,10 @@ import {
   type BrainJob,
   type BrainLog,
   type BrainSource,
+  type BrainVerdict,
   type BrainView,
 } from '../shared/brain';
-import { DEPTS, DEPT_BY_ID, isDept, type DeptId, type Lesson } from '../shared/agents';
+import { DEPTS, DEPT_BY_ID, isDept, lessonFits, rankLessons, type Debrief, type DeptId, type Lesson, type RunnerMachine } from '../shared/agents';
 import { PRIORITY_META, clampStr, settled, type ActivityEvent, type ChatMsg, type Priority, type ServerMsg, type Task } from '../shared/protocol';
 import * as db from './db';
 
@@ -57,6 +61,35 @@ export interface BrainHost {
   taskOrigin(t: Task): string;
   /** put the orchestrator at (or take it from) its desk in the 3D office */
   showBrain(online: boolean, what: string): Promise<void>;
+  /** the on-call machines seen in the last few minutes */
+  machines(): RunnerMachine[];
+  /** times the sessions working on a task broke down */
+  taskFails(id: string): number;
+}
+
+/** One action a session wants to take, waiting for Tổng quản's judgement. */
+interface Check {
+  id: string;
+  at: number;
+  state: 'pending' | 'thinking' | 'done';
+  lease?: { by: string; until: number };
+  system: string;
+  prompt: string;
+  verdict?: BrainVerdict | null;
+}
+
+/** What Tổng quản is told about an action it must judge. */
+export interface CheckRequest {
+  agentName: string;
+  dept: DeptId;
+  project: string;
+  task: Task | null;
+  tool: string;
+  summary: string;
+  /** 'review' = ordinary but not obviously safe · 'danger' = hard to undo, or leaves the machine */
+  risk: 'review' | 'danger';
+  /** the department profile's own rules (what it may edit, which commands) */
+  lane: string;
 }
 
 const HOUR = 3600_000;
@@ -76,6 +109,13 @@ const oneLine = (s: string, n: number) => clampStr(String(s ?? '').replace(/\s+/
 const shortId = (id: string) => id.replace(/-/g, '').slice(0, 8);
 /** The same person saying the same thing twice in this window is one request. */
 const DEDUPE_MS = 10 * 60_000;
+/** Claude unreachable: wait this long before thinking the same request again (doubles, capped). */
+const RETRY_MS = 30_000;
+const RETRY_MAX_MS = 10 * 60_000;
+/** Work can take days; its request is kept until its report went out, at most this long. */
+const REPORT_KEEP_MS = 7 * 86400_000;
+/** A report nobody's machine could write for this long goes out as a plain list instead. */
+const REPORT_FALLBACK_MS = 15 * 60_000;
 
 export class Brain {
   private items: BrainItem[] = [];
@@ -89,8 +129,30 @@ export class Brain {
   private served = 0;
   /** people with the 🧠 panel open */
   private watchers = new Set<string>();
+  /** actions sessions are waiting to have judged (in memory: a session waits at most a minute) */
+  private checks: Check[] = [];
+  /** runners long-polling for something to think about */
+  private waiters = new Set<() => void>();
 
   constructor(private host: BrainHost) {}
+
+  /** Wake every runner waiting for a thought. */
+  private kick() {
+    for (const w of [...this.waiters]) w();
+    this.waiters.clear();
+  }
+
+  private nap(ms: number) {
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.waiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, Math.max(0, ms));
+      this.waiters.add(done);
+    });
+  }
 
   async restore(): Promise<void> {
     const s = this.host.storage;
@@ -99,7 +161,10 @@ export class Brain {
     this.cfg = sanitizeBrainConfig(await s.get('brainConfig'));
     this.sessions = (await s.get<{ at: number; origin: string }[]>('brainSessions')) ?? [];
     // a decision claimed before a restart is nobody's now
-    for (const it of this.items) if (it.state === 'thinking') ((it.state = 'pending'), (it.lease = undefined));
+    for (const it of this.items) {
+      if (it.state === 'thinking') ((it.state = 'pending'), (it.lease = undefined));
+      if (it.report === 'thinking') ((it.report = 'pending'), (it.reportLease = undefined));
+    }
   }
 
   private save() {
@@ -119,6 +184,13 @@ export class Brain {
     return Date.now() - this.served < 3 * 60_000;
   }
 
+  /** …and it can reach Claude right now (a machine waiting out an outage does not think). */
+  thinking(): boolean {
+    if (!this.online()) return false;
+    const ms = this.host.machines();
+    return !ms.length || ms.some((m) => !m.outage || m.outage.until < Date.now());
+  }
+
   watch(uid: string) {
     this.watchers.add(uid);
     this.host.sendTo(uid, { t: 'brain', v: this.view() });
@@ -131,11 +203,18 @@ export class Brain {
   view(): BrainView {
     return {
       config: this.cfg,
-      queue: this.items.filter((i) => i.state !== 'done').slice(-40),
+      // waiting to be decided, and — once decided — work still out until its report goes back
+      queue: this.items.filter((i) => i.state !== 'done' || i.report === 'wait' || i.report === 'pending' || i.report === 'thinking').slice(-40),
       recent: this.logs.slice(-25),
       budget: this.budget(),
       online: this.online(),
+      machines: this.host.machines(),
     };
+  }
+
+  /** Something in the office changed that the 🧠 panel shows. */
+  refresh() {
+    this.push();
   }
 
   private push() {
@@ -146,7 +225,8 @@ export class Brain {
   async setConfig(v: unknown, by: string, byId: string) {
     this.cfg = sanitizeBrainConfig(v, this.cfg);
     await this.host.storage.put('brainConfig', this.cfg);
-    await this.say(`⚙️ ${by} vừa chỉnh cách làm việc của Tổng quản: model ${this.cfg.model}, tối đa ${this.cfg.maxSessionsHour} phiên/giờ cho cả văn phòng.`, Brain.thread(byId));
+    const approvals = this.cfg.approvals === 'ask' ? 'mọi quyền đều hỏi chủ máy' : this.cfg.approvals === 'lead' ? 'Tổng quản tự duyệt quyền, chỉ hỏi người việc khó đảo ngược' : 'tự động hoàn toàn, không hỏi ai';
+    await this.say(`⚙️ ${by} vừa chỉnh cách làm việc của Tổng quản: model ${this.cfg.model}, tối đa ${this.cfg.maxSessionsHour} phiên/giờ cho cả văn phòng, ${approvals}.`, Brain.thread(byId));
     this.push();
   }
 
@@ -215,54 +295,171 @@ export class Brain {
       return;
     }
     this.items.push({ id: crypto.randomUUID(), source, who, whoName, text: body, taskId, root, at: now, followUps: [], state: 'pending', tries: 0 });
-    if (this.items.length > 120) this.items = this.items.slice(-120);
+    // the log is capped, but a request whose work is still out keeps its place until it is reported
+    if (this.items.length > 120) this.items = this.items.filter((x, i, arr) => i >= arr.length - 120 || x.report === 'wait' || x.report === 'pending' || x.report === 'thinking');
     this.save();
     this.push();
     if (!this.online()) await this.say('Chưa có máy trực nào đang chạy Tổng quản, nên mình ghi lại đây và sẽ xử lý ngay khi có máy lên.', Brain.thread(who), root);
+    else if (!this.thinking()) await this.say('Máy trực đang mất kết nối tới Claude. Mình giữ yêu cầu này lại và tự xử lý ngay khi có kết nối, bạn không cần nhắn lại.', Brain.thread(who), root);
+    this.kick();
     await this.host.wakeAt(now + 10_000);
   }
 
   // ------------------------------------------------------------------ the runner's side
-  /** One decision to make, or null. Claiming it leases it, so two machines never think the same thought. */
-  async job(uid: string): Promise<BrainJob | null> {
+  /** Something to think about, or null — an action to judge first (a session is waiting on it), then
+   *  a report (the person is waiting for it), then a decision. Claiming leases it, so two machines
+   *  never think the same thought. With `waitMs` it waits that long for something to turn up. */
+  async job(uid: string, waitMs = 0): Promise<BrainJob | null> {
+    const until = Date.now() + Math.min(25_000, Math.max(0, waitMs));
+    for (;;) {
+      const j = await this.next(uid);
+      if (j || Date.now() >= until) return j;
+      await this.nap(until - Date.now());
+    }
+  }
+
+  private async next(uid: string): Promise<BrainJob | null> {
     const now = Date.now();
     this.served = now;
-    const it = this.items.find((i) => i.state === 'pending');
+    const c = this.checks.find((x) => x.state === 'pending');
+    if (c) {
+      c.state = 'thinking';
+      c.lease = { by: uid, until: now + APPROVE_WAIT_MS };
+      return { id: c.id, kind: 'approve', model: this.cfg.model, system: c.system, prompt: c.prompt, timeoutMs: APPROVE_WAIT_MS };
+    }
+    const r = this.items.find((i) => i.report === 'pending' && (i.notBefore ?? 0) <= now);
+    if (r) {
+      r.report = 'thinking';
+      r.reportLease = { by: uid, until: now + BRAIN_LEASE_MS };
+      this.save();
+      return { id: r.id, kind: 'report', model: this.cfg.model, system: this.reportSystem(), prompt: await this.reportPrompt(r), timeoutMs: 90_000 };
+    }
+    const it = this.items.find((i) => i.state === 'pending' && (i.notBefore ?? 0) <= now);
     if (!it) {
       this.push();
       return null;
     }
-    it.state = 'thinking';
-    it.tries++;
-    it.lease = { by: uid, until: now + BRAIN_LEASE_MS };
-    this.save();
-    if (it.tries > BRAIN_MAX_TRIES) {
+    if (it.tries >= BRAIN_MAX_TRIES) {
       await this.finish(it, { action: 'answer', reply: 'Mình vẫn chưa hiểu rõ yêu cầu này. Bạn mô tả lại giúp mình trong một câu: muốn kết quả cuối cùng là gì?' }, []);
       return null;
     }
+    it.state = 'thinking';
+    it.lease = { by: uid, until: now + BRAIN_LEASE_MS };
+    this.save();
     await this.host.showBrain(true, `nghĩ: ${oneLine(it.text, 40)}`);
     await this.host.pushActivity(BRAIN_ID, { ts: now, kind: 'prompt', icon: '🧠', text: `${it.whoName}: ${oneLine(it.text, 120)}` });
     this.push();
-    return { id: it.id, model: this.cfg.model, system: await this.system(), prompt: await this.user(it) };
+    return { id: it.id, kind: 'decide', model: this.cfg.model, system: await this.system(), prompt: await this.user(it), timeoutMs: 120_000 };
   }
 
-  /** The machine brings back whatever the model printed. */
-  async result(uid: string, id: string, raw: string): Promise<{ ok: boolean; error?: string }> {
+  /** The machine brings back whatever the model printed — or that it could not reach Claude. */
+  async result(uid: string, id: string, raw: string, error = ''): Promise<{ ok: boolean; error?: string }> {
+    const c = this.checks.find((x) => x.id === id);
+    if (c) {
+      if (c.state === 'done') return { ok: true };
+      const v = error ? null : parseVerdict(raw);
+      if (!v && !error && c.verdict === undefined) {
+        // one more go in the right shape, then the person decides
+        c.verdict = null;
+        c.state = 'pending';
+        c.lease = undefined;
+        this.kick();
+        return { ok: false, error: 'không đọc được phán quyết (cần JSON)' };
+      }
+      c.verdict = v;
+      c.state = 'done';
+      this.kick();
+      return { ok: true };
+    }
     const it = this.items.find((x) => x.id === id);
     if (!it) return { ok: false, error: 'không còn yêu cầu này' };
+    if (it.report === 'thinking' && it.reportLease) {
+      if (it.reportLease.by !== uid) return { ok: false, error: 'báo cáo này do máy khác viết' };
+      return this.reported(it, error ? null : parseReport(raw), error);
+    }
     if (it.lease && it.lease.by !== uid) return { ok: false, error: 'yêu cầu này do máy khác nhận' };
+    if (error) {
+      // the machine could not reach Claude: that is not the request's fault, so it costs no try —
+      // it waits a little (longer each time) and the person hears once that it is not forgotten
+      it.state = 'pending';
+      it.lease = undefined;
+      it.fails = (it.fails ?? 0) + 1;
+      it.notBefore = Date.now() + Math.min(RETRY_MAX_MS, RETRY_MS * 2 ** Math.min(5, it.fails - 1));
+      this.save();
+      this.push();
+      if (it.fails === 2) await this.say('Kết nối tới Claude đang chập chờn nên mình chưa xử lý được. Yêu cầu của bạn vẫn được giữ, mình tự thử lại — bạn không cần nhắn lại.', Brain.thread(it.who), it.root);
+      await this.host.wakeAt(it.notBefore);
+      return { ok: true };
+    }
     const d = parseDecision(raw);
+    it.tries++;
+    it.fails = 0;
     this.thoughts = [...this.thoughts.filter((t) => Date.now() - t < 2 * HOUR), Date.now()];
     if (!d) {
-      // the model did not answer in the shape we asked for: put it back once, then give up
+      // the model did not answer in the shape we asked for: back in the queue (tries caps it)
       it.state = 'pending';
       it.lease = undefined;
       this.save();
       this.push();
+      this.kick();
       return { ok: false, error: 'không đọc được quyết định (cần JSON)' };
     }
     await this.apply(it, d);
     return { ok: true };
+  }
+
+  // ------------------------------------------------------------------ judging a session's action
+  /** Ask Tổng quản whether a session may do something. Null = nobody could judge it in time. */
+  async judge(r: CheckRequest): Promise<BrainVerdict | null> {
+    if (!this.thinking()) return null;
+    const c: Check = { id: crypto.randomUUID(), at: Date.now(), state: 'pending', system: this.judgeSystem(), prompt: await this.judgePrompt(r) };
+    this.checks.push(c);
+    this.kick();
+    const until = Date.now() + APPROVE_WAIT_MS;
+    while (c.state !== 'done' && Date.now() < until) await this.nap(Math.min(2000, until - Date.now()));
+    this.checks = this.checks.filter((x) => x !== c && Date.now() - x.at < 5 * 60_000);
+    if (c.state === 'done') this.thoughts = [...this.thoughts.filter((t) => Date.now() - t < 2 * HOUR), Date.now()];
+    return c.state === 'done' ? (c.verdict ?? null) : null;
+  }
+
+  private judgeSystem(): string {
+    return [
+      `Bạn là ${BRAIN_NAME} — người điều phối của một văn phòng. Một nhân viên (một phiên Claude Code đang làm việc trong dự án) xin làm một thao tác mà hồ sơ phòng ban của họ chưa cho sẵn. Bạn duyệt thay chủ máy.`,
+      '',
+      'Trả về ĐÚNG MỘT object JSON, không viết gì ngoài nó:',
+      '{"decision":"allow|deny|ask","session":false,"reason":"…"}',
+      '',
+      'Cách quyết:',
+      '- "allow" khi thao tác cần cho đúng việc đang làm, đúng phần việc của phòng đó, và hỏng thì sửa lại được trên máy (đọc, chạy test/build/lint, cài thư viện của dự án, sửa file trong dự án, git commit/branch cục bộ).',
+      '- Thao tác khó đảo ngược hoặc ra khỏi máy (push, deploy, xoá dữ liệu/nhánh, ghi vào DB thật, gửi tin/email/gọi API ghi dữ liệu, đổi secret, chạy với quyền root): CHỈ "allow" khi mô tả việc yêu cầu rõ đúng việc đó và đúng phòng được làm (deploy là việc của ops). Không rõ thì "ask".',
+      '- "deny" khi thao tác lạc đề so với việc, vượt ranh giới phòng ban (ví dụ QA sửa code sản phẩm, docs sửa code), lộ bí mật, hoặc nguy hiểm mà việc không cần. Nói ngắn cách làm khác trong "reason".',
+      '- "session": true chỉ khi cả loại thao tác này (cùng lệnh, khác tham số) an toàn cho suốt phiên — ví dụ chạy test, cài thư viện. Không bao giờ true cho thao tác khó đảo ngược.',
+      '- Đọc kỹ cả lệnh: lệnh ghép bằng && ; | hay $( ) thì phần nguy hiểm nhất quyết định.',
+      '- "reason": tiếng Việt, một câu, như đồng nghiệp nói với nhau.',
+    ].join('\n');
+  }
+
+  private async judgePrompt(r: CheckRequest): Promise<string> {
+    const lessons = rankLessons((await db.listLessons(this.host.DB).catch(() => [] as Lesson[])).filter((l) => lessonFits(l, { dept: r.dept, project: r.project }) && (l.dept === 'all' || l.dept === r.dept))).slice(0, 10);
+    const t = r.task;
+    return [
+      `## Ai xin`,
+      `${r.agentName} — phòng ${DEPT_BY_ID.get(r.dept)!.name}${r.project ? `, dự án ${r.project}` : ''}.`,
+      r.lane ? `Hồ sơ phòng cho sẵn: ${r.lane}` : '',
+      '',
+      '## Việc đang làm',
+      t ? `#${shortId(t.id)} ${t.title}\n${oneLine(t.desc, 1500)}` : '(không gắn với việc nào trên bảng)',
+      lessons.length ? `\n## Sổ kinh nghiệm\n${lessons.map((l) => `- ${oneLine(l.text, 200)}`).join('\n')}` : '',
+      '',
+      '## Thao tác xin làm',
+      `Công cụ: ${r.tool}`,
+      r.summary,
+      `Mức rủi ro hệ thống đánh giá: ${r.risk === 'danger' ? 'khó đảo ngược hoặc ra khỏi máy' : 'bình thường nhưng chưa chắc an toàn'}.`,
+      '',
+      'Trả về đúng một object JSON.',
+    ]
+      .filter((x) => x !== '')
+      .join('\n');
   }
 
   // ------------------------------------------------------------------ the prompt
@@ -277,7 +474,7 @@ export class Brain {
       depts,
       '',
       'Mỗi lượt bạn nhận MỘT yêu cầu và trả về ĐÚNG MỘT object JSON, không viết gì ngoài nó:',
-      '{"action":"answer|route|ask|merge|drop","reply":"…","question":"…","mergeInto":"#abc12345","plan":[{"dept":"dev","title":"…","desc":"…","priority":"normal","after":[]}]}',
+      '{"action":"answer|route|ask|merge|drop","reply":"…","question":"…","mergeInto":"#abc12345","project":"tên-dự-án","plan":[{"dept":"dev","title":"…","desc":"…","priority":"normal","after":[]}]}',
       '',
       'Chọn action:',
       '- "answer" — trả lời được ngay bằng thông tin trong phần "Tình hình văn phòng" (ai đang làm gì, trên bảng có gì, việc xong chưa, giải thích cách văn phòng chạy). KHÔNG tốn phiên nào. Đây là mặc định cho mọi câu hỏi.',
@@ -301,9 +498,18 @@ export class Brain {
       '- Phần nối sau tự khởi động khi phần trước xong hoặc chuyển sang chờ duyệt; không ai phải nhắc nó.',
       '',
       'Dùng "mergeInto" (yêu cầu này chính là việc đã có):',
-      '- Chỉ gộp vào một việc còn mở trong "Bảng việc đang mở", ghi đúng mã #. Việc đã xong thì không gộp được — hãy "route" phần còn thiếu.',
+      '- Chỉ gộp vào một việc còn mở trong "Bảng việc đang mở", ghi đúng mã #. Việc đã xong thì không gộp được — hãy "route" phần còn thiếu (giữ đúng dự án của luồng).',
       '- Gộp khi người gửi nói thêm, đổi ý hoặc nhắc lại cùng việc đó. Yêu cầu thật sự khác thì "route", đừng gộp cho gọn.',
+      '- Tin nhắn nằm trong một luồng đã có việc (xem "Luồng này") thường là bổ sung cho việc đó: gộp vào việc còn mở của luồng. Việc đang chờ duyệt mà người gửi muốn sửa/thêm thì cũng gộp — việc sẽ được đưa về làm lại kèm phần bổ sung.',
       '- Một yêu cầu chỉ gộp vào đúng MỘT việc, và khi gộp thì không kèm "plan".',
+      '',
+      'Dự án ("project"):',
+      '- Mỗi máy trực làm trong đúng một dự án; việc chỉ đến được máy của dự án mình ghi. Khi "route", ghi "project" là một tên trong danh sách "Dự án có máy trực".',
+      '- Chỉ có một dự án thì ghi dự án đó. Yêu cầu nối tiếp việc đã có (cùng luồng) thì giữ đúng dự án của việc đó.',
+      '- Có nhiều dự án mà yêu cầu không nói rõ là dự án nào, và đoán sai là làm hỏng việc: "ask" đúng câu đó.',
+      '',
+      'Dựa vào kinh nghiệm:',
+      '- "Sổ kinh nghiệm" và "Kết quả gần đây" là những gì văn phòng đã học được. Áp dụng chúng khi chia việc: phòng nào hay làm hỏng loại việc gì, phần nào từng phải làm lại, cách nào đã hiệu quả. Ghi bài học liên quan vào "desc" để phòng nhận việc biết.',
       '',
       'Quy tắc:',
       '- Hỏi ít. Nếu còn thiếu chi tiết nhỏ: đừng hỏi — chọn "route" và ghi rõ giả định của bạn vào "desc". Chỉ hỏi thứ đáng hỏi.',
@@ -335,9 +541,38 @@ export class Brain {
       });
     const busy = this.host.atWork().map((a) => `- ${a.name} (${DEPT_BY_ID.get(a.dept)!.name}): ${oneLine(a.what, 60) || 'đang làm'}`);
     const b = this.budget();
-    const lessons = (await db.listLessons(this.host.DB).catch(() => [] as Lesson[])).slice(0, 12).map((l) => `- ${l.dept === 'all' ? 'chung' : DEPT_BY_ID.get(l.dept as DeptId)?.short ?? l.dept}: ${oneLine(l.text, 160)}`);
+    const projects = this.projects();
+    // the request's own thread already belongs to a project when earlier work in it was routed there
+    const threadProject = tasks.find((t) => t.thread && t.thread === it.root && t.project)?.project ?? '';
+    // the playbook as far as deciding goes: the lead's own lessons and everyone's, for the projects
+    // that can actually take work — never another project's commands or another machine's quirks
+    const book = await db.listLessons(this.host.DB).catch(() => [] as Lesson[]);
+    const fits = (l: Lesson) => !l.machine && (!l.project || projects.includes(l.project) || l.project === threadProject);
+    const lessons = rankLessons(book.filter(fits))
+      .sort((x, y) => Number(y.dept === 'lead') - Number(x.dept === 'lead'))
+      .slice(0, 20)
+      .map((l) => `- ${l.dept === 'all' ? 'chung' : DEPT_BY_ID.get(l.dept as DeptId)?.short ?? l.dept}${l.project ? ` · ${l.project}` : ''}: ${oneLine(l.text, 180)}`);
+    // how recent work actually went: what finished, what had to be redone
+    const since = Date.now() - 3 * 86400_000;
+    const outcomes = tasks
+      .filter((t) => t.dept && t.createdBy && (t.col === 'done' || t.col === 'review') && t.updatedAt > since)
+      .sort((x, y) => y.updatedAt - x.updatedAt)
+      .slice(0, 10)
+      .map((t) => {
+        const fails = this.host.taskFails(t.id);
+        return `- ${DEPT_BY_ID.get(t.dept!)!.short}${t.project ? ` · ${t.project}` : ''}: ${oneLine(t.title, 80)} → ${t.col === 'done' ? 'xong' : 'chờ duyệt'}${fails ? `, hỏng giữa chừng ${fails} lần` : ''}${(t.hops ?? 0) > 1 ? `, qua ${t.hops} lần bàn giao` : ''}`;
+      });
     const d = new Date(Date.now() + this.host.tz * 60_000);
     const clock = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+    // a line inside a thread that already has work is most likely about that work
+    const inThread = it.root
+      ? tasks
+          .filter((t) => t.thread === it.root)
+          .sort((x, y) => x.createdAt - y.createdAt)
+          .slice(-8)
+          .map((t) => `- #${shortId(t.id)} [${t.col}] ${t.dept ? DEPT_BY_ID.get(t.dept)!.short : 'chưa giao'}: ${oneLine(t.title, 90)}`)
+      : [];
+    const asked = it.root ? this.items.filter((x) => x !== it && x.root === it.root && x.at < it.at).slice(-4).map((x) => `- ${x.whoName}: “${oneLine(x.text, 200)}”`) : [];
     const followUps = it.followUps.filter((f) => f.a).map((f) => `Bạn đã hỏi: “${oneLine(f.q, 200)}” — Họ trả lời: “${oneLine(f.a, 400)}”`);
     return [
       `## Tình hình văn phòng (lúc ${clock})`,
@@ -346,7 +581,12 @@ export class Brain {
       open.length ? `Bảng việc đang mở:\n${open.join('\n')}` : 'Bảng việc đang trống.',
       '',
       `Ngân sách giờ này: đã dùng ${b.sessionsHour}/${this.cfg.maxSessionsHour} phiên cho cả văn phòng.`,
+      '',
+      projects.length ? `Dự án có máy trực: ${projects.join(', ')}` : 'Chưa có máy trực nào báo dự án (việc giao đi sẽ chờ máy lên).',
+      threadProject ? `Luồng này đang làm ở dự án: ${threadProject}` : '',
       lessons.length ? `\n## Sổ kinh nghiệm\n${lessons.join('\n')}` : '',
+      outcomes.length ? `\n## Kết quả gần đây\n${outcomes.join('\n')}` : '',
+      inThread.length || asked.length ? `\n## Luồng này (tin nhắn dưới đây được gửi trong luồng đó)\n${[...(asked.length ? ['Đã nhắn trước đó:', ...asked] : []), ...(inThread.length ? ['Việc của luồng:', ...inThread] : [])].join('\n')}` : '',
       '',
       '## Yêu cầu cần quyết định',
       `Người gửi: ${it.whoName}`,
@@ -389,13 +629,28 @@ export class Brain {
       const t = d.mergeInto ? await this.findTask(d.mergeInto) : null;
       // only work still open can absorb anything — a finished card is never read again
       if (t && t.col !== 'done') {
-        t.desc = `${t.desc}${t.desc ? '\n\n' : ''}— ${it.whoName} nhắn thêm: ${it.text}`.slice(0, 2000);
+        const note = `— ${it.whoName} nhắn thêm: ${it.text}`;
+        // the card keeps its head (what the work is) and the addition always fits at the end
+        t.desc = t.desc ? `${t.desc.slice(0, Math.max(0, 2000 - note.length - 2))}\n\n${note}` : note.slice(0, 2000);
+        // a card waiting for review that the person adds to goes back to be done again, with the addition
+        const rework = t.col === 'review';
+        if (rework) {
+          t.col = 'todo';
+          t.assignee = null;
+        }
         t.updatedAt = Date.now();
         await this.host.saveTask(t, BRAIN_ID);
         // a session already working on it read the description long ago, so say it out loud too
         const owner = t.col === 'doing' && t.thread ? this.host.taskOrigin(t) : '';
         if (owner) await this.say(`${it.whoName} nhắn thêm cho “${oneLine(t.title, 60)}”: ${it.text}`, Brain.thread(owner), t.thread);
-        await this.say(reply || `Mình gộp vào việc #${shortId(t.id)} đang chạy rồi nhé.`, thread, it.root);
+        // the person hears back once the card is finished — unless an earlier request already waits on it
+        const covered = this.items.some((x) => x !== it && x.tasks?.includes(t.id) && (x.report === 'wait' || x.report === 'pending' || x.report === 'thinking'));
+        if (!covered) {
+          it.tasks = [t.id];
+          it.project = t.project;
+          it.report = 'wait';
+        }
+        await this.say(reply || (rework ? `Mình đưa việc #${shortId(t.id)} về làm lại kèm phần bạn bổ sung, xong sẽ báo kết quả nhé.` : `Mình gộp vào việc #${shortId(t.id)} rồi nhé.`), thread, it.root);
         await this.finish(it, d, []);
         return;
       }
@@ -407,6 +662,9 @@ export class Brain {
     if (d.action === 'route') {
       const made = await this.dispatch(it, d);
       if (made.length) {
+        it.tasks = [...new Set([...(it.tasks ?? []), ...made.map((t) => t.id)])];
+        it.project = made[0].project;
+        it.report = 'wait';
         const who = made.map((t) => `${DEPT_BY_ID.get(t.dept!)!.icon} ${DEPT_BY_ID.get(t.dept!)!.name}`);
         const line = reply || `Mình giao cho ${[...new Set(who)].join(', ')} rồi, bạn theo dõi trên bảng nhé.`;
         const throttled = !this.mayStart(it.who);
@@ -429,6 +687,7 @@ export class Brain {
     for (const t of tasks.values()) if (t.col === 'todo') ord = Math.max(ord, t.ord);
     const now = Date.now();
     const made: Task[] = [];
+    const project = this.pickProject(d.project, it.root, tasks);
     // the card the request came from is reused for the first parcel, so nothing is duplicated
     const from = it.taskId ? tasks.get(it.taskId) ?? null : null;
     for (let i = 0; i < parcels.length; i++) {
@@ -457,11 +716,30 @@ export class Brain {
             after: after.length ? after : undefined,
             thread: it.root || undefined,
           };
+      if (project) t.project = project;
       this.host.setTaskOrigin(t.id, it.who);
       await this.host.saveTask(t, BRAIN_ID);
       made.push(t);
     }
     return made;
+  }
+
+  /** Online projects (repo names of the on-call machines seen lately). */
+  private projects(): string[] {
+    return [...new Set(this.host.machines().map((m) => m.project).filter(Boolean))].sort();
+  }
+
+  /** Which project a plan goes to: what it named (if a machine works there), the thread's own, or
+   *  the only one on call. '' = any machine may take it (no machine says where it works). */
+  private pickProject(named: string | undefined, root: string, tasks: Map<string, Task>): string {
+    const projects = this.projects();
+    const want = String(named ?? '').trim().toLowerCase();
+    const hit = projects.find((p) => p.toLowerCase() === want);
+    if (hit) return hit;
+    const thread = root ? [...tasks.values()].find((t) => t.thread === root && t.project)?.project : undefined;
+    if (thread) return thread;
+    if (want && projects.length !== 1) return clampStr(named!, 60); // a project whose machine is not up yet
+    return projects.length === 1 ? projects[0] : '';
   }
 
   private prio(v: unknown, dflt: Priority): Priority {
@@ -498,6 +776,118 @@ export class Brain {
     await this.host.chat({ id: crypto.randomUUID(), ch, from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: oneLine(text, BRAIN_LIMITS.reply), ts: Date.now(), ...(root ? { root } : {}) });
   }
 
+  // ------------------------------------------------------------------ the final report
+  /** Every card that belongs to a request: the ones its plan made and the ones handed on from them. */
+  private workOf(it: BrainItem, tasks: Map<string, Task>): Task[] {
+    const ids = new Set(it.tasks ?? []);
+    return [...tasks.values()].filter((t) => ids.has(t.id) || (it.root && t.thread === it.root && t.createdAt >= it.at));
+  }
+
+  /** Work moved on the board: a request whose every piece is finished gets its report written. */
+  async progress(): Promise<void> {
+    const waiting = this.items.filter((i) => i.report === 'wait');
+    if (!waiting.length) return;
+    const tasks = await this.host.getTasks();
+    let changed = false;
+    for (const it of waiting) {
+      const work = this.workOf(it, tasks);
+      if (!work.length) {
+        it.report = 'sent'; // the cards were deleted: nothing left to report on
+        changed = true;
+        continue;
+      }
+      if (!work.every(settled)) continue;
+      it.report = 'pending';
+      it.reportTries = 0;
+      it.notBefore = undefined;
+      it.at = Date.now();
+      changed = true;
+    }
+    if (changed) {
+      this.save();
+      this.push();
+      this.kick();
+      await this.host.wakeAt(Date.now() + REPORT_FALLBACK_MS);
+    }
+  }
+
+  private reportSystem(): string {
+    return [
+      `Bạn là ${BRAIN_NAME} — người điều phối của một văn phòng. Một yêu cầu bạn đã giao cho các phòng ban vừa xong hết. Viết BÁO CÁO CUỐI gửi người đã yêu cầu: họ chỉ đọc đúng tin này, không đọc từng trao đổi giữa các phòng.`,
+      '',
+      'Trả về ĐÚNG MỘT object JSON, không viết gì ngoài nó:',
+      '{"status":"done|partial|failed","reply":"…","lesson":"…"}',
+      '',
+      '- "reply": tiếng Việt, 2–6 câu, không markdown, không gạch đầu dòng. Nói kết quả cuối cùng (đã làm được gì, ở đâu: nhánh/file/link nếu ghi chú có), điều gì chưa xong hoặc rủi ro còn lại, và người đó cần làm gì tiếp (duyệt, merge, thử lại…) nếu có. Chỉ dựa vào ghi chú của các việc, không bịa.',
+      '- "status": done nếu đạt đúng yêu cầu, partial nếu còn thiếu, failed nếu không làm được.',
+      '- "lesson": một câu kinh nghiệm về CÁCH CHIA VIỆC rút ra từ lần này (phòng nào thừa/thiếu, phần nào phải làm lại, nên nối tiếp hay song song) — để trống nếu không có gì đáng nhớ.',
+    ].join('\n');
+  }
+
+  private async reportPrompt(it: BrainItem): Promise<string> {
+    const tasks = await this.host.getTasks();
+    const work = this.workOf(it, tasks).sort((a, b) => a.createdAt - b.createdAt);
+    const followUps = it.followUps.filter((f) => f.a).map((f) => `Đã hỏi: “${oneLine(f.q, 200)}” — trả lời: “${oneLine(f.a, 300)}”`);
+    return [
+      `## Yêu cầu của ${it.whoName}`,
+      `“${it.text}”`,
+      ...followUps,
+      it.project ? `Dự án: ${it.project}` : '',
+      '',
+      '## Các phần việc',
+      ...work.map((t) => {
+        const fails = this.host.taskFails(t.id);
+        // the notes are appended, so the end of the description is where the results are
+        const notes = t.desc.length > 1400 ? `…${t.desc.slice(-1400)}` : t.desc;
+        return `### #${shortId(t.id)} ${t.dept ? DEPT_BY_ID.get(t.dept)!.name : 'chưa giao'} — ${t.title} [${t.col === 'done' ? 'xong' : 'chờ duyệt'}${fails ? `, hỏng giữa chừng ${fails} lần` : ''}]\n${notes || '(không có ghi chú)'}`;
+      }),
+      '',
+      'Trả về đúng một object JSON.',
+    ]
+      .filter((x) => x !== '')
+      .join('\n');
+  }
+
+  /** The report came back (or could not be written). */
+  private async reported(it: BrainItem, r: { reply: string; lesson: string } | null, error: string): Promise<{ ok: boolean; error?: string }> {
+    it.reportLease = undefined;
+    if (!r) {
+      it.reportTries = (it.reportTries ?? 0) + 1;
+      it.report = 'pending';
+      if (error) it.notBefore = Date.now() + Math.min(RETRY_MAX_MS, RETRY_MS * 2 ** Math.min(5, it.reportTries - 1));
+      this.save();
+      if (it.reportTries >= 3 && !error) await this.plainReport(it);
+      return { ok: !!error, error: error ? undefined : 'không đọc được báo cáo (cần JSON)' };
+    }
+    this.thoughts = [...this.thoughts.filter((t) => Date.now() - t < 2 * HOUR), Date.now()];
+    await this.sendReport(it, r.reply);
+    // how the split went is the lead's experience: it goes through the same distillation as the rest
+    if (r.lesson.length >= 12) await db.addDebrief(this.host.DB, Brain.lessonDebrief(it, r.lesson), 'system').catch(() => {});
+    return { ok: true };
+  }
+
+  private async sendReport(it: BrainItem, reply: string) {
+    it.report = 'sent';
+    it.notBefore = undefined;
+    this.save();
+    this.push();
+    await this.host.chat({ id: crypto.randomUUID(), ch: Brain.thread(it.who), from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: `📋 Kết quả: ${clampStr(reply.replace(/\s+/g, ' '), 1200)}`, ts: Date.now(), ...(it.root ? { root: it.root } : {}) });
+    await this.host.pushActivity(BRAIN_ID, { ts: Date.now(), kind: 'say', icon: '📋', text: `Báo cáo cho ${it.whoName}: ${oneLine(reply, 140)}` });
+  }
+
+  /** Nobody could write the report: the person still hears how each piece ended. */
+  private async plainReport(it: BrainItem) {
+    const tasks = await this.host.getTasks();
+    const work = this.workOf(it, tasks);
+    const parts = work.map((t) => `${t.dept ? DEPT_BY_ID.get(t.dept)!.short : '?'} “${oneLine(t.title, 60)}” ${t.col === 'done' ? 'đã xong' : 'đang chờ bạn duyệt'}`);
+    await this.sendReport(it, `Mọi phần việc cho “${oneLine(it.text, 80)}” đã xong: ${parts.join('; ')}. Chi tiết nằm trong ghi chú từng việc trên bảng.`);
+  }
+
+  /** The report's own lesson about splitting work becomes a debrief for the lead's distillation. */
+  static lessonDebrief(it: BrainItem, lesson: string): Debrief {
+    return { id: crypto.randomUUID(), agent: BRAIN_ID, agentName: BRAIN_NAME, dept: 'lead', project: it.project ?? '', text: `Yêu cầu: ${oneLine(it.text, 300)}\nBài học chia việc: ${oneLine(lesson, 300)}`, at: Date.now() };
+  }
+
   // ------------------------------------------------------------------ housekeeping
   /** Returns true while something still needs the room awake. */
   async sweep(now: number): Promise<boolean> {
@@ -511,8 +901,19 @@ export class Brain {
         it.state = 'done';
         changed = true;
       }
+      if (it.report === 'thinking' && it.reportLease && now > it.reportLease.until) {
+        it.report = 'pending';
+        it.reportLease = undefined;
+        changed = true;
+      }
+      // no machine managed to write it: the person still gets the outcome, just plainer
+      if (it.report === 'pending' && now - it.at > REPORT_FALLBACK_MS) await this.plainReport(it);
     }
-    const kept = this.items.filter((i) => i.state !== 'done' || now - i.at < BRAIN_KEEP_MS);
+    for (const c of this.checks) if (c.state === 'thinking' && c.lease && now > c.lease.until) ((c.state = 'pending'), (c.lease = undefined));
+    this.checks = this.checks.filter((c) => now - c.at < 5 * 60_000);
+    // a request is kept for the log a day, and — while its work is still running — until its report went out
+    const live = (i: BrainItem) => i.state !== 'done' || now - i.at < BRAIN_KEEP_MS || ((i.report === 'wait' || i.report === 'pending' || i.report === 'thinking') && now - i.at < REPORT_KEEP_MS);
+    const kept = this.items.filter(live);
     if (kept.length !== this.items.length) {
       this.items = kept;
       changed = true;
@@ -521,9 +922,15 @@ export class Brain {
       this.save();
       this.push();
     }
+    await this.progress();
     const waiting = this.items.some((i) => i.state === 'pending' || i.state === 'thinking');
     if (!waiting) await this.host.showBrain(false, '');
-    return waiting;
+    return waiting || this.items.some((i) => i.report === 'pending' || i.report === 'thinking');
+  }
+
+  /** Is this thread a request Tổng quản will report on when its work is finished? */
+  reports(root: string | null | undefined): boolean {
+    return !!root && this.items.some((i) => i.root === root && (i.report === 'wait' || i.report === 'pending' || i.report === 'thinking'));
   }
 
   /** A person cancelled a request of theirs. */

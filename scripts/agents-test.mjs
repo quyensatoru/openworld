@@ -108,8 +108,9 @@ function client(cookie, cid, name) {
 
   // the office remembers its settings between runs: start from the defaults
   // (the hourly spend carries over between runs, so give this run room before testing the ceiling)
-  A.send({ t: 'agents', m: { a: 'brainConfig', config: { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false } } });
-  await A.wait((m) => m.t === 'brain' && !m.v.config.meetings && m.v.config.maxSessionsHour === 200);
+  // ('ask' approvals first: the 🔐 card flow below is the owner answering by hand)
+  A.send({ t: 'agents', m: { a: 'brainConfig', config: { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false, approvals: 'ask' } } });
+  await A.wait((m) => m.t === 'brain' && !m.v.config.meetings && m.v.config.maxSessionsHour === 200 && m.v.config.approvals === 'ask');
 
   // requests survive a restart, so drain anything an earlier run left in the queue
   for (let i = 0; i < 30; i++) {
@@ -204,7 +205,11 @@ function client(cookie, cid, name) {
   const devLine = await mineP;
   ok(!sent.err && devLine?.m.root === root, "the agent reports inside the thread of the work it took");
   ok(!(await leak), 'and nobody else sees it');
+  const fwdP = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.root === root && m.m.from === 'system' && m.m.text.startsWith('📨 Đã chuyển cho') && m.m.text.includes(dev?.name));
+  const fwdCard = A.next((m) => m.t === 'task' && m.task.id === task.id && m.task.desc.includes(`theo phần trăm nhé ${run}`));
   A.send({ t: 'chat', ch: 'ask', text: `Nhớ kiểm tra cả mã giảm giá theo phần trăm nhé ${run}`, root });
+  ok(!!(await fwdP), 'a line added in the thread is handed to the employee working there, and the person is told who got it');
+  ok(!!(await fwdCard), 'the addition is also written on that card, so a fresh session or the final report still has it');
   await sleep(300);
   const read = await call('chat_read', {}, DH);
   ok(read.text.includes(`theo phần trăm nhé ${run}`), 'chat_read sees what the person added, even with the board feed busy');
@@ -470,8 +475,163 @@ function client(cookie, cid, name) {
   ok(!!answer, 'an "answer" decision costs no session at all — it just replies');
   ok(!!(await brainLeft), 'and it leaves its desk once nothing is waiting');
 
+  // ==== surviving outages, one project per machine, Tổng quản approving, the final report
+  const R1 = `r-${run}-mach-one`;
+  const P1 = `shop-${run}`;
+  let hbRunning = [];
+  const hb = (extra = {}) => api('/api/agents/jobs', { depts: 'dev,ops,lead', machine: { id: R1, label: `may-test·${run.slice(0, 4)}`, project: P1 }, running: hbRunning, waiting: [], ...extra });
+  const machP = A.next((m) => m.t === 'brain' && m.v.machines?.some((x) => x.id === R1 && x.project === P1), 6000);
+  A.send({ t: 'agents', m: { a: 'lessons' } });
+  const hb0 = await hb();
+  ok(Array.isArray(hb0.tasks) && !!(await machP), 'a runner checks in with its machine and project, and the 🧠 panel shows it');
+  A.send({ t: 'agents', m: { a: 'brainConfig', config: { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false, approvals: 'lead' } } });
+  await A.wait((m) => m.t === 'brain' && m.v.config.approvals === 'lead');
+
+  // a request goes to the project's machine, and only to it
+  const csvAskP = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.from === aId);
+  A.send({ t: 'chat', ch: 'ask', text: `Thêm nút xuất CSV đơn hàng ${run}` });
+  const csvRoot = (await csvAskP)?.m.id;
+  const pjob = (await api('/api/agents/brain')).job;
+  ok(pjob?.kind === 'decide' && pjob.prompt.includes(P1) && /"project"/.test(pjob.system), 'the decision is told which projects have a machine on call');
+  await api('/api/agents/brain', { id: pjob?.id, raw: JSON.stringify({ action: 'route', reply: 'Phát triển làm nhé.', project: P1, plan: [{ dept: 'dev', title: `Xuất CSV ${run}`, desc: 'Nút xuất CSV ở trang đơn hàng.', priority: 'normal', after: [] }] }) });
+  const csv = (await A.wait((m) => m.t === 'task' && m.task.title === `Xuất CSV ${run}`))?.task;
+  ok(csv?.project === P1 && csv?.thread === csvRoot, 'the card carries its project');
+  const other = await api('/api/agents/jobs', { depts: 'dev', machine: { id: `r-${run}-mach-two`, label: 'khac', project: `khac-${run}` }, running: [], waiting: [] });
+  ok(!other.tasks.some((t) => t.id === csv?.id), "another project's machine is not offered it");
+  ok((await hb()).tasks.some((t) => t.id === csv?.id), "the project's own machine is");
+  ok(!(await api('/api/agents/claim', { kind: 'task', id: csv?.id, machine: `r-${run}-mach-two` })).ok, 'and the other one cannot claim it either');
+  const c1 = await api('/api/agents/claim', { kind: 'task', id: csv?.id, machine: R1, dir: '/home/an/shop' });
+  ok(c1.ok && c1.approvals === 'lead', 'the claim tells the runner how approvals work');
+  const C1H = { 'X-Office-Agent': c1.agent?.id };
+  hbRunning = [c1.agent?.id];
+
+  // an outage: the employee waits at the desk, the person hears it will go on by itself
+  const stallP = A.next((m) => m.t === 'chat' && m.m.ch === askCh && /bị ngắt giữa chừng/.test(m.m.text) && m.m.root === csvRoot);
+  const waitUpd = B.next((m) => m.t === 'upd' && m.id === c1.agent?.id && /📶/.test(m.patch.statusText ?? ''));
+  await hb({ running: [], waiting: [{ agent: c1.agent?.id, until: Date.now() + 60_000, why: 'mất kết nối tới Claude' }], outage: { until: Date.now() + 60_000, why: 'mất mạng' } });
+  ok(!!(await stallP) && !!(await waitUpd), 'a broken-off session stays at its desk, and the thread says it will resume');
+  const stillDoing = [...(await A.wait((m) => m.t === 'task' && m.task.id === csv?.id))?.task?.col ?? ''].join('');
+  ok(stillDoing === 'doing', 'its task stays in Doing — nothing is thrown away');
+  const ad = await api('/api/agents/adopt', { agent: c1.agent?.id, machine: R1 });
+  ok(ad.ok && ad.kind === 'task' && ad.task?.id === csv?.id, 'a restarted runner adopts its session back');
+  ok(!(await api('/api/agents/adopt', { agent: c1.agent?.id, machine: `r-${run}-mach-two` })).ok, 'but another machine cannot');
+  const x_back = B.next((m) => m.t === 'upd' && m.id === c1.agent?.id && /làm tiếp/.test(m.patch.statusText ?? ''));
+  await hb({ running: [c1.agent?.id] });
+  ok(!!(await x_back), 'when it runs again the desk says it is going on');
+  const goneHb = await hb({ running: [c1.agent?.id, 'ag-000000000000'] });
+  ok(goneHb.gone?.includes('ag-000000000000'), 'a session the office no longer has is reported gone, so the runner stops it');
+
+  // a thought Claude could not be reached for costs the request nothing
+  const offAskP = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.from === aId);
+  A.send({ t: 'chat', ch: 'ask', text: `Hỏi lúc mất mạng ${run}` });
+  await offAskP;
+  const ej = (await api('/api/agents/brain')).job;
+  await api('/api/agents/brain', { id: ej?.id, raw: '', error: 'API Error: Connection error' });
+  const ejView = await A.wait((m) => m.t === 'brain' && m.v.queue.some((i) => i.id === ej?.id && i.state === 'pending' && i.fails === 1));
+  const ejItem = ejView?.v.queue.find((i) => i.id === ej?.id);
+  ok(ejItem?.tries === 0 && ejItem?.notBefore > Date.now(), 'a network failure does not count as a try, and it waits before the next go');
+  ok((await api('/api/agents/brain')).job?.id !== ej?.id, 'so it is not handed out again at once');
+  A.send({ t: 'agents', m: { a: 'brainCancel', id: ej?.id } });
+
+  // Tổng quản approves in the owner's place
+  const safe = JSON.parse((await call('permission', { tool_name: 'Bash', input: { command: 'git status && npm test -- csv' } }, C1H)).text || '{}');
+  ok(safe.behavior === 'allow', 'plainly safe commands go through at once');
+  const judging = call('permission', { tool_name: 'Bash', input: { command: 'npm install csv-stringify', description: 'Cài thư viện CSV' } }, C1H);
+  const jj = (await api('/api/agents/brain?wait=8')).job;
+  ok(jj?.kind === 'approve' && jj.prompt.includes('npm install csv-stringify') && jj.prompt.includes(`Xuất CSV ${run}`), 'anything else is judged by Tổng quản, against the task itself');
+  await api('/api/agents/brain', { id: jj?.id, raw: JSON.stringify({ decision: 'allow', session: true, reason: 'Cần thư viện để xuất CSV.' }) });
+  ok(JSON.parse((await judging).text || '{}').behavior === 'allow', 'its "allow" lets the session go on');
+  const again = JSON.parse((await call('permission', { tool_name: 'Bash', input: { command: 'npm install papaparse' } }, C1H)).text || '{}');
+  ok(again.behavior === 'allow', 'and "for this session" sticks without asking again');
+  const pushing = call('permission', { tool_name: 'Bash', input: { command: 'git push origin main' } }, C1H);
+  const pj2 = (await api('/api/agents/brain?wait=8')).job;
+  ok(pj2?.kind === 'approve' && /khó đảo ngược/.test(pj2.prompt), 'an irreversible action is flagged as such');
+  const cardP = A.next((m) => m.t === 'approvals' && m.list.some((x) => x.state === 'pending' && x.summary.includes('git push')));
+  await api('/api/agents/brain', { id: pj2?.id, raw: JSON.stringify({ decision: 'ask', reason: 'Việc không nói phải push.' }) });
+  const card = (await cardP)?.list.find((x) => x.state === 'pending' && x.summary.includes('git push'));
+  ok(!!card, 'what it will not decide alone still reaches the owner as a 🔐 card');
+  A.send({ t: 'agents', m: { a: 'approve', id: card?.id, decision: 'deny' } });
+  ok(JSON.parse((await pushing).text || '{}').behavior === 'deny', 'and the owner has the last word');
+  const outside = call('permission', { tool_name: 'Write', input: { file_path: '/etc/hosts', content: 'x' } }, C1H);
+  const oj = (await api('/api/agents/brain?wait=8')).job;
+  await api('/api/agents/brain', { id: oj?.id, raw: JSON.stringify({ decision: 'deny', reason: 'Ngoài dự án.' }) });
+  const outRes = JSON.parse((await outside).text || '{}');
+  ok(oj?.kind === 'approve' && outRes.behavior === 'deny' && /Ngoài dự án/.test(outRes.message), 'a refusal comes back with its reason');
+  const audit = await A.wait((m) => m.t === 'approvals' && m.list.some((x) => x.by?.startsWith('🧠') && x.state === 'deny'));
+  ok(!!audit, 'and what it decided alone is listed for people to see');
+
+  // lessons stay in their project (and on their machine)
+  const x_deb = await call('debrief', { summary: `Thêm nút xuất CSV cho ${P1}, đụng src/orders/export.ts, test đạt.`, lessons: ['Chạy npm run export:test trước khi bàn giao'] }, C1H);
+  ok(!x_deb.err, 'the session files its debrief');
+  const hbLead = await hb();
+  ok(hbLead.pending >= 1, `the project's own machine sees its debriefs waiting (${hbLead.pending})`);
+  const dl = await api('/api/agents/claim', { kind: 'distill', machine: R1, dir: '/home/an/shop' });
+  ok(dl.ok, 'a distillation runs on the project machine');
+  const DL = { 'X-Office-Agent': dl.agent?.id };
+  const x_pend = await call('debriefs_pending', {}, DL);
+  ok(x_pend.text.includes(P1) && x_pend.text.includes(`may-test·${run.slice(0, 4)}`), 'the distiller sees which project and machine each debrief came from');
+  const lessonText = `Trong ${P1} luôn chạy npm run export:test trước khi bàn giao phần xuất CSV`;
+  const sv = await call('lesson_save', { dept: 'dev', scope: 'project', text: lessonText }, DL);
+  ok(!sv.err && sv.text.includes(`dự án ${P1}`), 'a project lesson is filed under that project by the office itself');
+  const twin = await call('lesson_save', { dept: 'dev', scope: 'project', text: `Luôn chạy npm run export:test trước khi bàn giao phần xuất CSV trong ${P1}` }, DL);
+  ok(/trùng ý/.test(twin.text), 'the same lesson written twice is caught, with the id to merge into');
+  const mc = await call('lesson_save', { dept: 'all', scope: 'machine', text: `Shell trên máy này in rác ${run}, lọc output trước khi đọc` }, DL);
+  ok(!mc.err && mc.text.includes('riêng máy'), 'a machine quirk is filed for that machine only');
+  const bookP = await A.wait((m) => m.t === 'agentBook' && m.book.lessons.some((l) => l.text === lessonText));
+  const x_saved = bookP?.book.lessons.find((l) => l.text === lessonText);
+  ok(x_saved?.project === P1, 'the playbook shows the lesson with its project');
+  await api('/api/agents/exit', { agent: dl.agent?.id, code: 0 });
+  // a session of another project never reads it
+  A.send({ t: 'task:create', title: `Việc dự án khác ${run}`, col: 'todo', dept: 'dev' });
+  const otherTask = (await A.wait((m) => m.t === 'task' && m.task.title === `Việc dự án khác ${run}`))?.task;
+  const oc = await api('/api/agents/claim', { kind: 'task', id: otherTask?.id, machine: `r-${run}-mach-two`, dir: '/home/an/khac' });
+  const octx = (await (await hook({ hook_event_name: 'SessionStart', session_id: `oth-${run}` }, { 'X-Office-Agent': oc.agent?.id })).json())?.hookSpecificOutput?.additionalContext ?? '';
+  ok(oc.ok && !octx.includes('export:test') && !octx.includes(`rác ${run}`), "another project's session is not told this project's or this machine's lessons");
+  const mctx = (await (await hook({ hook_event_name: 'SessionStart', session_id: `own-${run}` }, C1H)).json())?.hookSpecificOutput?.additionalContext ?? '';
+  ok(mctx.includes('export:test') && mctx.includes(`rác ${run}`), 'while a session of this project on this machine is');
+  ok((await A.wait((m) => m.t === 'task' && m.task.id === otherTask?.id && m.task.project === `khac-${run}`)) !== null, 'an untagged card takes the project of the machine that picked it up');
+
+  // a session that keeps breaking is not retried forever
+  let lastFail = null;
+  for (let i = 1; i <= 3; i++) {
+    if (i > 1) {
+      const re = await api('/api/agents/claim', { kind: 'task', id: otherTask?.id, machine: `r-${run}-mach-two` });
+      oc.agent = re.agent;
+    }
+    lastFail = A.next((m) => m.t === 'task' && m.task.id === otherTask?.id && m.task.col !== 'doing');
+    await api('/api/agents/exit', { agent: oc.agent?.id, code: 1, why: 'lỗi lạ' });
+    lastFail = await lastFail;
+  }
+  ok(lastFail?.task.col === 'review' && /3 lần/.test(lastFail?.task.desc ?? ''), 'after three breakdowns the task waits for a person instead of looping');
+  if (otherTask) A.send({ t: 'task:delete', id: otherTask.id });
+
+  // the final report: one message when every piece of the request is finished
+  const noPiecemeal = A.next((m) => m.t === 'chat' && m.m.ch === askCh && /👀/.test(m.m.text) && m.m.root === csvRoot, 1500);
+  await call('task_update', { id: csv?.id.replace(/-/g, '').slice(0, 8), col: 'review', note: 'Đã thêm nút xuất CSV ở trang đơn hàng (src/orders/export.ts), npm test đạt.' }, C1H);
+  ok(!(await noPiecemeal), 'planned work does not ping the person piece by piece');
+  const rj = (await api('/api/agents/brain?wait=8')).job;
+  ok(rj?.kind === 'report' && rj.prompt.includes('src/orders/export.ts') && rj.prompt.includes(`Thêm nút xuất CSV đơn hàng ${run}`), 'Tổng quản is asked to write the final report from the notes');
+  const repP = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.text.startsWith('📋 Kết quả'));
+  await api('/api/agents/brain', { id: rj?.id, raw: JSON.stringify({ status: 'done', reply: `Nút xuất CSV đã có ở trang đơn hàng ${run}. Bạn duyệt trên bảng là xong.`, lesson: 'Việc nhỏ một phần cho Phát triển là đủ, không cần thêm Kiểm thử.' }) });
+  const rep = await repP;
+  ok(rep?.m.root === csvRoot && rep.m.text.includes(`trang đơn hàng ${run}`), 'the person gets one final report, in the thread of their request');
+  await api('/api/agents/exit', { agent: c1.agent?.id, code: 0 });
+
+  // adding to finished work later: nobody works in the thread any more, so Tổng quản takes the line,
+  // sees what the thread is about, and sends the card back to be redone with the addition
+  A.send({ t: 'chat', ch: 'ask', text: `Thêm cả cột ngày tạo vào file CSV nhé ${run}`, root: csvRoot });
+  const addJ = (await api('/api/agents/brain?wait=8')).job;
+  const csvShort = csv?.id.replace(/-/g, '').slice(0, 8);
+  ok(addJ?.kind !== 'report' && addJ?.prompt.includes('## Luồng này') && addJ.prompt.includes(`#${csvShort}`), 'Tổng quản is shown the thread a late addition was sent in, with its cards');
+  const backP = A.next((m) => m.t === 'task' && m.task.id === csv?.id && m.task.col === 'todo' && m.task.desc.includes(`cột ngày tạo vào file CSV nhé ${run}`));
+  const mergeSay = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.root === csvRoot && m.m.from === 'ag-brain000000' && m.m.text.includes('làm lại'));
+  await api('/api/agents/brain', { id: addJ?.id, raw: JSON.stringify({ action: 'merge', mergeInto: `#${csvShort}`, reply: '' }) });
+  ok(!!(await backP), 'a card waiting for review that the person adds to goes back to To do, carrying the addition');
+  ok(!!(await mergeSay), 'and the person hears it will be redone, in the same thread');
+
   // clean up
-  for (const t of [task, docsTask, qaTask, opsTask, fixTask]) if (t) A.send({ t: 'task:delete', id: t.id });
+  for (const t of [task, docsTask, qaTask, opsTask, fixTask, csv]) if (t) A.send({ t: 'task:delete', id: t.id });
+  A.send({ t: 'agents', m: { a: 'brainConfig', config: { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false, approvals: 'lead' } } });
   A.send({ t: 'activity:revoke' });
   await sleep(400);
   A.close();

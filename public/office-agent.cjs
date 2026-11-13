@@ -6,34 +6,41 @@
 //
 // It does two different jobs, and the difference is the whole point:
 //
-//   1. THINKING (cheap).  It asks the office whether 🧠 Tổng quản has a decision to make, and if so
-//      runs a short `claude -p` with no repo access at all — an empty working directory, no tools,
-//      no MCP — that returns one JSON decision. A few seconds, a few thousand tokens.
+//   1. THINKING (cheap).  It asks the office whether 🧠 Tổng quản has something to decide — a request,
+//      an action a session wants approved, a final report to write — and runs a short `claude -p`
+//      with no repo access at all (an empty working directory, no tools, no MCP) that returns JSON.
 //   2. DOING (expensive).  Only work the orchestrator actually put on the board starts a real
-//      department session: `claude -p` in your project, set up with that department's profile
-//      (prompt, model, which files it may edit, which commands it may run).
+//      department session: `claude -p` in your project, set up with that department's profile.
 //
-// Everything a doing session says and does is streamed to the office (its desk monitor).
+// It is built to survive the network and Claude going away. A session that breaks off (Claude
+// unreachable, rate/usage limits, a stalled connection) is NOT thrown away: its employee waits at
+// the desk, and once Claude answers again the very same conversation is resumed (`--resume`) from
+// where it stopped. If the office itself is unreachable, sessions keep working and their results
+// are delivered when it is back. If this runner restarts, it picks its sessions back up.
 //
 // Options:
 //   --depts dev,qa,ops,design,docs,biz,lead   departments this machine works for (default: all)
+//   --project <tên>      the project name the office files work and lessons under (default: the git
+//                        remote's repo name, else the folder name)
 //   --max 3              sessions at the same time (default 3), --per-dept 1 (default 1, meetings excepted)
 //   --timeout 40         minutes before a session is stopped (default 40)
+//   --stall 12           minutes without a word from a session before it counts as stuck (default 12)
 //   --allow "Bash(npm test:*),Bash(git diff:*)"   commands you allow at most; a department only gets
 //                        the ones its profile asks for AND you allow here
 //   --trust-profiles     grant whatever commands the departments' profiles ask for
-//                        Anything else a session wants to do (another command, a file outside its
-//                        profile…) is asked in the office: you get a 🔐 card with Cho phép / Từ chối.
+//                        Anything else a session wants to do is decided as the office is set up in
+//                        🧠 → "Duyệt quyền": by Tổng quản, or a 🔐 card for you.
 //   --approvers anyone   let anyone in the office approve (default: only you, the token's owner)
 //   --mode <mode>        force one Claude Code permission mode for every session
 //   --claude claude      the Claude Code command
-//   --no-brain           do not serve the orchestrator's decisions from this machine (another one does)
+//   --no-brain           do not serve the orchestrator's thinking from this machine (another one does)
 //   --once               run one round, wait for the sessions, exit (for testing)
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const readline = require('readline');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const ALL = ['lead', 'dev', 'qa', 'ops', 'design', 'docs', 'biz'];
 const NAMES = { lead: 'Ban điều hành', dev: 'Phát triển', qa: 'Kiểm thử', ops: 'Vận hành', design: 'Thiết kế', docs: 'Tài liệu', biz: 'Kinh doanh & CSKH' };
@@ -69,26 +76,135 @@ if (!depts.length) die(`--depts phải gồm: ${ALL.join(', ')}`);
 const MAX = Math.max(1, Number(opt.max) || 3);
 const PER_DEPT = Math.max(1, Number(opt['per-dept']) || 1);
 const TIMEOUT = Math.max(2, Number(opt.timeout) || 40) * 60_000;
+const STALL = Math.max(3, Number(opt.stall) || 12) * 60_000;
 const OWNER_ALLOW = String(opt.allow || '').split(',').map((s) => s.trim()).filter(Boolean);
 const TRUST = !!opt['trust-profiles'];
 const CLAUDE = String(opt.claude || 'claude');
 const APPROVERS = opt.approvers === 'anyone' ? 'anyone' : 'owner';
 const BRAIN = !opt['no-brain'];
+/** a session resumed this many times after outages and still not done goes back to the office */
+const MAX_RESUMES = 6;
 const home = path.join(os.homedir(), '.office-agent');
 const logs = path.join(home, 'logs');
 fs.mkdirSync(logs, { recursive: true });
 
+// ---------------------------------------------------------------- who and where this runner is
+/** The physical machine: one id per computer, kept across restarts. Lessons about this machine's
+ *  quirks (its shell, its tools) are tagged with its label and never shown on another computer. */
+function machineId() {
+  const f = path.join(home, 'machine.json');
+  try {
+    const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+    if (m && typeof m.id === 'string' && m.id.length >= 8) return m.id;
+  } catch {
+    /* first run */
+  }
+  const id = crypto.randomUUID();
+  fs.writeFileSync(f, JSON.stringify({ id }));
+  return id;
+}
+const MACHINE = machineId();
+const MACHINE_LABEL = `${os.hostname().split('.')[0].slice(0, 40)}·${MACHINE.slice(0, 4)}`;
+/** This runner: one machine may run several (one per project), and each keeps its own sessions. */
+const RUNNER = `r-${crypto.createHash('sha256').update(`${MACHINE}|${base}|${workdir}`).digest('hex').slice(0, 24)}`;
+
+/** The project's name, the same on every machine: the git remote's repo name, else the folder's. */
+function detectProject() {
+  if (typeof opt.project === 'string' && opt.project.trim()) return opt.project.trim().slice(0, 60);
+  const git = (...a) => execFileSync('git', ['-C', workdir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 }).trim();
+  try {
+    const name = git('remote', 'get-url', 'origin').replace(/\/+$/, '').split(/[/:]/).pop().replace(/\.git$/, '');
+    if (name) return name.slice(0, 60);
+  } catch {
+    /* no remote */
+  }
+  try {
+    return path.basename(git('rev-parse', '--show-toplevel')).slice(0, 60);
+  } catch {
+    return path.basename(workdir).slice(0, 60);
+  }
+}
+const PROJECT = detectProject();
+
+// ---------------------------------------------------------------- talking to the office
 const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-async function api(p, body) {
-  const res = await fetch(`${base}${p}`, body ? { method: 'POST', headers: H, body: JSON.stringify(body) } : { headers: H });
+async function api(p, body, timeoutMs = 30_000) {
+  const res = await fetch(`${base}${p}`, {
+    ...(body ? { method: 'POST', headers: H, body: JSON.stringify(body) } : { headers: H }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (res.status === 401) die('❌ Mã kết nối sai hoặc đã bị đổi. Lấy mã mới trong Office → 🧠 → Kết nối.');
   if (!res.ok) throw new Error(`${p}: HTTP ${res.status}`);
   return res.json();
 }
 
-/** agent id → { child, dept, name, started } */
-const running = new Map();
 const log = (...a) => console.log(new Date().toLocaleTimeString('vi-VN'), ...a);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- what survives a restart
+// Every session this runner owns, with what it needs to be resumed: the office's agent, the job, the
+// department profile and the Claude Code session id. Results the office has not heard yet wait here
+// too, so a network cut never loses "this task is finished".
+const stateFile = path.join(home, `${RUNNER}.json`);
+let state = { sessions: {}, exits: [] };
+try {
+  const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  if (s && typeof s === 'object') state = { sessions: s.sessions || {}, exits: Array.isArray(s.exits) ? s.exits : [] };
+} catch {
+  /* first run */
+}
+function saveState() {
+  try {
+    fs.writeFileSync(stateFile, JSON.stringify(state, null, 1));
+  } catch (e) {
+    log('⚠️  không ghi được trạng thái:', e.message);
+  }
+}
+
+/** agent id → the live child process */
+const running = new Map();
+/** agent id → { until, why } — sessions waiting to be resumed */
+const waiting = new Map();
+
+/** Claude cannot be reached from this machine: nothing new starts until it answers again. */
+let outage = null; // { until, why, n }
+let outageStreak = 0;
+let lastOutageEnd = 0;
+
+const TRANSIENT = /api.?error|connection|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|network|fetch failed|overloaded|\b5\d\d\b|rate.?limit|usage limit|hit your limit|timed? ?out|temporarily|unavailable/i;
+
+/** Claude is down or unreachable: back off (30 s, 1, 2, 4, 8, 10 min…) and say so. */
+function enterOutage(why) {
+  const now = Date.now();
+  outageStreak = now - lastOutageEnd < 5 * 60_000 || outage ? outageStreak + 1 : 1;
+  let delay = Math.min(10 * 60_000, 30_000 * 2 ** (outageStreak - 1));
+  // a usage limit says when it resets ("…|1731500000"): wait for that instead of knocking
+  const reset = /\|(\d{10})\b/.exec(why);
+  if (reset) delay = Math.max(delay, Number(reset[1]) * 1000 - now + 30_000);
+  outage = { until: now + delay, why: clip(why, 100) || 'mất kết nối tới Claude', n: outageStreak };
+  log(`📶 Claude không trả lời (${outage.why}) — thử lại sau ${Math.round(delay / 1000)} giây`);
+}
+
+/** Is the internet (and Claude's API host) there at all? Any HTTP answer counts. */
+async function online() {
+  try {
+    await fetch(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com', { method: 'HEAD', signal: AbortSignal.timeout(6000) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function checkOutage() {
+  if (!outage || Date.now() < outage.until) return;
+  if (!(await online())) {
+    enterOutage(`${outage.why} (vẫn chưa có mạng)`);
+    return;
+  }
+  log('📶 có kết nối lại — làm tiếp');
+  outage = null;
+  lastOutageEnd = Date.now();
+}
 
 function hooksFor(agent) {
   const cmd = `curl -sf -m 4 -X POST -H 'Authorization: Bearer ${token}' -H 'X-Office-Agent: ${agent.id}' -H 'X-Office-Dept: ${agent.dept}' -H 'Content-Type: application/json' --data-binary @- '${base}/api/activity?v=2' 2>/dev/null || true # office-runner`;
@@ -97,7 +213,7 @@ function hooksFor(agent) {
 }
 
 /** The department's profile → claude flags. Commands: only what the profile asks for AND you allow. */
-function flagsFor(profile) {
+function flagsFor(profile, approvals) {
   const args = [];
   const allowed = ['mcp__office'];
   const bash = (profile.bash || []).filter((b) => TRUST || OWNER_ALLOW.includes(b));
@@ -111,7 +227,10 @@ function flagsFor(profile) {
     mode = 'default';
     for (const g of edit.split(',').map((s) => s.trim()).filter(Boolean)) allowed.push(`Edit(${g})`, `Write(${g})`, `MultiEdit(${g})`);
   }
-  // whatever is not allowed outright is asked in the office (🔐 card for the owner) instead of failing
+  // office set to "tự động": Claude Code's own auto mode — but only where the department may edit
+  // everything anyway, so a lane limited to some files stays limited
+  if (approvals === 'auto' && edit === 'all') mode = 'auto';
+  // whatever is not allowed outright is asked in the office (Tổng quản, or a 🔐 card) instead of failing
   args.push('--permission-mode', String(opt.mode || mode), '--allowedTools', allowed.join(','), '--permission-prompt-tool', 'mcp__office__permission');
   if (profile.model && profile.model !== 'default') args.push('--model', profile.model);
   const rules = [
@@ -123,7 +242,8 @@ function flagsFor(profile) {
     '- Hỏi ít, hỏi đúng: chỉ hỏi thứ mà đoán sai là phải làm lại. Còn lại tự quyết và ghi giả định vào note.',
     '- Phần việc của phòng khác → mcp__office__handoff, ghi rõ đã làm gì, còn gì, file nào. Việc phân công chung do 🧠 Tổng quản lo, bạn không cần gọi phòng khác.',
     '- Không làm việc phá huỷ hoặc ra bên ngoài (deploy, push, xoá dữ liệu, gửi email…) nếu việc không ghi rõ yêu cầu.',
-    '- Xong việc: mcp__office__debrief (làm gì, lỗi gì, cách xử lý, bài học; không ghi mật khẩu/token).',
+    '- Note cuối cùng của việc là thứ Tổng quản đọc để báo kết quả cho người giao: ghi rõ kết quả (file, nhánh, link, lệnh kiểm tra) và điều còn dở.',
+    '- Xong việc: mcp__office__debrief (làm gì, lỗi gì, cách xử lý, bài học; không ghi mật khẩu/token). Bài học chỉ đúng với dự án này hay với máy này thì nói rõ.',
   ].join('\n');
   args.push('--append-system-prompt', rules);
   return { args, bash, mode: String(opt.mode || mode) };
@@ -164,6 +284,16 @@ function promptFor(job, agent) {
     who,
     'Việc: đúc rút kinh nghiệm từ các bản tóm tắt phiên làm việc.',
     'Làm theo kỹ năng "dut-rut" (mcp__office__skill name="dut-rut"): debriefs_pending → lessons → lesson_save / lesson_retire → debriefs_done → chat_send một dòng tổng kết.',
+  ].join('\n');
+}
+
+
+/** What a resumed session is told: it is the same conversation, picked up after a break. */
+function resumePrompt(why) {
+  return [
+    `Phiên làm việc vừa bị ngắt giữa chừng (${why || 'mất kết nối'}) và giờ đã có kết nối lại.`,
+    'Tiếp tục đúng việc đang làm dở, từ chỗ đã dừng — đừng làm lại từ đầu. Trước khi làm tiếp, kiểm tra nhanh trạng thái hiện tại (file đã sửa tới đâu, lệnh cuối chạy xong chưa) vì thao tác cuối có thể chưa hoàn tất.',
+    'Nếu việc đã xong trước khi bị ngắt thì báo kết quả như bình thường (task_update, debrief).',
   ].join('\n');
 }
 
@@ -287,26 +417,63 @@ function feeder(agentId) {
   };
 }
 
-function start(job, agent, profile) {
+/** Tell the office a session is over — now, or as soon as the office can be reached. */
+async function reportExit(agentId, code, why) {
+  state.exits.push({ agent: agentId, code, why: why || '' });
+  delete state.sessions[agentId];
+  saveState();
+  await flushExits();
+}
+
+async function flushExits() {
+  while (state.exits.length) {
+    const e = state.exits[0];
+    try {
+      await api('/api/agents/exit', e);
+    } catch (err) {
+      return; // the office is unreachable: try again next round
+    }
+    state.exits.shift();
+    saveState();
+  }
+}
+
+/**
+ * Start (or resume) one session. `entry` is what state.sessions keeps for it:
+ * { agent, job, profile, approvals, sid, resumes, fresh }
+ */
+function start(entry, resume = false, why = '') {
+  const { agent, job, profile } = entry;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-agent-'));
   const settings = path.join(dir, 'settings.json');
   const mcp = path.join(dir, 'mcp.json');
   fs.writeFileSync(settings, JSON.stringify(hooksFor(agent)));
   fs.writeFileSync(mcp, JSON.stringify({ mcpServers: { office: { type: 'http', url: `${base}/api/mcp`, headers: { Authorization: `Bearer ${token}`, 'X-Office-Agent': agent.id } } } }));
-  const logFile = path.join(logs, `${new Date().toISOString().replace(/[:.]/g, '-')}-${agent.name.replace(/[^\w-]+/g, '_')}.log`);
+  const logFile = path.join(logs, `${new Date().toISOString().replace(/[:.]/g, '-')}-${agent.name.replace(/[^\w-]+/g, '_')}${resume ? '-tiep' : ''}.log`);
   const out = fs.createWriteStream(logFile, { flags: 'a' });
-  const f = flagsFor(profile || {});
-  const args = ['-p', '--settings', settings, '--mcp-config', mcp, '--output-format', 'stream-json', '--verbose', ...f.args];
+  const f = flagsFor(profile || {}, entry.approvals);
+  if (!entry.sid) entry.sid = crypto.randomUUID();
+  // a known session id from the start, so a broken-off conversation can be resumed exactly
+  const session = resume ? ['--resume', entry.sid] : ['--session-id', entry.sid];
+  const args = ['-p', ...session, '--settings', settings, '--mcp-config', mcp, '--output-format', 'stream-json', '--verbose', ...f.args];
+  state.sessions[agent.id] = entry;
+  saveState();
   const child = spawn(CLAUDE, args, {
     cwd: workdir,
     env: { ...process.env, OFFICE_RUNNER: '1', OFFICE_AGENT_ID: agent.id, OFFICE_DEPT: agent.dept },
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
   });
-  child.stdin.end(promptFor(job, agent));
+  child.stdin.end(resume ? resumePrompt(why) : promptFor(job, agent));
   const feed = feeder(agent.id);
+  if (resume) feed.push({ kind: 'say', icon: '🔁', text: 'Có kết nối lại rồi, mình làm tiếp phần đang dở.' });
+  const run = { child, dept: agent.dept, name: agent.name, meeting: job.kind === 'meeting', started: Date.now(), last: Date.now(), retries: 0, error: '', killed: '' };
+  running.set(agent.id, run);
+  let stderr = '';
+  let gotResult = false;
   // stream-json: one JSON object per line — every message and tool call goes to the monitor
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
+    run.last = Date.now();
     let m;
     try {
       m = JSON.parse(line);
@@ -314,7 +481,15 @@ function start(job, agent, profile) {
       out.write(`${line}\n`);
       return;
     }
-    if (m.type === 'assistant') {
+    if (m.type === 'system' && m.subtype === 'api_retry') {
+      // Claude Code is retrying a failed API call by itself: note it, the watchdog decides later
+      run.retries++;
+      run.error = `lỗi API${m.error_status ? ` ${m.error_status}` : ''} (${m.error || 'không rõ'})`;
+      out.write(`  📶 thử lại lần ${m.attempt}/${m.max_retries} — ${run.error}\n`);
+      if (m.attempt === 3) feed.push({ kind: 'tool', icon: '📶', text: 'Kết nối tới Claude đang chập chờn, mình đợi một chút' });
+    } else if (m.type === 'assistant') {
+      run.retries = 0;
+      if (outage) outage = null; // it answers again
       for (const c of m.message?.content || []) {
         if (c.type === 'text' && c.text?.trim()) {
           out.write(`⏺ ${c.text.trim()}\n`);
@@ -334,27 +509,81 @@ function start(job, agent, profile) {
         }
       }
     } else if (m.type === 'result') {
+      gotResult = true;
+      if (m.is_error) run.error = clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || run.error || 'lỗi';
       out.write(`\n= ${m.subtype} · ${m.num_turns ?? '?'} lượt · ${m.total_cost_usd != null ? `$${Number(m.total_cost_usd).toFixed(3)}` : ''}\n`);
-      feed.push({ kind: 'result', icon: m.is_error ? '⚠️' : '✅', text: m.is_error ? 'Phải dừng giữa chừng' : `Xong việc sau ${m.num_turns ?? '?'} bước` });
+      if (!m.is_error) feed.push({ kind: 'result', icon: '✅', text: `Xong việc sau ${m.num_turns ?? '?'} bước` });
     }
   });
-  child.stderr.on('data', (d) => out.write(d));
-  running.set(agent.id, { child, dept: agent.dept, name: agent.name, meeting: job.kind === 'meeting', started: Date.now() });
+  child.stderr.on('data', (d) => {
+    out.write(d);
+    stderr = (stderr + d).slice(-2000);
+  });
+  const kill = (reason) => {
+    if (run.killed) return;
+    run.killed = reason;
+    child.kill('SIGTERM');
+    setTimeout(() => child.kill('SIGKILL'), 10_000).unref();
+  };
+  run.kill = kill;
+  // the whole session has a time limit; a session that says nothing for too long is stuck
   const timer = setTimeout(() => {
     log(`⏱️  ${agent.name} quá ${TIMEOUT / 60_000} phút — dừng phiên`);
-    child.kill('SIGTERM');
+    kill('timeout');
   }, TIMEOUT);
-  let reported = false;
+  const watchdog = setInterval(() => {
+    if (Date.now() - run.last > STALL) {
+      log(`🧊 ${agent.name} im lặng ${Math.round(STALL / 60_000)} phút — coi như treo, dừng để làm tiếp sau`);
+      kill('stall');
+    }
+  }, 30_000);
+  let done = false;
   const finish = async (code) => {
-    if (reported) return;
-    reported = true;
+    if (done) return;
+    done = true;
     clearTimeout(timer);
+    clearInterval(watchdog);
     running.delete(agent.id);
     await feed.flush();
     out.end();
     fs.rmSync(dir, { recursive: true, force: true });
-    log(`${code === 0 ? '✅' : '⚠️ '} ${agent.name} xong (mã ${code}) — log: ${logFile}`);
-    await api('/api/agents/exit', { agent: agent.id, code }).catch((e) => log('exit report failed', e.message));
+    if (run.killed === 'gone' || run.killed === 'shutdown') return; // the office let it go / we are stopping
+    const errText = `${run.error} ${clip(stderr, 300)}`;
+    // resuming a conversation Claude Code never saved: start it over (not a failure)
+    if (resume && code !== 0 && /no conversation found|session.*not found|could not find session/i.test(errText)) {
+      log(`↩️  ${agent.name}: không mở lại được phiên cũ, bắt đầu lại từ đầu`);
+      entry.sid = crypto.randomUUID();
+      start(entry, false);
+      return;
+    }
+    const ok = code === 0 && !run.error && !run.killed;
+    if (ok) {
+      outageStreak = 0;
+      log(`✅ ${agent.name} xong — log: ${logFile}`);
+      await reportExit(agent.id, 0, '');
+      return;
+    }
+    // broke off because Claude could not be reached: keep the session, resume it later
+    const transient = run.killed === 'stall' || run.retries > 0 || TRANSIENT.test(errText) || (!gotResult && !(await online()));
+    if (transient && run.killed !== 'timeout') {
+      entry.resumes = (entry.resumes || 0) + 1;
+      if (entry.resumes > MAX_RESUMES) {
+        log(`⚠️  ${agent.name}: đã làm tiếp ${MAX_RESUMES} lần vẫn bị ngắt — trả việc về Office`);
+        await reportExit(agent.id, 75, `bị ngắt kết nối ${MAX_RESUMES} lần liền`);
+        return;
+      }
+      const why = run.killed === 'stall' ? 'phiên bị treo, không phản hồi' : run.error || 'mất kết nối tới Claude';
+      enterOutage(why);
+      entry.why = why;
+      state.sessions[agent.id] = entry;
+      saveState();
+      waiting.set(agent.id, { until: outage.until, why });
+      log(`⏸️  ${agent.name} tạm dừng (${why}) — sẽ làm tiếp đúng phiên này khi có kết nối (lần ${entry.resumes}/${MAX_RESUMES})`);
+      return;
+    }
+    const why = run.killed === 'timeout' ? `quá ${TIMEOUT / 60_000} phút` : clip(run.error || stderr, 150) || `mã ${code}`;
+    log(`⚠️  ${agent.name} dừng (${why}) — log: ${logFile}`);
+    await reportExit(agent.id, code || 1, why);
   };
   child.on('exit', (code) => void finish(code ?? 1));
   child.on('error', (e) => {
@@ -362,12 +591,10 @@ function start(job, agent, profile) {
     void finish(127);
   });
   const what = job.kind === 'task' ? job.task.title : job.kind === 'meeting' ? `${job.meeting.chair ? 'chủ trì' : 'họp'}: ${job.meeting.topic}` : 'đúc rút kinh nghiệm';
-  log(`▶️  ${agent.name} (${NAMES[agent.dept]}) ${what}  [${f.mode}${f.bash.length ? `, lệnh: ${f.bash.join(' ')}` : ''}${profile?.model && profile.model !== 'default' ? `, ${profile.model}` : ''}]`);
+  log(`${resume ? '🔁' : '▶️ '} ${agent.name} (${NAMES[agent.dept]}) ${what}  [${f.mode}${f.bash.length ? `, lệnh: ${f.bash.join(' ')}` : ''}${profile?.model && profile.model !== 'default' ? `, ${profile.model}` : ''}]`);
 }
 
 // ---------------------------------------------------------------- the orchestrator's thinking
-let thinking = false;
-
 // One empty directory, reused for every decision. Empty on purpose — no project files, no CLAUDE.md,
 // nothing to read or change — and the SAME one every time, so Claude Code's own prompt prefix stays
 // byte-identical and gets served from cache. A fresh temp dir each time costs about twice as much.
@@ -375,7 +602,7 @@ const brainDir = path.join(home, 'brain');
 fs.mkdirSync(brainDir, { recursive: true });
 fs.writeFileSync(path.join(brainDir, 'settings.json'), '{}');
 
-/** One decision: a short prompt, no repo, no tools. Returns what the model printed. */
+/** One thought: a short prompt, no repo, no tools. Returns what the model printed. */
 function think(job) {
   return new Promise((resolve, reject) => {
     const args = [
@@ -397,87 +624,183 @@ function think(job) {
     const child = spawn(CLAUDE, args, { cwd: brainDir, env: { ...process.env, OFFICE_RUNNER: '1' }, stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32' });
     let out = '';
     let err = '';
-    const done = (fn, v) => fn(v);
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
-    child.on('error', (e) => done(reject, e));
+    child.on('error', (e) => reject(e));
+    const timer = setTimeout(() => child.kill('SIGTERM'), job.timeoutMs || 120_000);
     child.on('exit', (code) => {
-      if (code !== 0) return done(reject, new Error(`claude thoát mã ${code}: ${clip(err, 200)}`));
+      clearTimeout(timer);
+      let m = null;
       try {
-        const m = JSON.parse(out);
-        done(resolve, typeof m.result === 'string' ? m.result : out);
+        m = JSON.parse(out);
       } catch {
-        done(resolve, out); // the office parses it either way
+        /* not JSON */
       }
+      // an API error comes back as a "result" too — that is Claude being unreachable, not an answer
+      if (m && m.is_error) return reject(new Error(clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || 'lỗi API'));
+      if (code !== 0) return reject(new Error(code === null ? 'quá thời gian' : `claude thoát mã ${code}: ${clip(err, 200)}`));
+      resolve(m && typeof m.result === 'string' ? m.result : out); // the office parses it either way
     });
     child.stdin.end(job.prompt);
-    setTimeout(() => child.kill('SIGTERM'), 120_000);
   });
 }
 
-async function brainRound() {
-  if (!BRAIN || thinking) return;
-  const { job } = await api('/api/agents/brain');
-  if (!job) return;
-  thinking = true;
+let thinkingNow = 0;
+const LABEL = { decide: 'quyết định', approve: 'duyệt quyền', report: 'báo cáo kết quả' };
+
+async function thought(job) {
   const started = Date.now();
   try {
     const raw = await think(job);
+    outageStreak = 0;
     const res = await api('/api/agents/brain', { id: job.id, raw });
-    log(`🧠 quyết định xong sau ${((Date.now() - started) / 1000).toFixed(1)}s${res && res.ok === false ? ` — office: ${res.error}` : ''}`);
+    log(`🧠 ${LABEL[job.kind] || 'quyết định'} xong sau ${((Date.now() - started) / 1000).toFixed(1)}s${res && res.ok === false ? ` — office: ${res.error}` : ''}`);
   } catch (e) {
-    log('🧠 ⚠️ ', e.message);
-  } finally {
-    thinking = false;
+    const msg = clip(e.message, 200);
+    log(`🧠 ⚠️  ${LABEL[job.kind] || 'quyết định'}: ${msg}`);
+    if (TRANSIENT.test(msg) || !(await online())) enterOutage(msg);
+    // the office puts it back without blaming the request
+    await api('/api/agents/brain', { id: job.id, raw: '', error: msg || 'lỗi' }).catch(() => {});
   }
 }
 
-const busyIn = (dept) => [...running.values()].filter((r) => r.dept === dept && !r.meeting).length;
+/** Long-polls the office for something to think about; two thoughts at a time at most. */
+async function brainLoop() {
+  for (;;) {
+    if (outage || thinkingNow >= 2) {
+      await sleep(2000);
+      continue;
+    }
+    const asked = Date.now();
+    let job = null;
+    try {
+      ({ job } = await api('/api/agents/brain?wait=20', undefined, 40_000));
+    } catch {
+      await sleep(5000);
+      continue;
+    }
+    if (!job) {
+      if (Date.now() - asked < 2000) await sleep(3000); // an office without long-polling answers at once
+      continue;
+    }
+    thinkingNow++;
+    void thought(job).finally(() => thinkingNow--);
+  }
+}
 
+// ---------------------------------------------------------------- the work
+const busyIn = (dept) => [...running.values()].filter((r) => r.dept === dept && !r.meeting).length;
+const slots = () => running.size + [...waiting.keys()].length;
+
+/** Check in with the office: who this runner is, what it runs, what waits — and get work back. */
 async function round() {
-  if (running.size >= MAX) return;
-  const jobs = await api(`/api/agents/jobs?depts=${depts.join(',')}`);
+  await flushExits();
+  const jobs = await api('/api/agents/jobs', {
+    depts: depts.join(','),
+    machine: { id: RUNNER, label: MACHINE_LABEL, project: PROJECT },
+    running: [...running.keys()],
+    waiting: [...waiting.entries()].map(([agent, w]) => ({ agent, until: w.until, why: w.why })),
+    outage: outage ? { until: outage.until, why: outage.why } : null,
+  });
+  // sessions the office already gave to someone else: stop them
+  for (const id of jobs.gone || []) {
+    const r = running.get(id);
+    if (r) {
+      log(`🛑 ${r.name}: Office đã trả việc này về bảng — dừng phiên`);
+      r.kill('gone');
+    }
+    waiting.delete(id);
+    delete state.sessions[id];
+    saveState();
+  }
+  // broken-off sessions go on from where they stopped, once Claude answers again
+  if (!outage)
+    for (const [id, w] of [...waiting]) {
+      if (Date.now() < w.until) continue;
+      const entry = state.sessions[id];
+      waiting.delete(id);
+      if (entry) start(entry, true, w.why);
+    }
+  if (outage || slots() >= MAX) return;
   const queue = [];
   for (const m of jobs.meetings || []) queue.push({ kind: 'meeting', id: m.id, dept: m.dept, meeting: true });
   if (jobs.distill) queue.push({ kind: 'distill', dept: 'lead' });
   for (const t of jobs.tasks) queue.push({ kind: 'task', id: t.id, dept: t.dept });
   for (const j of queue) {
-    if (running.size >= MAX) break;
+    if (slots() >= MAX) break;
     if (!j.meeting && busyIn(j.dept) >= PER_DEPT) continue;
-    const r = await api('/api/agents/claim', { kind: j.kind, id: j.id, dept: j.dept, approvers: APPROVERS });
+    const r = await api('/api/agents/claim', { kind: j.kind, id: j.id, dept: j.dept, approvers: APPROVERS, machine: RUNNER, dir: workdir });
     if (!r.ok) continue;
-    start({ kind: j.kind, task: r.task, meeting: r.meeting }, r.agent, r.profile);
+    start({ agent: r.agent, job: { kind: j.kind, task: r.task, meeting: r.meeting }, profile: r.profile, approvals: r.approvals, sid: crypto.randomUUID(), resumes: 0 });
   }
+}
+
+/** After a restart: the sessions this runner had are picked up again where the office still has them. */
+async function adoptAll() {
+  for (const [id, entry] of Object.entries(state.sessions)) {
+    let r;
+    try {
+      r = await api('/api/agents/adopt', { agent: id, machine: RUNNER });
+    } catch (e) {
+      log(`⚠️  chưa hỏi được Office về phiên ${entry.agent?.name || id}: ${e.message} — thử lại sau`);
+      waiting.set(id, { until: Date.now() + 30_000, why: 'máy trực khởi động lại' });
+      continue;
+    }
+    if (!r.ok) {
+      log(`🗑️  ${entry.agent?.name || id}: ${r.error || 'Office không còn giữ phiên này'}`);
+      delete state.sessions[id];
+      continue;
+    }
+    entry.agent = r.agent;
+    entry.profile = r.profile;
+    entry.approvals = r.approvals;
+    entry.job = { kind: r.kind, task: r.task, meeting: r.meeting };
+    state.sessions[id] = entry;
+    waiting.set(id, { until: Date.now(), why: 'máy trực vừa khởi động lại' });
+    log(`♻️  nhận lại phiên của ${r.agent.name} — sẽ làm tiếp`);
+  }
+  saveState();
 }
 
 async function main() {
   log(`🏢 Office agent runner → ${base}`);
-  log(`   phòng ban: ${depts.map((d) => NAMES[d]).join(', ')} · tối đa ${MAX} phiên · thư mục ${workdir}`);
+  log(`   dự án ${PROJECT} · máy ${MACHINE_LABEL} · thư mục ${workdir}`);
+  log(`   phòng ban: ${depts.map((d) => NAMES[d]).join(', ')} · tối đa ${MAX} phiên`);
   log(`   tự cho phép: ${TRUST ? 'lệnh theo hồ sơ phòng ban (--trust-profiles)' : OWNER_ALLOW.length ? OWNER_ALLOW.join(', ') : 'không lệnh nào (chỉ đọc/sửa file theo hồ sơ)'}`);
-  log(`   còn lại: hỏi ${APPROVERS === 'anyone' ? 'bất kỳ ai' : 'bạn'} trong Office (thẻ 🔐 chờ duyệt)`);
+  log(`   còn lại: theo cài đặt "Duyệt quyền" trong Office (Tổng quản duyệt, hoặc hỏi ${APPROVERS === 'anyone' ? 'bất kỳ ai' : 'bạn'})`);
   log(`   🧠 Tổng quản: ${BRAIN ? 'máy này phục vụ các quyết định điều phối' : 'tắt (--no-brain)'}`);
+  if (Object.keys(state.sessions).length) await adoptAll();
+  if (BRAIN && !opt.once) void brainLoop();
   for (;;) {
-    // thinking first: a decision is what puts work on the board in the first place
-    await brainRound().catch((e) => log('🧠 ⚠️ ', e.message));
+    await checkOutage();
+    if (opt.once && BRAIN) {
+      const r = await api('/api/agents/brain').catch(() => ({}));
+      if (r.job) await thought(r.job);
+    }
     try {
       await round();
     } catch (e) {
-      log('⚠️ ', e.message);
+      log('⚠️  chưa liên lạc được Office:', e.message, '— các phiên vẫn làm tiếp, kết quả sẽ gửi khi có mạng');
     }
     if (opt.once) break;
-    await new Promise((r) => setTimeout(r, thinking ? 3_000 : 8_000));
+    await sleep(waiting.size || outage ? 5_000 : 8_000);
   }
   if (opt.once) {
-    while (running.size) await new Promise((r) => setTimeout(r, 500));
+    while (running.size) await sleep(500);
+    await flushExits();
   }
 }
 
 async function shutdown() {
   log('Đang dừng — trả việc dở dang về Kanban…');
   for (const [id, r] of running) {
-    r.child.kill('SIGTERM');
-    await api('/api/agents/exit', { agent: id, code: 130 }).catch(() => {});
+    r.kill('shutdown');
+    state.exits.push({ agent: id, code: 130, why: 'máy trực được tắt' });
   }
+  for (const id of waiting.keys()) state.exits.push({ agent: id, code: 130, why: 'máy trực được tắt' });
+  state.sessions = {};
+  saveState();
+  await flushExits().catch(() => {});
   process.exit(0);
 }
 process.on('SIGINT', shutdown);

@@ -124,6 +124,8 @@ export interface Task {
   after?: string[];
   /** the chat thread this work is discussed in (root message id) */
   thread?: string;
+  /** the project (repo name) it must be done in — only an on-call machine working there takes it */
+  project?: string;
 }
 
 /** Whether the department that owns a task is finished with it — what the work chained after it

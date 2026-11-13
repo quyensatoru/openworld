@@ -21,6 +21,8 @@ import {
   MEETING_MS,
   MEET_ROOMS,
   isDept,
+  lessonFits,
+  lessonOverlap,
   mentionedDepts,
   mentionsName,
   sanitizeProfile,
@@ -36,6 +38,8 @@ import {
   type Lesson,
   type MeetRoom,
   type Meeting,
+  type RunnerMachine,
+  rankLessons,
 } from '../shared/agents';
 import { DEFAULT_PROFILES } from '../shared/dept-profiles';
 import { SEAT_BY_ID, SEATS, floorOf, zoneAt, type Seat } from '../shared/map';
@@ -105,6 +109,12 @@ interface Agent {
   /** walked over to someone: the chair it comes back to, who it is with, and until when */
   home?: string | null;
   away?: { to: string; until: number };
+  /** runner: the machine (RunnerMachine.id) running the session, its project and working directory */
+  machine?: string;
+  project?: string;
+  dir?: string;
+  /** runner: the session broke off (Claude unreachable) and will be resumed — not gone, just waiting */
+  stalled?: { until: number; why: string } | null;
 }
 
 export interface HookIn {
@@ -119,6 +129,16 @@ export interface HookIn {
 type Json = Record<string, unknown>;
 
 const RUNNER_IDLE_MS = 3 * 3600_000;
+/** A machine that has not polled for this long is offline: its employees show it, and wait. */
+const MACHINE_QUIET_MS = 3 * 60_000;
+/** …and after this long its work goes back on the board for another machine to take. */
+const MACHINE_GONE_MS = 20 * 60_000;
+/** A session the machine no longer reports running is let go after this grace (claim → first poll). */
+const ORPHAN_GRACE_MS = 90_000;
+/** Times a task's sessions may break down before a person is asked to look at it. */
+const MAX_FAILS = 3;
+/** Runner exit codes: 75 = gave up resuming after outages, 130 = the runner was stopped (no blame). */
+const EXIT_STOPPED = 130;
 const DISTILL_EVERY = 6 * 3600_000;
 const DISTILL_BATCH = 3;
 const CONTEXT_MAX = 6000;
@@ -134,6 +154,7 @@ const OWNER_STALE_MS = 14 * 86400_000;
 const VISIT_MIN_DIST = 2.5;
 
 const short = (id: string) => id.replace(/-/g, '').slice(0, 8);
+const FORWARD_MARK = '📨 Đã chuyển cho';
 const oneLine = (s: string, n: number) => clampStr(s.replace(/\s+/g, ' '), n);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -196,6 +217,12 @@ export class AgentHub {
   /** chat line → the person behind it (agents' lines carry their session's) */
   private msgOrigin = new Map<string, string>();
   private backTimer: ReturnType<typeof setTimeout> | null = null;
+  /** on-call machines by id (each runner process says which machine it is on every poll) */
+  private machines = new Map<string, RunnerMachine>();
+  /** task id → times its sessions broke down */
+  private fails: Record<string, number> = {};
+  /** project → when its playbook was last distilled */
+  private distilled: Record<string, number> = {};
   /** the one orchestrator above the departments */
   readonly brain: Brain;
 
@@ -219,6 +246,8 @@ export class AgentHub {
       setTaskOrigin: (taskId, uid) => self.setOrigin(taskId, uid),
       taskOrigin: (t) => self.taskOrigin(t),
       showBrain: (online, what) => self.showBrain(online, what),
+      machines: () => self.machineList(),
+      taskFails: (id) => self.fails[id] ?? 0,
     };
     this.brain = new Brain(adapter);
   }
@@ -234,6 +263,9 @@ export class AgentHub {
     const stale = Date.now() - OWNER_STALE_MS;
     for (const [id, v] of Object.entries(this.access)) if ((v.seen ?? 0) < stale) delete this.access[id];
     this.origins = (await s.get<Record<string, string>>('agentOrigins')) ?? {};
+    this.fails = (await s.get<Record<string, number>>('agentFails')) ?? {};
+    this.distilled = (await s.get<Record<string, number>>('agentDistilled')) ?? {};
+    for (const m of (await s.get<RunnerMachine[]>('agentMachines')) ?? []) if (m?.id) this.machines.set(m.id, m);
     // the orchestrator is put back at its desk by the first decision it has to make
     this.agents.delete(BRAIN_ID);
     await this.brain.restore();
@@ -499,6 +531,12 @@ export class AgentHub {
   /** A person created or rewrote a task on the board: it is now theirs to answer for. */
   taskTouched(t: Task, uid: string) {
     this.setOrigin(t.id, uid);
+    void this.brain.progress().catch(() => {});
+    // a person putting a card back in To do gives it a fresh set of tries
+    if (t.col === 'todo' && this.fails[t.id]) {
+      delete this.fails[t.id];
+      void this.host.storage.put('agentFails', this.fails).catch(() => {});
+    }
     if (t.col !== 'todo' || t.assignee) return;
     if (!this.canAssign(uid)) {
       if (t.dept) this.host.sendTo(uid, { t: 'err', msg: `Việc đã lên bảng, nhưng máy trực sẽ không tự nhận. ${this.noRightMsg()}` });
@@ -570,12 +608,48 @@ export class AgentHub {
     }
   }
 
+  /** Let a session go: whatever it was doing goes back on the board (with why), and it leaves. */
+  private async release(a: Agent, note: string) {
+    const tasks = await this.host.getTasks();
+    for (const t of tasks.values()) {
+      if (t.assignee !== a.p.id || t.col !== 'doing') continue;
+      t.desc = this.appendNote(t.desc, a.name, note);
+      t.col = 'todo';
+      t.assignee = null;
+      t.updatedAt = Date.now();
+      await this.host.saveTask(t, a.p.id);
+    }
+    await this.leave(a);
+  }
+
+  /** On-call machines that asked for work lately. */
+  machineList(): RunnerMachine[] {
+    const now = Date.now();
+    return [...this.machines.values()].filter((m) => now - m.at < MACHINE_QUIET_MS);
+  }
+
+  private saveMachines() {
+    void this.host.storage.put('agentMachines', [...this.machines.values()]).catch(() => {});
+  }
+
   /** Drop sessions that went quiet, end meetings that ran over. Returns true while anyone is left to watch. */
   async sweep(now: number): Promise<boolean> {
     for (const a of [...this.agents.values()]) {
       if (a.kind === 'brain') continue; // it comes and goes with its queue, not with a clock
-      if (now - a.last > RUNNER_IDLE_MS) await this.leave(a);
+      const m = a.machine ? this.machines.get(a.machine) : undefined;
+      if (a.machine) {
+        // a machine that says which sessions it runs keeps them alive by asking for work; when it
+        // stops asking, its people wait at their desks for a while, then their work goes to another
+        const quiet = now - (m?.at ?? 0);
+        if (quiet > MACHINE_GONE_MS) await this.release(a, 'Máy trực của mình mất kết nối quá lâu, mình trả việc về bảng để máy khác làm tiếp.');
+        else if (quiet > MACHINE_QUIET_MS) this.setState(a, 'waiting', '📴 máy trực mất kết nối, đang chờ');
+        continue;
+      }
+      if (now - a.last > RUNNER_IDLE_MS) await this.release(a, 'Phiên làm việc im lặng quá lâu nên mình trả việc về bảng.');
     }
+    let gone = false;
+    for (const [id, m] of this.machines) if (now - m.at > 86400_000) ((gone = true), this.machines.delete(id));
+    if (gone) this.saveMachines();
     const thinking = await this.brain.sweep(now);
     this.comeBack(now);
     for (const m of this.meetings) {
@@ -645,7 +719,8 @@ export class AgentHub {
     if (h.event === 'SessionEnd') return null;
     a.last = now;
     if (h.sid) a.sid = h.sid;
-    if (h.project && a.p.agent!.project !== h.project) {
+    // a runner says where it works when it claims; the hook's folder name is only a fallback
+    if (h.project && !a.project && a.p.agent!.project !== h.project) {
       a.p.agent = { ...a.p.agent!, project: h.project };
       this.host.broadcast({ t: 'upd', id: a.p.id, patch: { agent: a.p.agent } });
     }
@@ -734,10 +809,10 @@ export class AgentHub {
       out.push('', `## Kỹ năng của phòng ${d.name} (mở bằng mcp__office__skill name="…")`);
       for (const s of prof.skills) out.push(`- ${s.id} — ${s.name}: dùng khi ${s.when}`);
     }
-    const lessons = (await db.listLessons(this.host.DB)).filter((l) => (l.dept === 'all' || l.dept === a.dept) && (!l.project || l.project === project)).slice(0, 30);
+    const lessons = rankLessons((await db.listLessons(this.host.DB)).filter((l) => lessonFits(l, { dept: a.dept, project, machine: this.machineLabel(a) }))).slice(0, 30);
     if (lessons.length) {
       out.push('', `## Sổ kinh nghiệm (${d.name}${project ? ` · ${project}` : ''})`);
-      for (const l of lessons) out.push(`- ${l.text}${l.project ? ` (${l.project})` : ''}`);
+      for (const l of lessons) out.push(`- ${l.text}${l.machine ? ' (riêng máy này)' : l.project ? ` (${l.project})` : ''}`);
     }
     const tasks = [...(await this.host.getTasks()).values()]
       .filter((t) => t.col !== 'done' && (t.dept === a.dept || t.assignee === a.p.id))
@@ -758,6 +833,16 @@ export class AgentHub {
     return out.join('\n');
   }
 
+  /** The label lessons and debriefs use for the machine a session runs on ('' = unknown). */
+  private machineLabel(a: Agent): string {
+    return (a.machine && this.machines.get(a.machine)?.label) || '';
+  }
+
+  /** Where a session works: its project as the runner reported it (or the hook's folder name). */
+  private projectOf(a: Agent): string {
+    return a.project ?? a.p.agent?.project ?? '';
+  }
+
   /** The thread a session shares with the person it works for — nobody else sees it. */
   private thread(a: Agent) {
     return `ask:${a.origin}`;
@@ -766,6 +851,8 @@ export class AgentHub {
   private forMe(a: Agent, m: ChatMsg) {
     if (m.from === a.p.id || m.meet) return false;
     if (m.ch !== this.thread(a)) return false;
+    // the office's own receipt for a forwarded line is for the person, the line itself already came
+    if (m.from === 'system' && m.text.startsWith(FORWARD_MARK)) return false;
     // its own thread is its inbox; outside it, only a direct call by name reaches it
     if (a.thread ? m.root !== a.thread : !mentionsName(m.text, a.name)) return false;
     // only from people its owner trusts (or from agents working for them)
@@ -820,15 +907,41 @@ export class AgentHub {
     // never wake each other any more: a session that needs another department hands the work over
     // on the board instead, which keeps one request from fanning out into a dozen sessions.
     if (sender) return;
-    const asksAI = privateThread || mentionedDepts(m.text).length > 0;
+    // a department, or an AI employee by name ("@Dev-2") — either way Tổng quản takes it from there
+    const asksAI = privateThread || mentionedDepts(m.text).length > 0 || [...this.agents.values()].some((a) => mentionsName(m.text, a.name));
     if (!asksAI) return;
     if (!this.canAssign(m.from)) {
       this.host.sendTo(m.from, { t: 'err', msg: this.noRightMsg() });
       return;
     }
     // a reply inside a thread an agent is working in is for that agent, not a new request
-    if (m.root && [...this.agents.values()].some((a) => a.kind === 'runner' && a.thread === m.root && this.thread(a) === m.ch)) return;
+    const working = m.root ? [...this.agents.values()].filter((a) => a.kind === 'runner' && !a.distill && a.thread === m.root && this.thread(a) === m.ch) : [];
+    if (working.length) {
+      void this.forward(m, working).catch(() => {});
+      return;
+    }
     void this.brain.request(m.from, m.name, m.text, m.root || m.id).catch(() => {});
+  }
+
+  /** A person added something in a thread sessions are working in. The sessions hear it at their next
+   *  step; it also goes on their cards, so a session started over (or the final report) still knows,
+   *  and the person is told who got it. */
+  private async forward(m: ChatMsg, working: Agent[]) {
+    const tasks = await this.host.getTasks();
+    const now = Date.now();
+    const cards: string[] = [];
+    for (const a of working) {
+      const t = a.p.taskId ? tasks.get(a.p.taskId) : undefined;
+      if (!t || t.col === 'done') continue;
+      t.desc = this.appendNote(t.desc, m.name, `nhắn thêm: ${oneLine(m.text, 600)}`);
+      t.updatedAt = now;
+      await this.host.saveTask(t, m.from);
+      cards.push(`${a.name} (#${t.id.slice(0, 8)})`);
+    }
+    const names = cards.length ? cards.join(', ') : working.map((a) => a.name).join(', ');
+    const away = working.filter((a) => a.stalled);
+    const when = away.length === working.length ? 'đang tạm mất kết nối, sẽ đọc ngay khi làm tiếp' : 'sẽ đọc ở bước làm tiếp theo';
+    await this.notice(`${FORWARD_MARK} ${names} — ${when}. Đã ghi vào thẻ việc.`, m.from, m.root);
   }
 
   private async say(a: Agent, text: string, ch: string, meet?: string) {
@@ -944,6 +1057,35 @@ export class AgentHub {
     const { summary, key } = describeAction(tool, input);
     if (a.allowed?.includes(key)) return allow();
     if (a.kind !== 'runner') return deny('Chỉ phiên của máy trực mới xin duyệt qua Office.');
+    const mode = this.brain.config().approvals;
+    if (mode !== 'ask') {
+      // Tổng quản decides in the owner's place: what is plainly safe goes through at once, the rest
+      // is judged against the work itself, and only what it will not take on reaches a person
+      const prof = this.profile(a.dept);
+      const risk = riskOf(tool, input, a.dir, prof.edit);
+      if (risk === 'safe') return allow();
+      this.setState(a, 'waiting', `🧠 Tổng quản đang duyệt: ${oneLine(summary, 34)}`);
+      const task = a.p.taskId ? (await this.host.getTasks()).get(a.p.taskId) ?? null : null;
+      const lane = `sửa file: ${prof.edit === 'all' ? 'mọi file' : prof.edit === 'none' ? 'không được sửa' : prof.edit}; lệnh chạy sẵn: ${prof.bash.join(', ') || 'không có'}`;
+      const v = await this.brain.judge({ agentName: a.name, dept: a.dept, project: this.projectOf(a), task, tool, summary, risk, lane });
+      this.setState(a, 'working', '');
+      if (v && v.decision !== 'ask') {
+        const reason = oneLine(v.reason, 200);
+        this.approvals.push({ id: crypto.randomUUID(), agent: a.p.id, agentName: a.p.name, dept: a.dept, owner: a.owner, ownerName: a.p.agent!.ownerName, anyone: false, tool, summary, at: Date.now(), state: v.decision, by: `🧠 ${BRAIN_NAME}`, reason });
+        this.pushApprovals();
+        await this.host.pushActivity(a.p.id, { ts: Date.now(), kind: 'tool', icon: v.decision === 'allow' ? '🔓' : '🚫', text: `${BRAIN_NAME} ${v.decision === 'allow' ? 'cho phép' : 'không cho'}: ${oneLine(summary, 90)}` });
+        if (v.decision === 'allow') {
+          if (v.session && risk !== 'danger') a.allowed = [...new Set([...(a.allowed ?? []), key])];
+          // the irreversible ones are said out loud in the work's own thread
+          if (risk === 'danger') await this.notice(`🔐 ${BRAIN_NAME} đã cho ${a.name} làm: ${oneLine(summary, 120)}${reason ? ` — ${reason}` : ''}`, a.origin, a.thread);
+          return allow();
+        }
+        return deny(`${BRAIN_NAME} không đồng ý${reason ? `: ${reason}` : ''}. Tìm cách khác, hoặc ghi rõ lý do cần thao tác này vào note của việc.`);
+      }
+      if (mode === 'auto')
+        return deny(v ? `${BRAIN_NAME} chưa cho thao tác này${v.reason ? ` (${oneLine(v.reason, 160)})` : ''}. Tìm cách khác, hoặc ghi vào note để người giao việc quyết.` : `${BRAIN_NAME} chưa duyệt kịp (máy trực đang mất kết nối?). Làm phần khác trước rồi thử lại sau ít phút.`);
+      // mode 'lead': it would not decide this alone — the machine's owner does
+    }
     const sig = `${tool}:${JSON.stringify(input)}`.slice(0, 4000);
     let x = this.approvals.find((y) => y.agent === a.p.id && this.approvalSig.get(y.id)?.sig === sig && !this.approvalSig.get(y.id)?.used);
     if (!x) {
@@ -965,9 +1107,67 @@ export class AgentHub {
   }
 
   // ------------------------------------------------------------------ runners
-  async jobs(uid: string, deptsRaw: string): Promise<Json> {
+  /** A runner checks in. Besides asking for work it says which machine it is, which project it works
+   *  in, and which of its sessions are running or waiting out an outage — the office's heartbeat. */
+  private checkIn(uid: string, depts: Set<DeptId>, b: Json): { machine: RunnerMachine | null; gone: string[] } {
+    const mm = b.machine && typeof b.machine === 'object' ? (b.machine as Json) : null;
+    const id = mm ? String(mm.id ?? '') : '';
+    if (!mm || !/^[a-z0-9-]{8,40}$/.test(id)) return { machine: null, gone: [] };
+    const now = Date.now();
+    const o = b.outage && typeof b.outage === 'object' ? (b.outage as Json) : null;
+    const prev = this.machines.get(id);
+    const m: RunnerMachine = {
+      id,
+      label: clampStr(String(mm.label ?? ''), 60) || id.slice(0, 8),
+      owner: uid,
+      ownerName: prev?.ownerName ?? '',
+      project: clampStr(String(mm.project ?? ''), 60),
+      depts: [...depts],
+      at: now,
+      outage: o && Number(o.until) > now ? { until: Number(o.until), why: clampStr(String(o.why ?? ''), 120) } : null,
+    };
+    if (prev && prev.owner !== uid) return { machine: null, gone: [] }; // someone else's machine id
+    const changed = !prev || prev.project !== m.project || !!prev.outage !== !!m.outage || now - prev.at > MACHINE_QUIET_MS;
+    this.machines.set(id, m);
+    if (!m.ownerName) void this.host.userName(uid).then((n) => (m.ownerName = n));
+    if (changed) {
+      this.saveMachines();
+      this.brain.refresh();
+    }
+    const running = new Set((Array.isArray(b.running) ? b.running : []).map(String));
+    const waiting = new Map<string, Json>();
+    for (const w of Array.isArray(b.waiting) ? b.waiting : []) if (w && typeof w === 'object') waiting.set(String((w as Json).agent), w as Json);
+    // the machine's own sessions: alive while it lists them, waiting when it says so, let go when it forgot them
+    for (const a of [...this.agents.values()]) {
+      if (a.kind !== 'runner' || a.owner !== uid || a.machine !== id) continue;
+      const w = waiting.get(a.p.id);
+      if (running.has(a.p.id)) {
+        a.last = now;
+        if (a.stalled) {
+          a.stalled = null;
+          this.setState(a, 'working', '🔁 làm tiếp phần đang dở');
+        } else if (a.p.statusText.startsWith('📴')) this.setState(a, 'working', '');
+      } else if (w) {
+        a.last = now;
+        const until = Number(w.until) || now;
+        const why = clampStr(String(w.why ?? 'mất kết nối tới Claude'), 80);
+        if (!a.stalled) void this.notice(`📶 ${a.name} bị ngắt giữa chừng (${why}). Việc vẫn giữ nguyên, ${a.name} sẽ tự làm tiếp từ chỗ đang dở khi có kết nối.`, a.origin, a.thread);
+        a.stalled = { until, why };
+        this.setState(a, 'waiting', `📶 ${why} — thử lại lúc ${this.time(until)}`);
+      } else if (now - a.p.joinedAt > ORPHAN_GRACE_MS) {
+        void this.release(a, 'Phiên làm việc không còn chạy trên máy trực (máy khởi động lại?), mình trả việc về bảng để làm lại.');
+      }
+    }
+    // sessions it still runs that the office already let go: it should stop them
+    const gone = [...running, ...waiting.keys()].filter((x) => AGENT_ID.test(x) && !this.agents.has(x));
+    return { machine: m, gone };
+  }
+
+  async jobs(uid: string, deptsRaw: string, body: Json = {}): Promise<Json> {
     const depts = new Set(deptsRaw.split(',').filter(isDept));
     const now = Date.now();
+    const { machine, gone } = this.checkIn(uid, depts, body);
+    const project = machine?.project ?? '';
     const mine = this.access[uid];
     if (!mine) {
       // a new machine: it takes work from its owner only, until they say otherwise
@@ -991,6 +1191,8 @@ export class AgentHub {
           !t.assignee &&
           t.dept &&
           depts.has(t.dept) &&
+          // a task named for a project only goes to a machine working in it
+          (!t.project || !machine || t.project === project) &&
           (t.hops ?? 0) <= MAX_HOPS &&
           this.allowed(uid, this.taskOrigin(t)) &&
           !blocked(t) &&
@@ -1006,28 +1208,42 @@ export class AgentHub {
     let distill = false;
     let pending = 0;
     if (depts.has('lead')) {
-      pending = await db.countPendingDebriefs(this.host.DB);
+      // each project distils its own debriefs, on a machine that works in it
+      const key = machine ? project : undefined;
+      pending = await db.countPendingDebriefs(this.host.DB, key);
+      const last = machine ? this.distilled[project] ?? 0 : this.lastDistill;
       // a distillation session that died without reporting must not block the next one for hours
-      const busy = [...this.agents.values()].some((a) => a.distill && now - a.last < 45 * 60_000);
-      distill = !busy && (pending >= DISTILL_BATCH || (pending > 0 && now - this.lastDistill > DISTILL_EVERY));
+      const busy = [...this.agents.values()].some((a) => a.distill && (!machine || (a.project ?? '') === project) && now - a.last < 45 * 60_000);
+      distill = !busy && (pending >= DISTILL_BATCH || (pending > 0 && now - last > DISTILL_EVERY));
     }
-    const live = [...this.agents.values()].filter((a) => a.owner === uid && a.kind === 'runner').map((a) => ({ id: a.p.id, name: a.name, dept: a.dept }));
+    const live = [...this.agents.values()].filter((a) => a.owner === uid && a.kind === 'runner' && (!machine || !a.machine || a.machine === machine.id)).map((a) => ({ id: a.p.id, name: a.name, dept: a.dept }));
     const b = this.brain.budget();
-    return { tasks, meetings, distill, pending, live, budget: { used: b.sessionsHour, max: this.brain.config().maxSessionsHour } };
+    return { tasks, meetings, distill, pending, live, gone, budget: { used: b.sessionsHour, max: this.brain.config().maxSessionsHour } };
   }
 
   /** A runner takes a job: the agent sits down at once, before its session has even started. */
   async claim(uid: string, b: Json): Promise<Json> {
     const kind = String(b.kind);
     const now = Date.now();
+    const machine = typeof b.machine === 'string' ? this.machines.get(b.machine) : undefined;
+    const mine = machine && machine.owner === uid ? machine : undefined;
     const out = (a: Agent, extra: Json = {}) => {
       a.anyone = b.approvers === 'anyone';
-      return { ok: true, agent: this.wire(a), profile: this.profile(a.dept), ...extra };
+      if (mine) {
+        a.machine = mine.id;
+        a.project = mine.project || undefined;
+        a.dir = clampStr(String(b.dir ?? ''), 300) || undefined;
+        if (mine.project) a.p.agent = { ...a.p.agent!, project: mine.project };
+        this.host.broadcast({ t: 'upd', id: a.p.id, patch: { agent: a.p.agent } });
+        this.save();
+      }
+      return { ok: true, agent: this.wire(a), profile: this.profile(a.dept), approvals: this.brain.config().approvals, ...extra };
     };
     if (kind === 'task') {
       const tasks = await this.host.getTasks();
       const t = tasks.get(String(b.id));
       if (!t || t.col !== 'todo' || t.assignee || !t.dept) return { ok: false, error: 'việc đã có người nhận' };
+      if (t.project && mine && t.project !== mine.project) return { ok: false, error: `việc này làm ở dự án ${t.project}` };
       const origin = this.taskOrigin(t);
       if (!this.allowed(uid, origin)) return { ok: false, error: 'người giao việc này chưa được bạn cấp quyền' };
       const a = await this.join(await this.runnerId(), 'runner', t.dept, uid, '', undefined, undefined, origin);
@@ -1035,6 +1251,8 @@ export class AgentHub {
       t.assignee = a.p.id;
       t.col = 'doing';
       t.updatedAt = now;
+      // the first machine to take an untagged task decides where it lives (and its handoffs with it)
+      if (!t.project && mine?.project) t.project = mine.project;
       a.p.taskId = t.id;
       await this.host.saveTask(t, a.p.id);
       this.brain.noteSession(origin);
@@ -1055,11 +1273,16 @@ export class AgentHub {
       return out(a, { meeting: { id: m.id, topic: m.topic, agenda: m.agenda, room: MEET_ROOMS.find((r) => r.id === m.room)!.name, chair, depts: m.depts, by: m.by } });
     }
     if (kind === 'distill') {
-      if ([...this.agents.values()].some((x) => x.distill && now - x.last < 45 * 60_000)) return { ok: false, error: 'đang có phiên đúc rút' };
+      const project = mine?.project ?? '';
+      if ([...this.agents.values()].some((x) => x.distill && (!mine || (x.project ?? '') === project) && now - x.last < 45 * 60_000)) return { ok: false, error: 'đang có phiên đúc rút' };
       const a = await this.join(await this.runnerId(), 'runner', 'lead', uid, '');
       a.distill = true;
       this.lastDistill = now;
       void this.host.storage.put('agentDistill', now);
+      if (mine) {
+        this.distilled[project] = now;
+        void this.host.storage.put('agentDistilled', this.distilled);
+      }
       this.setState(a, 'working', 'đúc rút kinh nghiệm');
       return out(a);
     }
@@ -1085,22 +1308,60 @@ export class AgentHub {
     return { ok: true };
   }
 
-  /** The runner's session ended (or crashed): unfinished work goes back on the board. */
+  /** A restarted runner picks its sessions back up: what the agent was doing, if the office still has it. */
+  async adopt(uid: string, b: Json): Promise<Json> {
+    const a = this.agents.get(String(b.agent));
+    if (!a || a.owner !== uid || a.kind !== 'runner') return { ok: false, error: 'phiên này đã được trả về bảng' };
+    if (a.machine && b.machine !== a.machine) return { ok: false, error: 'phiên này thuộc máy khác' };
+    a.last = Date.now();
+    const base = { ok: true, agent: this.wire(a), profile: this.profile(a.dept), approvals: this.brain.config().approvals };
+    if (a.distill) return { ...base, kind: 'distill' };
+    if (a.meet) {
+      const m = this.meetings.find((x) => x.id === a.meet && !x.endedAt);
+      if (!m) return { ok: false, error: 'cuộc họp đã kết thúc' };
+      return { ...base, kind: 'meeting', meeting: { id: m.id, topic: m.topic, agenda: m.agenda, room: MEET_ROOMS.find((r) => r.id === m.room)!.name, chair: m.host === a.p.id, depts: m.depts, by: m.by } };
+    }
+    const t = a.p.taskId ? (await this.host.getTasks()).get(a.p.taskId) : undefined;
+    if (!t || t.assignee !== a.p.id || t.col !== 'doing') return { ok: false, error: 'việc này không còn do phiên này làm' };
+    return { ...base, kind: 'task', task: { id: t.id, short: short(t.id), title: t.title, desc: t.desc, dept: t.dept, priority: t.priority } };
+  }
+
+  /** The runner's session ended (or crashed): unfinished work goes back on the board. A task whose
+   *  sessions keep breaking is not retried forever — after MAX_FAILS a person is asked to look. */
   async exit(uid: string, b: Json): Promise<Json> {
     const a = this.agents.get(String(b.agent));
     if (!a || a.owner !== uid) return { ok: false };
     const code = Number(b.code);
+    const why = clampStr(String(b.why ?? ''), 200);
     const tasks = await this.host.getTasks();
     for (const t of tasks.values()) {
       if (t.assignee !== a.p.id || t.col !== 'doing') continue;
-      const failed = code !== 0;
-      t.desc = this.appendNote(t.desc, a.name, failed ? `Phiên làm việc bị dừng giữa chừng (mã ${Number.isFinite(code) ? code : '?'}), mình trả việc về To do để làm lại.` : 'Phiên làm việc đã kết thúc nhưng chưa kịp báo xong — nhờ mọi người kiểm tra giúp.');
-      t.col = failed ? 'todo' : 'review';
-      if (failed) t.assignee = null;
+      if (code === 0) {
+        t.desc = this.appendNote(t.desc, a.name, 'Phiên làm việc đã kết thúc nhưng chưa kịp báo xong — nhờ mọi người kiểm tra giúp.');
+        t.col = 'review';
+      } else if (code === EXIT_STOPPED) {
+        t.desc = this.appendNote(t.desc, a.name, 'Máy trực được tắt giữa chừng, mình trả việc về To do để làm tiếp sau.');
+        t.col = 'todo';
+        t.assignee = null;
+      } else {
+        const n = (this.fails[t.id] = (this.fails[t.id] ?? 0) + 1);
+        void this.host.storage.put('agentFails', this.fails).catch(() => {});
+        const what = why || `mã ${Number.isFinite(code) ? code : '?'}`;
+        if (n >= MAX_FAILS) {
+          t.desc = this.appendNote(t.desc, a.name, `Đã thử ${n} lần mà phiên làm việc đều dừng giữa chừng (lần cuối: ${what}). Mình dừng lại để một người xem giúp.`);
+          t.col = 'review';
+          await this.notice(`⚠️ “${oneLine(t.title, 80)}” đã hỏng giữa chừng ${n} lần (lần cuối: ${what}), mình để ở cột Chờ duyệt — bạn xem giúp rồi kéo về To do nếu muốn làm lại.`, this.taskOrigin(t), t.thread);
+        } else {
+          t.desc = this.appendNote(t.desc, a.name, `Phiên làm việc bị dừng giữa chừng (${what}), mình trả việc về To do để làm lại (lần ${n}/${MAX_FAILS}).`);
+          t.col = 'todo';
+          t.assignee = null;
+        }
+      }
       t.updatedAt = Date.now();
       await this.host.saveTask(t, a.p.id);
     }
     await this.leave(a);
+    await this.brain.progress();
     return { ok: true };
   }
 
@@ -1120,7 +1381,7 @@ export class AgentHub {
     return out;
   }
 
-  private async createTask(a: Agent | null, dept: DeptId, title: string, desc: string, priority: Priority | undefined, hops: number, origin: string, thread?: string | null): Promise<Task> {
+  private async createTask(a: Agent | null, dept: DeptId, title: string, desc: string, priority: Priority | undefined, hops: number, origin: string, thread?: string | null, project?: string): Promise<Task> {
     const tasks = await this.host.getTasks();
     let ord = 0;
     for (const t of tasks.values()) if (t.col === 'todo') ord = Math.max(ord, t.ord);
@@ -1140,6 +1401,7 @@ export class AgentHub {
       dept,
       hops,
       ...(thread ? { thread } : {}),
+      ...(project ? { project } : {}),
     };
     this.setOrigin(task.id, origin);
     await this.host.saveTask(task, a?.p.id ?? 'system');
@@ -1180,7 +1442,7 @@ export class AgentHub {
         const text = clampStr(m.text, LESSON_MAX);
         if (!text) return;
         const dept = m.dept === 'all' || isDept(m.dept) ? m.dept : 'all';
-        await db.saveLesson(this.host.DB, { id: typeof m.id === 'string' && /^[a-z0-9-]{6,40}$/.test(m.id) ? m.id : crypto.randomUUID(), dept, project: clampStr(m.project ?? '', 40), text, by, at: now });
+        await db.saveLesson(this.host.DB, { id: typeof m.id === 'string' && /^[a-z0-9-]{6,40}$/.test(m.id) ? m.id : crypto.randomUUID(), dept, project: clampStr(m.project ?? '', 60), machine: clampStr(m.machine ?? '', 60), text, by, at: now });
         break;
       }
       case 'lessonDel':
@@ -1456,7 +1718,9 @@ export class AgentHub {
         t.updatedAt = Date.now();
         await this.host.saveTask(t, a.p.id);
         if (col === 'done' && was !== 'done') await this.host.systemChat(`🎉 ${a.name} vừa hoàn thành “${t.title}”`);
-        if (col === 'review' && was !== 'review') await this.notice(`👀 ${a.name} đã làm xong “${t.title}”, nhờ bạn xem lại trên Kanban nhé.`, a.origin, a.thread);
+        // work Tổng quản planned is reported once, when all of it is finished — not piece by piece
+        if (col === 'review' && was !== 'review' && !this.brain.reports(t.thread)) await this.notice(`👀 ${a.name} đã làm xong “${t.title}”, nhờ bạn xem lại trên Kanban nhé.`, a.origin, a.thread);
+        if (col && col !== was) await this.brain.progress();
         return `Đã cập nhật #${short(t.id)} → ${t.col}.`;
       }
       case 'handoff': {
@@ -1477,6 +1741,8 @@ export class AgentHub {
           hops,
           a.origin,
           a.thread,
+          // a handoff stays in the project the work is in
+          from?.project ?? (this.projectOf(a) || undefined),
         );
         const to = DEPT_BY_ID.get(dept)!;
         // "I cannot finish until they do": the card stays on the board but nobody picks it up again
@@ -1553,11 +1819,15 @@ export class AgentHub {
       case 'lessons': {
         const dept = isDept(args.dept) ? args.dept : null;
         const q = String(args.query ?? '').toLowerCase();
-        const list = (await db.listLessons(this.host.DB)).filter((l) => (!dept || l.dept === dept || l.dept === 'all') && (!q || l.text.toLowerCase().includes(q) || l.project.toLowerCase().includes(q)));
+        // the lead distilling sees the whole book of its project (to merge and re-scope); everyone
+        // else only what fits where they work
+        const where = { dept: a.distill ? null : dept ?? a.dept, project: this.projectOf(a), machine: this.machineLabel(a) };
+        const all = await db.listLessons(this.host.DB);
+        const list = rankLessons(all.filter((l) => (a.distill ? !l.project || l.project === where.project : lessonFits(l, where)) && (!dept || l.dept === dept || l.dept === 'all') && (!q || l.text.toLowerCase().includes(q))));
         if (!list.length) return 'Sổ kinh nghiệm chưa có mục nào khớp.';
         return list
           .slice(0, 80)
-          .map((l) => `[${l.id.slice(0, 8)}] (${l.dept === 'all' ? 'chung' : l.dept}${l.project ? `/${l.project}` : ''}) ${l.text}`)
+          .map((l) => `[${l.id.slice(0, 8)}] (${l.dept === 'all' ? 'chung' : l.dept}${l.project ? ` · dự án ${l.project}` : ' · mọi dự án'}${l.machine ? ` · máy ${l.machine}` : ''}) ${l.text}`)
           .join('\n');
       }
       case 'debrief': {
@@ -1565,16 +1835,23 @@ export class AgentHub {
         if (summary.length < 20) throw new Error('tóm tắt quá ngắn');
         const lessons = Array.isArray(args.lessons) ? args.lessons.map((x) => clampStr(String(x), 300)).filter(Boolean).slice(0, 8) : [];
         const text = clampStr(`${summary}${lessons.length ? `\n\nBài học:\n${lessons.map((l) => `- ${l}`).join('\n')}` : ''}`, DEBRIEF_MAX);
-        const d: Debrief = { id: crypto.randomUUID(), agent: a.p.id, agentName: a.name, dept: a.dept, project: clampStr(String(args.project ?? a.p.agent?.project ?? ''), 40), text, at: Date.now() };
+        // tagged by the office, not by the session: a typo here would put the lesson in another project
+        const d: Debrief = { id: crypto.randomUUID(), agent: a.p.id, agentName: a.name, dept: a.dept, project: clampStr(this.projectOf(a) || String(args.project ?? ''), 60), machine: this.machineLabel(a), text, at: Date.now() };
         await db.addDebrief(this.host.DB, d, a.owner);
         void this.pushBook();
         return 'Đã nộp tóm tắt. Ban điều hành sẽ đúc rút vào sổ kinh nghiệm.';
       }
       case 'debriefs_pending': {
         this.lead(a);
-        const list = await db.pendingDebriefs(this.host.DB, Math.max(1, Math.min(60, Number(args.limit) || 30)));
+        const project = this.projectOf(a);
+        const list = await db.pendingDebriefs(this.host.DB, Math.max(1, Math.min(60, Number(args.limit) || 30)), a.machine ? project : undefined);
         if (!list.length) return 'Không có bản tóm tắt nào đang chờ.';
-        return list.map((d) => `### [${d.id}] ${d.agentName} · ${d.dept}${d.project ? ` · ${d.project}` : ''} · ${new Date(d.at).toISOString().slice(0, 10)}\n${d.text}`).join('\n\n');
+        return [
+          project ? `Bạn đúc rút cho dự án ${project}${this.machineLabel(a) ? ` (máy ${this.machineLabel(a)})` : ''}.` : '',
+          ...list.map((d) => `### [${d.id}] ${d.agentName} · ${d.dept}${d.project ? ` · dự án ${d.project}` : ' · không rõ dự án'}${d.machine ? ` · máy ${d.machine}` : ''} · ${new Date(d.at).toISOString().slice(0, 10)}\n${d.text}`),
+        ]
+          .filter(Boolean)
+          .join('\n\n');
       }
       case 'lesson_save': {
         this.lead(a);
@@ -1582,17 +1859,28 @@ export class AgentHub {
         if (!dept) throw new Error('dept phải là "all" hoặc mã phòng ban');
         const text = clampStr(String(args.text ?? ''), LESSON_MAX);
         if (text.length < 8) throw new Error('bài học quá ngắn');
+        // where it is true: the session's own project / machine, filled in by the office — never typed
+        const scope = args.scope === 'all' || args.scope === 'machine' ? args.scope : args.scope === 'project' ? 'project' : args.project ? 'project' : 'all';
+        const project = scope === 'project' ? this.projectOf(a) || clampStr(String(args.project ?? ''), 60) : '';
+        const machine = scope === 'machine' ? clampStr(String(args.machine ?? '') || this.machineLabel(a), 60) : '';
+        if (scope === 'project' && !project) throw new Error('phiên này không biết mình đang ở dự án nào — dùng scope "all" nếu bài học đúng ở mọi dự án');
+        if (scope === 'machine' && !machine) throw new Error('chưa rõ máy nào — ghi machine đúng như trong bản tóm tắt');
+        const all = await db.listLessons(this.host.DB);
         let id: string = crypto.randomUUID();
         if (args.replace_id) {
           const q = String(args.replace_id);
-          const hit = (await db.listLessons(this.host.DB)).find((l) => l.id.startsWith(q));
+          const hit = all.find((l) => q.length >= 4 && l.id.startsWith(q));
           if (!hit) throw new Error(`không có bài học ${q}`);
           id = hit.id;
+        } else {
+          // the same lesson written twice (two machines, two distillations) is one lesson
+          const twin = all.find((l) => l.dept === dept && l.project === project && (l.machine ?? '') === machine && lessonOverlap(l.text, text) >= 0.6);
+          if (twin) return `Bài này trùng ý với bài đã có [${twin.id.slice(0, 8)}]: “${twin.text}”. Nếu có ý mới thì gọi lại lesson_save với replace_id="${twin.id.slice(0, 8)}" và nội dung đã gộp cả hai; không thì bỏ qua.`;
         }
-        const lesson: Lesson = { id, dept, project: clampStr(String(args.project ?? ''), 40), text, by: a.name, at: Date.now() };
+        const lesson: Lesson = { id, dept, project, machine, text, by: a.name, at: Date.now() };
         await db.saveLesson(this.host.DB, lesson);
         void this.pushBook();
-        return `Đã lưu bài học [${id.slice(0, 8)}].`;
+        return `Đã lưu bài học [${id.slice(0, 8)}] (${project ? `dự án ${project}` : machine ? `riêng máy ${machine}` : 'mọi dự án'}).`;
       }
       case 'lesson_retire': {
         this.lead(a);
@@ -1614,6 +1902,81 @@ export class AgentHub {
         throw new Error(`không có tool ${name}`);
     }
   }
+}
+
+// ---------------------------------------------------------------- how risky an action is
+type Risk = 'safe' | 'review' | 'danger';
+
+/** Hard to undo, or leaves the machine: never waved through without a look. */
+const DANGER_CMD =
+  /\bgit\s+(push|reset\s+--hard|clean\s+-\w*f|checkout\s+--\s|branch\s+-D|rebase|filter-(branch|repo)|commit\s+--amend|tag\s+-d|stash\s+(drop|clear))|\brm\s+(-\w*\s+)*-\w*[rRf]|\bsudo\b|\bsu\s|\bdeploy\b|\bwrangler\s+(deploy|publish|secret|delete|kv|r2|d1\s+(execute|migrations\s+apply)[^|;&]*--remote)|\b(npm|pnpm|yarn)\s+publish|\bdocker\b|\bkubectl\b|\bhelm\b|\bterraform\s+(apply|destroy)|\bssh\b|\bscp\b|\brsync\b|\bcurl\b[^|;&]*(\s-X\s*(POST|PUT|DELETE|PATCH)|\s--data|\s-d\s|\s-F\s|\s--form|\s-T\s)|\bwget\b[^|;&]*--post|\bdd\s+if=|\bmkfs|\bchmod\s+-R|\bchown\b|\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\b(kill|killall|pkill)\b|\bshutdown\b|\breboot\b|\bcrontab\b|\bgh\s+(pr\s+(create|merge|close)|release|repo\s+(create|delete)|issue\s+(create|close)|api\b)|\bvercel\b|\bnetlify\s+deploy|\bheroku\b|\bpsql\b|\bmysql\b|\bredis-cli\b|\bmongo(sh)?\b|>\s*\/(etc|usr|bin|boot|var)\//i;
+
+/** Commands that only read, or build and test inside the project. */
+const SAFE_SEG = [
+  /^(ls|pwd|cat|head|tail|wc|echo|printf|grep|egrep|rg|ag|tree|stat|file|du|df|date|which|type|whoami|uname|basename|dirname|realpath|readlink|sort|uniq|cut|tr|diff|cmp|jq|true|cd|nl|less|more)(\s|$)/,
+  /^find\b(?!.*\s-(delete|exec|execdir|ok|fprint)\b)/,
+  /^sed\s+-n\b/,
+  /^awk\b(?!.*system)/,
+  /^git\s+(status|diff|log|show|rev-parse|ls-files|ls-tree|blame|grep|fetch|describe|shortlog|merge-base|cat-file)\b/,
+  /^git\s+(branch|remote|tag|stash)(\s+(-a|-r|-v|-vv|--list|--show-current|-l|list))*\s*$/,
+  /^git\s+config\s+--get\b/,
+  /^(npm|pnpm|yarn|bun)\s+(test|t|run\s+(test|build|typecheck|type-check|lint|check|tsc|format:check)[\w:-]*|ls|outdated|view|why)\b/,
+  /^npx\s+(--no-install\s+)?(tsc|vitest|jest|eslint|prettier\s+--check|playwright\s+test)\b/,
+  /^(tsc|vitest|jest|eslint|pytest|mypy|flake8)\b/,
+  /^ruff\s+check\b/,
+  /^python3?\s+-m\s+(pytest|mypy|unittest|py_compile)\b/,
+  /^node\s+(--check|-c|-v|--version)\b/,
+  /^(go\s+(test|build|vet|list|version)|cargo\s+(test|build|check|clippy|tree)|make\s+(test|check|build|lint)|php\s+-l|composer\s+(validate|show))\b/,
+];
+
+function bashRisk(cmd: string): Risk {
+  const c = cmd.trim();
+  if (!c) return 'review';
+  if (DANGER_CMD.test(c)) return 'danger';
+  if (/`|\$\(/.test(c)) return 'review'; // what it runs is decided at run time
+  if (/>(?!\s*\/dev\/null|&)/.test(c.replace(/2>&1/g, ''))) return 'review'; // writes a file
+  const segs = c.split(/\s*(?:&&|\|\||;|\|)\s*/).filter(Boolean);
+  const bare = (s: string) => s.replace(/^(?:[A-Z_][A-Z0-9_]*=\S*\s+)+/, '');
+  return segs.every((seg) => SAFE_SEG.some((r) => r.test(bare(seg)))) ? 'safe' : 'review';
+}
+
+const SENSITIVE_PATH = /(^|\/)(\.env(\.|$)|\.dev\.vars|\.git\/|id_rsa|id_ed25519|\.ssh\/|\.aws\/|\.npmrc|\.netrc|credentials|secrets?\.)/i;
+
+/** How careful to be with what a session asks for, before anyone thinks about it. */
+export function riskOf(tool: string, input: Record<string, unknown>, dir: string | undefined, edit: string): Risk {
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  switch (tool) {
+    case 'Read':
+    case 'Glob':
+    case 'Grep':
+    case 'LS':
+    case 'NotebookRead':
+    case 'TodoWrite':
+    case 'WebSearch':
+    case 'WebFetch':
+      return 'safe';
+    case 'Bash':
+      return bashRisk(str(input.command));
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write':
+    case 'NotebookEdit': {
+      const p = str(input.file_path) || str(input.notebook_path);
+      if (SENSITIVE_PATH.test(p)) return 'danger';
+      if (p.startsWith('/') && dir && !p.startsWith(`${dir.replace(/\/$/, '')}/`)) return 'danger'; // outside the project
+      if (p.startsWith('/') && !dir) return 'review';
+      // inside the project but outside what the department may edit: a lane question, Tổng quản's call
+      return String(edit || 'all').trim() === 'all' ? 'safe' : 'review';
+    }
+  }
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
+  if (mcp) {
+    const op = mcp[2].toLowerCase();
+    if (/(create|update|delete|remove|send|post|write|execute|run|deploy|publish|merge|transition|add|set|upload|invite|cancel|close|reply)/.test(op)) return 'danger';
+    if (/(get|list|search|read|find|fetch|query|describe|count|explore|view|show|status|schema|docs)/.test(op)) return 'safe';
+    return 'review';
+  }
+  return 'review';
 }
 
 /** What a permission request is about, in one line, and what "allow for the whole session" covers. */

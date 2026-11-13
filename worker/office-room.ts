@@ -221,14 +221,15 @@ export class OfficeRoom extends DurableObject<Env> {
     }
     if (url.pathname === '/agent-api' && req.method === 'POST') {
       await this.schemaReady;
-      const b = (await req.json().catch(() => null)) as { uid?: string; op?: string; body?: Record<string, unknown>; depts?: string } | null;
+      const b = (await req.json().catch(() => null)) as { uid?: string; op?: string; body?: Record<string, unknown>; depts?: string; wait?: number } | null;
       if (!b?.uid || !CID_RE.test(b.uid)) return new Response('bad', { status: 400 });
-      if (b.op === 'jobs') return Response.json(await this.agents.jobs(b.uid, String(b.depts ?? '')));
+      if (b.op === 'jobs') return Response.json(await this.agents.jobs(b.uid, String(b.depts ?? ''), b.body ?? {}));
       if (b.op === 'claim') return Response.json(await this.agents.claim(b.uid, b.body ?? {}));
       if (b.op === 'exit') return Response.json(await this.agents.exit(b.uid, b.body ?? {}));
+      if (b.op === 'adopt') return Response.json(await this.agents.adopt(b.uid, b.body ?? {}));
       if (b.op === 'feed') return Response.json(await this.agents.feed(b.uid, b.body ?? {}));
-      if (b.op === 'brain') return Response.json({ job: await this.agents.brain.job(b.uid) });
-      if (b.op === 'brainResult') return Response.json(await this.agents.brain.result(b.uid, String(b.body?.id ?? ''), String(b.body?.raw ?? '')));
+      if (b.op === 'brain') return Response.json({ job: await this.agents.brain.job(b.uid, Math.min(20, Number(b.wait) || 0) * 1000) });
+      if (b.op === 'brainResult') return Response.json(await this.agents.brain.result(b.uid, String(b.body?.id ?? ''), String(b.body?.raw ?? ''), clampStr(String(b.body?.error ?? ''), 300)));
       return new Response('bad op', { status: 400 });
     }
     if (url.pathname === '/nudge-status') {

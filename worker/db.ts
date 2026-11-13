@@ -103,6 +103,7 @@ interface TaskRow {
   hops?: number | null;
   after_ids?: string | null;
   thread_id?: string | null;
+  project?: string | null;
 }
 
 const rowToTask = (r: TaskRow): Task => ({
@@ -121,6 +122,7 @@ const rowToTask = (r: TaskRow): Task => ({
   hops: r.hops ?? 0,
   after: r.after_ids ? r.after_ids.split(',').filter(Boolean) : undefined,
   thread: r.thread_id ?? undefined,
+  project: r.project || undefined,
 });
 
 /** Active tasks + tasks finished in the last 14 days. */
@@ -135,12 +137,12 @@ export async function loadTasks(db: D1Database, now: number): Promise<Task[]> {
 export async function saveTask(db: D1Database, t: Task): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO tasks (id, title, descr, col, ord, assignee, priority, created_by, created_at, updated_at, done_at, dept, hops, after_ids, thread_id)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+      `INSERT INTO tasks (id, title, descr, col, ord, assignee, priority, created_by, created_at, updated_at, done_at, dept, hops, after_ids, thread_id, project)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
        ON CONFLICT(id) DO UPDATE SET title = ?2, descr = ?3, col = ?4, ord = ?5, assignee = ?6, priority = ?7,
-         updated_at = ?10, done_at = ?11, dept = ?12, hops = ?13, after_ids = ?14, thread_id = ?15`,
+         updated_at = ?10, done_at = ?11, dept = ?12, hops = ?13, after_ids = ?14, thread_id = ?15, project = ?16`,
     )
-    .bind(t.id, t.title, t.desc, t.col, t.ord, t.assignee, t.priority, t.createdBy, t.createdAt, t.updatedAt, t.doneAt, t.dept ?? null, t.hops ?? 0, t.after?.length ? t.after.join(',') : null, t.thread ?? null)
+    .bind(t.id, t.title, t.desc, t.col, t.ord, t.assignee, t.priority, t.createdBy, t.createdAt, t.updatedAt, t.doneAt, t.dept ?? null, t.hops ?? 0, t.after?.length ? t.after.join(',') : null, t.thread ?? null, t.project ?? null)
     .run();
 }
 
@@ -301,11 +303,12 @@ interface LessonRow {
   id: string;
   dept: string;
   project: string;
+  machine?: string | null;
   text: string;
   by_name: string;
   updated_at: number;
 }
-const rowToLesson = (r: LessonRow): Lesson => ({ id: r.id, dept: r.dept === 'all' || !isDept(r.dept) ? 'all' : r.dept, project: r.project, text: r.text, by: r.by_name, at: r.updated_at });
+const rowToLesson = (r: LessonRow): Lesson => ({ id: r.id, dept: r.dept === 'all' || !isDept(r.dept) ? 'all' : r.dept, project: r.project, machine: r.machine || '', text: r.text, by: r.by_name, at: r.updated_at });
 
 export async function listLessons(db: D1Database): Promise<Lesson[]> {
   const { results } = await db.prepare('SELECT * FROM agent_lessons ORDER BY updated_at DESC LIMIT 500').all<LessonRow>();
@@ -315,10 +318,10 @@ export async function listLessons(db: D1Database): Promise<Lesson[]> {
 export async function saveLesson(db: D1Database, l: Lesson): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO agent_lessons (id, dept, project, text, by_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
-       ON CONFLICT(id) DO UPDATE SET dept = ?2, project = ?3, text = ?4, by_name = ?5, updated_at = ?6`,
+      `INSERT INTO agent_lessons (id, dept, project, text, by_name, created_at, updated_at, machine) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)
+       ON CONFLICT(id) DO UPDATE SET dept = ?2, project = ?3, text = ?4, by_name = ?5, updated_at = ?6, machine = ?7`,
     )
-    .bind(l.id, l.dept, l.project, l.text, l.by, l.at)
+    .bind(l.id, l.dept, l.project, l.text, l.by, l.at, l.machine ?? '')
     .run();
 }
 
@@ -333,6 +336,7 @@ interface DebriefRow {
   agent_name: string;
   dept: string;
   project: string;
+  machine?: string | null;
   text: string;
   created_at: number;
 }
@@ -342,24 +346,33 @@ const rowToDebrief = (r: DebriefRow): Debrief => ({
   agentName: r.agent_name,
   dept: isDept(r.dept) ? r.dept : 'dev',
   project: r.project,
+  machine: r.machine || '',
   text: r.text,
   at: r.created_at,
 });
 
 export async function addDebrief(db: D1Database, d: Debrief, owner: string): Promise<void> {
   await db
-    .prepare('INSERT INTO agent_debriefs (id, agent, agent_name, dept, project, owner, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(d.id, d.agent, d.agentName, d.dept, d.project, owner, d.text, d.at)
+    .prepare('INSERT INTO agent_debriefs (id, agent, agent_name, dept, project, owner, text, created_at, machine) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(d.id, d.agent, d.agentName, d.dept, d.project, owner, d.text, d.at, d.machine ?? '')
     .run();
 }
 
-export async function pendingDebriefs(db: D1Database, limit: number): Promise<Debrief[]> {
-  const { results } = await db.prepare('SELECT * FROM agent_debriefs WHERE done = 0 ORDER BY created_at LIMIT ?').bind(limit).all<DebriefRow>();
+/** Debriefs waiting to be distilled — all of them, or only those of one project (plus untagged ones). */
+export async function pendingDebriefs(db: D1Database, limit: number, project?: string): Promise<Debrief[]> {
+  const q =
+    project === undefined
+      ? db.prepare('SELECT * FROM agent_debriefs WHERE done = 0 ORDER BY created_at LIMIT ?').bind(limit)
+      : db.prepare("SELECT * FROM agent_debriefs WHERE done = 0 AND (project = ? OR project = '') ORDER BY created_at LIMIT ?").bind(project, limit);
+  const { results } = await q.all<DebriefRow>();
   return results.map(rowToDebrief);
 }
 
-export async function countPendingDebriefs(db: D1Database): Promise<number> {
-  const r = await db.prepare('SELECT COUNT(*) AS n FROM agent_debriefs WHERE done = 0').first<{ n: number }>();
+export async function countPendingDebriefs(db: D1Database, project?: string): Promise<number> {
+  const r =
+    project === undefined
+      ? await db.prepare('SELECT COUNT(*) AS n FROM agent_debriefs WHERE done = 0').first<{ n: number }>()
+      : await db.prepare("SELECT COUNT(*) AS n FROM agent_debriefs WHERE done = 0 AND (project = ? OR project = '')").bind(project).first<{ n: number }>();
   return r?.n ?? 0;
 }
 

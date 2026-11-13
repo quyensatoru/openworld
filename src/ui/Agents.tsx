@@ -156,6 +156,21 @@ function BrainTab() {
             Trần phiên/giờ cho mỗi người
             <input className="input" type="number" min={1} max={100} value={cfg.maxPerPersonHour} onChange={(e) => set({ maxPerPersonHour: Number(e.target.value) })} />
           </label>
+          <label>
+            Duyệt quyền cho nhân viên
+            <select className="input" value={cfg.approvals} onChange={(e) => set({ approvals: e.target.value as typeof cfg.approvals })}>
+              <option value="lead">🧠 Tổng quản tự duyệt — chỉ hỏi bạn việc khó đảo ngược (khuyên dùng)</option>
+              <option value="auto">🚀 Tự động hoàn toàn — không hỏi ai, việc chưa chắc thì từ chối</option>
+              <option value="ask">🙋 Hỏi chủ máy mọi thứ (như cũ)</option>
+            </select>
+          </label>
+          <p className="ag-hint">
+            {cfg.approvals === 'ask'
+              ? 'Mỗi thao tác ngoài hồ sơ phòng ban hiện một thẻ 🔐 cho chủ máy trực.'
+              : cfg.approvals === 'lead'
+                ? 'Đọc file, chạy test/build, sửa file trong dự án: cho luôn. Thao tác khác Tổng quản xét theo đúng việc đang làm. Push, deploy, xoá dữ liệu, gửi ra ngoài: chỉ cho khi việc ghi rõ yêu cầu — không rõ thì mới hỏi bạn.'
+                : 'Phiên làm việc chạy ở chế độ auto của Claude Code; thứ gì còn phải xin thì Tổng quản quyết, không chắc thì từ chối và ghi vào việc. Bạn chỉ nhận kết quả cuối.'}
+          </p>
           <label className="br-check">
             <input type="checkbox" checked={cfg.meetings} onChange={(e) => set({ meetings: e.target.checked })} />
             Cho phép họp tự động giữa các nhân viên văn phòng
@@ -166,6 +181,9 @@ function BrainTab() {
         </section>
       )}
 
+      <Machines />
+      <AutoApprovals />
+
       <section>
         <h3>Đang trên bàn Tổng quản{queue.length ? ` · ${queue.length}` : ''}</h3>
         {!queue.length && <p className="ag-hint">Không có yêu cầu nào đang chờ.</p>}
@@ -173,7 +191,10 @@ function BrainTab() {
           <div key={it.id} className={`br-item ${it.state}`}>
             <div className="br-row">
               <b>{it.whoName || 'Ai đó'}</b>
-              <span className="br-tag">{QUEUE_META[it.state] ?? it.state}</span>
+              <span className="br-tag">
+                {it.state === 'done' ? (it.report === 'wait' ? 'các phòng đang làm · sẽ báo kết quả' : 'đang viết báo cáo kết quả') : QUEUE_META[it.state] ?? it.state}
+                {it.fails && it.state === 'pending' ? ' · 📶 chờ kết nối Claude' : ''}
+              </span>
               <time>{timeAgo(it.at)}</time>
               {it.who === meId && it.state !== 'done' && (
                 <button className="btn tiny" onClick={() => game.agents({ a: 'brainCancel', id: it.id })}>
@@ -222,6 +243,56 @@ function BrainTab() {
         })}
       </section>
     </div>
+  );
+}
+
+/** The on-call machines: which project each works in, and whether it can reach Claude right now. */
+function Machines() {
+  const machines = useStore((s) => s.brain?.machines ?? []);
+  if (!machines.length) return null;
+  return (
+    <section>
+      <h3>Máy trực · {machines.length}</h3>
+      {machines.map((m) => {
+        const down = m.outage && m.outage.until > Date.now();
+        return (
+          <div key={m.id} className={`br-machine${down ? ' down' : ''}`}>
+            <span className="br-dot" />
+            <div>
+              <b>{m.project || 'chưa rõ dự án'}</b> <span className="muted">· {m.label} · của {m.ownerName || '…'}</span>
+              <small>
+                {down ? `📶 mất kết nối tới Claude (${m.outage!.why}) — tự thử lại lúc ${new Date(m.outage!.until).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}, việc đang dở được giữ nguyên` : m.depts.map((d) => DEPT_BY_ID.get(d)?.icon).join(' ')}
+              </small>
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+/** What Tổng quản approved or refused on its own lately — so nobody has to wonder. */
+function AutoApprovals() {
+  const list = useStore((s) => s.approvals);
+  const mine = list.filter((x) => x.state !== 'pending' && x.by?.startsWith('🧠')).slice(-6).reverse();
+  if (!mine.length) return null;
+  return (
+    <section>
+      <h3>Tổng quản vừa tự duyệt</h3>
+      {mine.map((x) => (
+        <div key={x.id} className={`br-log ${x.state}`}>
+          <div className="br-row">
+            <span className="br-act">{x.state === 'allow' ? '🔓 cho phép' : '🚫 không cho'}</span>
+            <b>{x.agentName.replace('🤖 ', '')}</b>
+            <time>{timeAgo(x.at)}</time>
+          </div>
+          <p className="br-text">
+            <code>{x.summary}</code>
+          </p>
+          {x.reason && <p className="br-reply">↳ {x.reason}</p>}
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -534,15 +605,32 @@ function Book() {
   const book = useStore((s) => s.agentBook);
   const [dept, setDept] = useState<DeptId | 'all' | ''>('');
   const [q, setQ] = useState('');
+  const [project, setProject] = useState<string | null>(null);
   const [editing, setEditing] = useState<Lesson | null>(null);
   if (!book) return <div className="ag-empty">Đang mở sổ…</div>;
   const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  const list = book.lessons.filter((l) => (!dept || l.dept === dept) && (!q || norm(`${l.text} ${l.project}`).includes(norm(q))));
+  const projects = [...new Set(book.lessons.map((l) => l.project).filter(Boolean))].sort();
+  const list = book.lessons.filter((l) => (!dept || l.dept === dept) && (project === null || l.project === project) && (!q || norm(`${l.text} ${l.project} ${l.machine ?? ''}`).includes(norm(q))));
   return (
     <>
       <p className="ag-hint">
-        Mỗi phiên nộp một bản tóm tắt khi xong việc; Ban điều hành (máy trực có phòng <code>lead</code>) gộp chúng thành bài học ngắn ở đây. Mỗi phiên mới đều được đọc các bài học của phòng mình ngay khi mở. Bạn cũng sửa, thêm, gỡ trực tiếp được.
+        Mỗi phiên nộp một bản tóm tắt khi xong việc; Ban điều hành của <b>từng dự án</b> gộp chúng thành bài học ngắn ở đây. Mỗi phiên chỉ đọc bài học chung, bài của dự án nó đang làm và bài riêng của máy nó đang chạy — kinh nghiệm dự án này không lẫn sang dự án khác. Bạn cũng sửa, thêm, gỡ trực tiếp được.
       </p>
+      {!!projects.length && (
+        <div className="ag-filter">
+          <button className={`chip${project === null ? ' on' : ''}`} onClick={() => setProject(null)}>
+            Mọi phạm vi
+          </button>
+          <button className={`chip${project === '' ? ' on' : ''}`} onClick={() => setProject('')}>
+            🌐 Mọi dự án
+          </button>
+          {projects.map((p) => (
+            <button key={p} className={`chip${project === p ? ' on' : ''}`} onClick={() => setProject(p)}>
+              📁 {p}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="ag-filter">
         <button className={`chip${dept === '' ? ' on' : ''}`} onClick={() => setDept('')}>
           Tất cả
@@ -556,7 +644,7 @@ function Book() {
           </button>
         ))}
         <input className="input" placeholder="🔎 Tìm…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <button className="btn primary" onClick={() => setEditing({ id: '', dept: isDept(dept) ? dept : 'all', project: '', text: '', by: '', at: 0 })}>
+        <button className="btn primary" onClick={() => setEditing({ id: '', dept: isDept(dept) ? dept : 'all', project: project ?? '', machine: '', text: '', by: '', at: 0 })}>
           + Bài học
         </button>
       </div>
@@ -566,7 +654,8 @@ function Book() {
           <div key={l.id} className="ag-lesson" style={{ ['--c' as string]: l.dept === 'all' ? '#8a93a6' : DEPT_BY_ID.get(l.dept)!.color }}>
             <span className="ag-ltag">
               {l.dept === 'all' ? '🌐 Chung' : `${DEPT_BY_ID.get(l.dept)!.icon} ${DEPT_BY_ID.get(l.dept)!.short}`}
-              {l.project && <i> · {l.project}</i>}
+              <i> · {l.project ? `📁 ${l.project}` : 'mọi dự án'}</i>
+              {l.machine && <i> · 💻 {l.machine}</i>}
             </span>
             <p>{l.text}</p>
             <small className="muted">
@@ -593,7 +682,8 @@ function Book() {
                 {DEPT_BY_ID.get(d.dept)?.icon} {d.agentName}
               </b>
               <small className="muted">
-                {d.project && `${d.project} · `}
+                {d.project && `📁 ${d.project} · `}
+                {d.machine && `💻 ${d.machine} · `}
                 {timeAgo(d.at)}
               </small>
               <p>{d.text}</p>
@@ -611,6 +701,7 @@ function Book() {
 function LessonEditor({ lesson, onDone }: { lesson: Lesson; onDone: () => void }) {
   const [dept, setDept] = useState<DeptId | 'all'>(lesson.dept);
   const [project, setProject] = useState(lesson.project);
+  const [machine, setMachine] = useState(lesson.machine ?? '');
   const [text, setText] = useState(lesson.text);
   return (
     <form
@@ -618,7 +709,7 @@ function LessonEditor({ lesson, onDone }: { lesson: Lesson; onDone: () => void }
       onSubmit={(e) => {
         e.preventDefault();
         if (!text.trim()) return;
-        game.agents({ a: 'lesson', id: lesson.id || undefined, dept, project: project.trim(), text: text.trim() });
+        game.agents({ a: 'lesson', id: lesson.id || undefined, dept, project: project.trim(), machine: machine.trim(), text: text.trim() });
         onDone();
       }}
     >
@@ -631,7 +722,8 @@ function LessonEditor({ lesson, onDone }: { lesson: Lesson; onDone: () => void }
             </option>
           ))}
         </select>
-        <input className="input" placeholder="Dự án (tên thư mục, bỏ trống = mọi dự án)" maxLength={40} value={project} onChange={(e) => setProject(e.target.value)} />
+        <input className="input" placeholder="Dự án (tên repo, bỏ trống = mọi dự án)" maxLength={60} value={project} onChange={(e) => setProject(e.target.value)} />
+        <input className="input" placeholder="Máy (bỏ trống = mọi máy)" maxLength={60} value={machine} onChange={(e) => setMachine(e.target.value)} />
       </div>
       <textarea className="input" autoFocus placeholder="Bài học: 1–2 câu, cụ thể, dùng được ngay" maxLength={400} value={text} onChange={(e) => setText(e.target.value)} />
       <div className="ag-erow">
@@ -683,6 +775,12 @@ function Connect() {
           <li>Mọi điều Claude nói và mọi công cụ nó dùng được stream lên màn hình bàn của nhân viên văn phòng đó; log đầy đủ nằm ở <code>~/.office-agent/logs</code>.</li>
           <li>
             Mặc định máy trực <b>chỉ nhận việc từ bạn</b>. Muốn đồng nghiệp giao việc được thì chọn họ ở tab 🔑 Quyền giao việc. Chỉ trỏ <code>--dir</code> vào dự án bạn chấp nhận cho agent đụng vào.
+          </li>
+          <li>
+            <b>Mất mạng hay Claude sập không làm hỏng việc:</b> nhân viên ngồi chờ ở bàn, máy trực tự thử lại (30 giây → tối đa 10 phút) rồi <b>làm tiếp đúng phiên đang dở</b>, không làm lại từ đầu. Phiên im lặng quá 12 phút bị coi là treo và được khởi động lại theo cách đó. Mất liên lạc với Office thì phiên vẫn chạy, kết quả gửi lên khi có mạng. Máy trực khởi động lại cũng tự nhận lại phiên cũ.
+          </li>
+          <li>
+            Mỗi máy trực làm trong <b>một dự án</b> (tên repo trên git remote, hoặc <code>--project tên</code>). Tổng quản chỉ giao việc của dự án nào cho máy của dự án đó, và sổ kinh nghiệm cũng tách theo dự án.
           </li>
           <li>Ctrl+C để dừng — việc dở được trả về Kanban.</li>
         </ul>

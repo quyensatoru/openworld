@@ -1,5 +1,5 @@
 // Keep in sync with migrations/0001_init.sql. Applied idempotently by the Durable Object on first use.
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 export const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL, desk TEXT, last_seen INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, descr TEXT NOT NULL DEFAULT '', col TEXT NOT NULL, ord REAL NOT NULL, assignee TEXT, priority TEXT NOT NULL DEFAULT 'normal', created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER)`,
@@ -26,4 +26,8 @@ export const SCHEMA_ALTERS = [
   `ALTER TABLE tasks ADD COLUMN after_ids TEXT`,
   // the chat thread this work is discussed in
   `ALTER TABLE tasks ADD COLUMN thread_id TEXT`,
+  // the project (repo name) a task must be done in, and the machine a lesson / debrief belongs to
+  `ALTER TABLE tasks ADD COLUMN project TEXT`,
+  `ALTER TABLE agent_lessons ADD COLUMN machine TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE agent_debriefs ADD COLUMN machine TEXT NOT NULL DEFAULT ''`,
 ];

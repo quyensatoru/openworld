@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { DEPTS, DEPT_BY_ID } from '../../shared/agents';
+import { AGENT_ID, DEPTS, DEPT_BY_ID } from '../../shared/agents';
+import { BRAIN_ID } from '../../shared/brain';
 import { ZONE_BY_ID } from '../../shared/map';
 import { STATUS_META, type ChatMsg } from '../../shared/protocol';
 import { game } from '../game';
@@ -40,13 +41,6 @@ export function SidePanel() {
 
 // ------------------------------------------------------------------ chat
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase();
-
-/** The handle typed after @ for a person: their given name (last word) if nobody else shares it. */
-function handleFor(name: string, all: string[]): string {
-  const last = name.trim().split(/\s+/).pop() ?? name;
-  const same = all.filter((n) => norm(n.trim().split(/\s+/).pop() ?? '') === norm(last)).length;
-  return same > 1 ? name.replace(/\s+/g, '') : last;
-}
 
 function Chat() {
   const chat = useStore((s) => s.chat);
@@ -111,29 +105,29 @@ function Chat() {
     if (stick.current && fresh) setFresh(0);
   };
 
-  // @mentions: the word being typed at the caret
-  const people = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string; online: boolean }>();
-    for (const p of Object.values(players)) seen.set(p.id, { id: p.id, name: p.name, online: true });
-    for (const t of Object.values(team)) if (!seen.has(t.id) && t.id !== meId) seen.set(t.id, { id: t.id, name: t.name, online: false });
-    return [...seen.values()];
-  }, [players, team, meId]);
+  // @mentions: only who can take work — Tổng quản, the departments and the AI employees in the
+  // office. Real people are left out on purpose: tagging them made the list (and the chat) noisy.
+  const staff = useMemo(
+    () =>
+      Object.values(players)
+        .filter((p) => AGENT_ID.test(p.id))
+        .map((p) => ({ id: p.id, name: p.name, online: true }))
+        .sort((a, b) => Number(b.id === BRAIN_ID) - Number(a.id === BRAIN_ID) || a.name.localeCompare(b.name, 'vi')),
+    [players],
+  );
   const before = draft.slice(0, caret);
   const at = before.match(/(^|\s)@([\p{L}\p{N}_.-]*)$/u);
   const query = at ? norm(at[2]) : null;
-  const allNames = people.map((p) => p.name);
   const options =
     query == null
       ? []
       : [
-          ...(norm('all').startsWith(query) || norm('team').startsWith(query) || norm('ca team').startsWith(query) ? [{ id: '@all', name: 'Cả team', online: true, handle: 'all' }] : []),
-          // departments: their virtual employees answer (an always-on machine picks the message up)
-          ...DEPTS.filter((d) => query && (d.alias.some((a) => a.startsWith(query)) || norm(d.name).startsWith(query))).map((d) => ({ id: `@${d.id}`, name: `${d.icon} Phòng ${d.name}`, online: true, handle: d.alias[0] })),
-          ...people
+          ...staff
             .filter((p) => !query || norm(p.name).split(/\s+/).some((w) => w.startsWith(query)) || norm(p.name).replace(/\s+/g, '').startsWith(query))
-            .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name, 'vi'))
-            .map((p) => ({ ...p, handle: handleFor(p.name, allNames) })),
-        ].slice(0, 7);
+            .map((p) => ({ ...p, icon: '', handle: p.id === BRAIN_ID ? 'tongquan' : p.name.replace(/\s+/g, '') })),
+          // departments: Tổng quản hands the message to whoever on that team is on call
+          ...DEPTS.filter((d) => !query || d.alias.some((a) => a.startsWith(query)) || norm(d.name).startsWith(query)).map((d) => ({ id: `@${d.id}`, name: `Phòng ${d.name}`, icon: d.icon, online: true, handle: d.alias[0] })),
+        ].slice(0, 8);
   const showMentions = options.length > 0;
   const choose = (handle: string) => {
     if (!at) return;
@@ -225,7 +219,7 @@ function Chat() {
       <form className="chat-input" onSubmit={send}>
         {showMentions && (
           <div className="mention-pop">
-            <div className="mp-title">Gọi tên</div>
+            <div className="mp-title">Gọi nhân viên / phòng ban</div>
             {options.map((o, i) => (
               <button
                 type="button"
@@ -237,10 +231,10 @@ function Chat() {
                   choose(o.handle);
                 }}
               >
-                {o.id === '@all' ? <span className="mp-all">📣</span> : <AvatarDot name={o.name} avatar={avatarOf(o.id)} size={24} />}
+                {o.id.startsWith('@') ? <span className="mp-all">{o.icon}</span> : <AvatarDot name={o.name} avatar={avatarOf(o.id)} size={24} />}
                 <span className="mp-name">{o.name}</span>
                 <span className="mp-handle">@{o.handle}</span>
-                {o.id !== '@all' && <span className={`mp-dot${o.online ? ' on' : ''}`} />}
+                {!o.id.startsWith('@') && <span className="mp-dot on" />}
               </button>
             ))}
           </div>

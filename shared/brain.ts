@@ -8,7 +8,7 @@
 // The point is that deciding is cheap and doing is expensive: a decision is a short prompt with no
 // repo access (a few seconds, a few thousand tokens), while a department session is a full
 // `claude -p` in the project. Before this, triage cost as much as the work it was triaging.
-import type { DeptId } from './agents';
+import type { DeptId, RunnerMachine } from './agents';
 import type { Priority } from './protocol';
 
 /** What the orchestrator decided to do with a request. */
@@ -34,6 +34,8 @@ export interface BrainDecision {
   mergeInto?: string;
   /** action 'route': the work, split so independent parts run at once */
   plan?: BrainParcel[];
+  /** action 'route': the project (repo name) the work belongs to, when several are on call */
+  project?: string;
 }
 
 export const BRAIN_LIMITS = { reply: 400, question: 300, title: 140, desc: 1800, parcels: 6 };
@@ -63,6 +65,19 @@ export interface BrainItem {
   tries: number;
   /** while state === 'thinking': the runner holding it, and until when */
   lease?: { by: string; until: number };
+  /** Claude could not be reached for it: don't try again before this */
+  notBefore?: number;
+  /** times the machine failed to think it through (network, Claude down) — never the person's fault */
+  fails?: number;
+  /** action 'route': the project it went to, and the cards its plan made */
+  project?: string;
+  tasks?: string[];
+  /** action 'route': the final report back to the person, once every piece of the work is finished.
+   *  'wait' = work still running · 'pending'/'thinking' = being written · 'sent' = they have it */
+  report?: 'wait' | 'pending' | 'thinking' | 'sent';
+  /** when the report was claimed / how many times writing it failed */
+  reportLease?: { by: string; until: number };
+  reportTries?: number;
 }
 
 /** Two thinking rounds per request: one to decide, one more after the person answers a question. */
@@ -96,9 +111,16 @@ export interface BrainConfig {
   maxPerPersonHour: number;
   /** let the orchestrator call a meeting of department sessions (expensive — off by default) */
   meetings: boolean;
+  /** who answers when a session wants to do something its profile does not allow outright:
+   *  'ask'  — always the machine's owner (a 🔐 card)
+   *  'lead' — 🧠 Tổng quản decides; only irreversible things the work did not clearly ask for reach a person
+   *  'auto' — sessions run in Claude Code's own auto mode, and Tổng quản decides the rest; nobody is asked */
+  approvals: ApprovalMode;
 }
 
-export const DEFAULT_BRAIN: BrainConfig = { model: 'sonnet', maxSessionsHour: 24, maxPerPersonHour: 8, meetings: false };
+export type ApprovalMode = 'ask' | 'lead' | 'auto';
+
+export const DEFAULT_BRAIN: BrainConfig = { model: 'sonnet', maxSessionsHour: 24, maxPerPersonHour: 8, meetings: false, approvals: 'lead' };
 
 export function sanitizeBrainConfig(v: unknown, fallback: BrainConfig = DEFAULT_BRAIN): BrainConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
@@ -108,6 +130,7 @@ export function sanitizeBrainConfig(v: unknown, fallback: BrainConfig = DEFAULT_
     maxSessionsHour: num(o.maxSessionsHour, 1, 200, fallback.maxSessionsHour),
     maxPerPersonHour: num(o.maxPerPersonHour, 1, 100, fallback.maxPerPersonHour),
     meetings: typeof o.meetings === 'boolean' ? o.meetings : fallback.meetings,
+    approvals: o.approvals === 'ask' || o.approvals === 'lead' || o.approvals === 'auto' ? o.approvals : fallback.approvals,
   };
 }
 
@@ -128,6 +151,8 @@ export interface BrainView {
   budget: BrainBudget;
   /** a machine is serving the orchestrator right now */
   online: boolean;
+  /** the on-call machines, and whether they can reach Claude */
+  machines: RunnerMachine[];
 }
 
 /** Browser → server. */
@@ -136,10 +161,24 @@ export type BrainMsg = { a: 'brainConfig'; config: BrainConfig } | { a: 'brainCa
 /** Server → runner: one decision to make. The office writes the whole prompt; the runner just runs it. */
 export interface BrainJob {
   id: string;
+  /** decide a request · approve a session's action · write the final report */
+  kind?: 'decide' | 'approve' | 'report';
   model: BrainConfig['model'];
   system: string;
   prompt: string;
+  /** give up on the model after this long */
+  timeoutMs?: number;
 }
+
+/** Tổng quản's answer about one action a session wants to take. */
+export interface BrainVerdict {
+  decision: 'allow' | 'deny' | 'ask';
+  /** allow this kind of action for the rest of that session */
+  session: boolean;
+  reason: string;
+}
+/** How long a session waits for Tổng quản to judge an action before a person is asked instead. */
+export const APPROVE_WAIT_MS = 40_000;
 
 /** The orchestrator shares the player id space with the departments' agents. */
 export const BRAIN_ID = 'ag-brain000000';
@@ -147,30 +186,57 @@ export const BRAIN_NAME = 'Tổng quản';
 /** Its desk: the head of the quiet room, where the lead sits. */
 export const BRAIN_SEAT = 'focus-1';
 
-/** Pull the decision out of whatever the model printed (it may wrap it in prose or a fence). */
-export function parseDecision(raw: string): BrainDecision | null {
+/** Every JSON object the model may have printed (it may wrap it in prose or a fence). */
+function objects(raw: string): Record<string, unknown>[] {
   const text = String(raw ?? '');
   const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
-  const candidates = [fence?.[1], text];
-  for (const c of candidates) {
+  const out: Record<string, unknown>[] = [];
+  for (const c of [fence?.[1], text]) {
     if (!c) continue;
     const start = c.indexOf('{');
     const end = c.lastIndexOf('}');
     if (start < 0 || end <= start) continue;
     try {
-      const o = JSON.parse(c.slice(start, end + 1)) as Record<string, unknown>;
-      const action = o.action;
-      if (action !== 'answer' && action !== 'route' && action !== 'ask' && action !== 'merge' && action !== 'drop') continue;
-      return {
-        action,
-        reply: typeof o.reply === 'string' ? o.reply : '',
-        question: typeof o.question === 'string' ? o.question : undefined,
-        mergeInto: typeof o.mergeInto === 'string' ? o.mergeInto : undefined,
-        plan: Array.isArray(o.plan) ? (o.plan as BrainDecision['plan']) : undefined,
-      };
+      const o = JSON.parse(c.slice(start, end + 1));
+      if (o && typeof o === 'object') out.push(o as Record<string, unknown>);
     } catch {
       /* try the next candidate */
     }
+  }
+  return out;
+}
+
+/** Tổng quản's verdict on an action, or null when it did not answer in shape. */
+export function parseVerdict(raw: string): BrainVerdict | null {
+  for (const o of objects(raw)) {
+    const d = o.decision;
+    if (d !== 'allow' && d !== 'deny' && d !== 'ask') continue;
+    return { decision: d, session: o.session === true, reason: typeof o.reason === 'string' ? o.reason : '' };
+  }
+  return null;
+}
+
+/** The final report: what to tell the person, and a lesson about splitting the work (may be ''). */
+export function parseReport(raw: string): { reply: string; lesson: string; status: string } | null {
+  for (const o of objects(raw))
+    if (typeof o.reply === 'string' && o.reply.trim())
+      return { reply: o.reply.trim(), lesson: typeof o.lesson === 'string' ? o.lesson.trim() : '', status: typeof o.status === 'string' ? o.status : '' };
+  return null;
+}
+
+/** Pull the decision out of whatever the model printed (it may wrap it in prose or a fence). */
+export function parseDecision(raw: string): BrainDecision | null {
+  for (const o of objects(raw)) {
+    const action = o.action;
+    if (action !== 'answer' && action !== 'route' && action !== 'ask' && action !== 'merge' && action !== 'drop') continue;
+    return {
+      action,
+      reply: typeof o.reply === 'string' ? o.reply : '',
+      question: typeof o.question === 'string' ? o.question : undefined,
+      mergeInto: typeof o.mergeInto === 'string' ? o.mergeInto : undefined,
+      plan: Array.isArray(o.plan) ? (o.plan as BrainDecision['plan']) : undefined,
+      project: typeof o.project === 'string' && o.project.trim() ? o.project.trim() : undefined,
+    };
   }
   return null;
 }

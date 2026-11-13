@@ -234,20 +234,26 @@ export default {
 
       // Agent runners (public/office-agent.cjs): poll for work, take a job, report the session's end.
       // `brain`: GET asks the orchestrator for one decision to make, POST brings the answer back.
+      // `jobs` is also POSTed by newer runners: the body is their heartbeat (machine, running sessions).
+      // `adopt`: a restarted runner takes its sessions back. `brain?wait=20` long-polls for a thought.
       case '/api/agents/jobs':
       case '/api/agents/claim':
       case '/api/agents/exit':
+      case '/api/agents/adopt':
       case '/api/agents/brain':
       case '/api/agents/feed': {
         const uid = await bearerUser(env, req);
         if (!uid) return json({ error: 'unauthorized' }, { status: 401 });
         const last = url.pathname.split('/').pop()!;
-        const poll = last === 'jobs' || (last === 'brain' && req.method === 'GET');
-        const op = last === 'brain' && !poll ? 'brainResult' : last;
+        const poll = (last === 'jobs' || last === 'brain') && req.method === 'GET';
+        const op = last === 'brain' && req.method === 'POST' ? 'brainResult' : last;
         if (!poll && req.method !== 'POST') return json({ error: 'POST only' }, { status: 405 });
         const body = poll ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
         const stub = env.OFFICE.get(env.OFFICE.idFromName('main'));
-        return stub.fetch('https://office/agent-api', { method: 'POST', body: JSON.stringify({ uid, op, body, depts: url.searchParams.get('depts') ?? '' }) });
+        return stub.fetch('https://office/agent-api', {
+          method: 'POST',
+          body: JSON.stringify({ uid, op, body, depts: url.searchParams.get('depts') ?? String(body.depts ?? ''), wait: Number(url.searchParams.get('wait')) || 0 }),
+        });
       }
 
       // Karaoke song search (YouTube's own results page; no API key needed).

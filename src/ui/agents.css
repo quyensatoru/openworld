@@ -787,3 +787,37 @@
   padding: 2px 9px;
   font-size: 11.5px;
 }
+
+/* on-call machines and what Tổng quản approved on its own */
+.br-machine {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(45, 49, 66, 0.045);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.br-machine .br-dot {
+  background: #3fb27f;
+}
+.br-machine.down {
+  background: rgba(240, 163, 94, 0.12);
+}
+.br-machine.down .br-dot {
+  background: #f0a35e;
+}
+.br-machine small {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.75;
+  line-height: 1.45;
+}
+.br-log.deny {
+  background: rgba(214, 90, 90, 0.08);
+}
+.br-log code {
+  font-size: 12px;
+  word-break: break-all;
+}

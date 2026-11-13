@@ -31,11 +31,17 @@ Phân công hằng ngày do 🧠 Tổng quản lo (nó quyết định trước 
         id: 'dut-rut',
         name: 'Đúc rút kinh nghiệm',
         when: 'được giao đúc rút sổ kinh nghiệm từ các bản tóm tắt',
-        body: `1. debriefs_pending, rồi lessons để xem sổ hiện có.
+        body: `1. debriefs_pending (chỉ có bản tóm tắt của dự án bạn đang ở), rồi lessons để xem sổ hiện có của dự án này và phần chung.
 2. Chỉ giữ điều dùng lại được lần sau: lỗi hay gặp + cách tránh, lệnh/đường dẫn quan trọng, quy ước của dự án. Bỏ qua kể lể.
-3. Mỗi bài học 1–2 câu, câu mệnh lệnh ("Luôn…", "Trước khi… hãy…"). Gắn đúng phòng ("all" nếu chung), project nếu chỉ đúng với một dự án.
-4. Trùng ý bài cũ → lesson_save với replace_id để gộp. Sai/lỗi thời → lesson_retire. Mỗi phòng tối đa ~40 bài.
-5. debriefs_done với mọi id đã đọc, rồi chat_send một dòng: thêm/sửa/gỡ bao nhiêu bài.`,
+3. Mỗi bài học 1–2 câu, câu mệnh lệnh ("Luôn…", "Trước khi… hãy…"). Gắn đúng phòng ("all" nếu mọi phòng cần).
+4. Chọn đúng phạm vi — sai phạm vi là bài học đi lạc sang dự án/máy khác:
+   - scope "project" (mặc định): nhắc tới file, lệnh, nhánh, remote, dịch vụ, quy ước của repo này.
+   - scope "machine": về shell, công cụ, đường dẫn cài đặt của một máy (vd. zsh in rác, thiếu lệnh) — ghi machine như trong bản tóm tắt.
+   - scope "all": chỉ khi đúng ở mọi dự án và mọi máy (cách làm việc, cách bàn giao, cách hỏi lại).
+   - Bài học "Bài học chia việc" từ Tổng quản → dept "lead".
+5. Rà các bài đang để "mọi dự án" mà thực ra chỉ đúng với repo này hoặc một máy: lesson_save replace_id + scope đúng.
+6. Trùng ý bài cũ → lesson_save với replace_id để gộp (công cụ sẽ báo nếu bạn lỡ viết trùng). Sai/lỗi thời → lesson_retire. Mỗi phòng tối đa ~40 bài mỗi dự án.
+7. debriefs_done với mọi id đã đọc, rồi chat_send một dòng: thêm/sửa/gỡ bao nhiêu bài.`,
       },
     ],
   },

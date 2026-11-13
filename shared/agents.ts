@@ -142,6 +142,8 @@ export interface Lesson {
   dept: DeptId | 'all';
   /** '' = every project */
   project: string;
+  /** '' = every machine; otherwise the one on-call machine it is true for (its label, "host·abcd") */
+  machine?: string;
   text: string;
   by: string;
   at: number;
@@ -153,6 +155,8 @@ export interface Debrief {
   agentName: string;
   dept: DeptId;
   project: string;
+  /** the on-call machine the session ran on */
+  machine?: string;
   text: string;
   at: number;
 }
@@ -273,6 +277,8 @@ export interface Approval {
   at: number;
   state: 'pending' | 'allow' | 'deny';
   by?: string;
+  /** decided by 🧠 Tổng quản instead of a person: why */
+  reason?: string;
 }
 /** Unanswered requests are refused after this long. */
 export const APPROVAL_TTL = 30 * 60_000;
@@ -280,7 +286,7 @@ export const APPROVAL_TTL = 30 * 60_000;
 /** Browser → server (over the WebSocket). */
 export type AgentMsg =
   | { a: 'lessons' }
-  | { a: 'lesson'; id?: string; dept: DeptId | 'all'; project?: string; text: string }
+  | { a: 'lesson'; id?: string; dept: DeptId | 'all'; project?: string; machine?: string; text: string }
   | { a: 'lessonDel'; id: string }
   | { a: 'dismiss'; id: string }
   | { a: 'profile'; dept: DeptId; profile: DeptProfile }
@@ -312,6 +318,61 @@ export interface AgentBook {
   profiles: Record<DeptId, DeptProfile>;
   /** departments whose profile differs from the built-in one */
   custom: DeptId[];
+}
+
+/** An on-call machine, as the office sees it (one runner process). */
+export interface RunnerMachine {
+  /** stable per machine (~/.office-agent/machine.json) */
+  id: string;
+  /** "host·abcd" — what lessons and debriefs are tagged with */
+  label: string;
+  owner: string;
+  ownerName: string;
+  /** the project (repo name) it works in */
+  project: string;
+  depts: DeptId[];
+  /** last time it asked for work */
+  at: number;
+  /** it cannot reach Claude right now: until when it waits before trying again, and why */
+  outage?: { until: number; why: string } | null;
+}
+
+// ---------------------------------------------------------------- the playbook, scoped
+// A lesson is true everywhere ('' project, '' machine), in one project, or on one machine. Sessions
+// only ever read the lessons that fit where they work — lessons from another repo, or about another
+// machine's shell, are noise that sends them the wrong way.
+
+/** Does this lesson apply to a session of `dept` working in `project` on `machine`? */
+export function lessonFits(l: Lesson, at: { dept?: DeptId | null; project?: string; machine?: string }): boolean {
+  if (at.dept && l.dept !== 'all' && l.dept !== at.dept) return false;
+  if (l.project && l.project !== (at.project ?? '')) return false;
+  if (l.machine && l.machine !== (at.machine ?? '')) return false;
+  return true;
+}
+
+/** The most specific first: this machine, then this project, then the department, then everyone. */
+export function rankLessons(list: Lesson[]): Lesson[] {
+  const score = (l: Lesson) => (l.machine ? 4 : 0) + (l.project ? 2 : 0) + (l.dept !== 'all' ? 1 : 0);
+  return [...list].sort((a, b) => score(b) - score(a) || b.at - a.at);
+}
+
+/** The words that carry a lesson's meaning (no accents, no short filler). */
+export function lessonWords(text: string): Set<string> {
+  return new Set(
+    strip(text)
+      .split(/[^a-z0-9_./-]+/)
+      .filter((w) => w.length >= 3),
+  );
+}
+
+/** 0..1 — how much two lessons say the same thing (shared words over the shorter one). */
+export function lessonOverlap(a: string, b: string): number {
+  const x = lessonWords(a);
+  const y = lessonWords(b);
+  if (!x.size || !y.size) return 0;
+  let n = 0;
+  for (const w of x) if (y.has(w)) n++;
+  return n / Math.min(x.size, y.size);
 }
 
 const strip = (s: string) =>
