@@ -246,6 +246,11 @@ export class Brain {
     };
   }
 
+  /** Threads Tổng quản is still working on: deciding, asking, or waiting to report. */
+  openRoots(): Set<string> {
+    return new Set(this.items.filter((i) => i.root && (i.state !== 'done' || i.report === 'wait' || i.report === 'pending' || i.report === 'thinking')).map((i) => i.root));
+  }
+
   /** Something in the office changed that the 🧠 panel shows. */
   refresh() {
     this.push();

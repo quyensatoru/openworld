@@ -3,6 +3,7 @@ import { AGENT_ID, DEPTS, DEPT_BY_ID } from '../../shared/agents';
 import { BRAIN_ID, RATE_REASON_MAX, REPORT_PREFIX } from '../../shared/brain';
 import { ZONE_BY_ID } from '../../shared/map';
 import { STATUS_META, type ChatMsg } from '../../shared/protocol';
+import type { ThreadFilter } from '../../shared/threads';
 import { game } from '../game';
 import { savePref } from '../profile';
 import { getState, serverNow, setState, useStore, type SidePanel as Panel } from '../store';
@@ -65,6 +66,7 @@ function Chat() {
   const [pick, setPick] = useState(0);
   const [caret, setCaret] = useState(0);
   const thread = useStore((s) => s.chatThread);
+  const finding = useStore((s) => s.chatTab === 'ask' && !!s.threadFind);
   const zoneName = ZONE_BY_ID.get(zone)?.name ?? 'Khu vực';
 
   // Two channels: your own with the AI staff, and whoever is standing near you. The office's own
@@ -208,17 +210,28 @@ function Chat() {
         <button className={`chip${tab === 'ask' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'ask', chatThread: null })} title="Chỉ bạn và các nhân viên đang làm việc cho bạn thấy kênh này. Mỗi việc là một thread.">
           🏢 Văn phòng của bạn
         </button>
-        <button className={`chip${tab === 'zone' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'zone', chatThread: null })}>
+        <button className={`chip${tab === 'zone' ? ' on' : ''}`} onClick={() => setState({ chatTab: 'zone', chatThread: null, threadFind: null })}>
           📍 {zoneName}
         </button>
+        {officeTab && (
+          <button
+            className={`chip tf-toggle${finding ? ' on' : ''}`}
+            onClick={() => setState({ threadFind: finding ? null : { q: '', filter: 'all', hits: null }, chatThread: null })}
+            title="Tìm lại việc cũ theo tên việc hoặc 📋 Kết quả"
+            aria-label="Tìm việc cũ"
+          >
+            🔎 Tìm việc
+          </button>
+        )}
       </div>
-      {openThread && (
+      {finding && <ThreadSearch />}
+      {!finding && openThread && (
         <button className="chat-thread-head" onClick={() => setState({ chatThread: null })}>
           ← Quay lại · <b>{openThread.name}</b>: {openThread.text.slice(0, 48)}
           {openThread.text.length > 48 ? '…' : ''}
         </button>
       )}
-      <div className="chat-wrap">
+      <div className="chat-wrap" hidden={finding}>
         <div className="chat-list scroll" ref={listRef} onScroll={onScroll}>
           {!msgs.length && (
             <div className="empty">
@@ -263,7 +276,7 @@ function Chat() {
           </button>
         )}
       </div>
-      {officeTab && !openThread && !draft.trim() && (
+      {officeTab && !finding && !openThread && !draft.trim() && (
         <div className="ask-templates" aria-label="Mẫu giao việc">
           {ASK_TEMPLATES.map((t) => (
             <button key={t.label} type="button" className="chip" onClick={() => fillTemplate(t.text)}>
@@ -272,7 +285,7 @@ function Chat() {
           ))}
         </div>
       )}
-      <form className="chat-input" onSubmit={send}>
+      <form className="chat-input" onSubmit={send} hidden={finding}>
         {showMentions && (
           <div className="mention-pop">
             <div className="mp-title">{officeTab ? 'Gọi nhân viên / phòng ban' : 'Gọi tên'}</div>
@@ -322,6 +335,66 @@ function Chat() {
         </button>
       </form>
     </>
+  );
+}
+
+const FIND_FILTERS: { id: ThreadFilter; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'running', label: '⏳ Đang chạy' },
+  { id: 'done', label: '✅ Đã xong' },
+];
+
+/** Finding an old piece of work in "Văn phòng của bạn": words from its request, a card's title or its
+ *  📋 report, and whether it still runs. The server looks through everything the channel keeps;
+ *  opening a hit loads that thread whole. */
+function ThreadSearch() {
+  const f = useStore((s) => s.threadFind)!;
+  const [q, setQ] = useState(f.q);
+  const filter = f.filter;
+  // a short pause after the last keystroke, then one search (the filter chips search at once)
+  useEffect(() => {
+    const t = setTimeout(() => game.findThreads(q.trim(), filter), q.trim() === f.q ? 0 : 250);
+    return () => clearTimeout(t);
+  }, [q, filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hits = f.hits;
+  return (
+    <div className="thread-find">
+      <form className="tf-bar" role="search" onSubmit={(e) => (e.preventDefault(), game.findThreads(q.trim(), filter))}>
+        <input className="input" type="search" enterKeyHint="search" autoFocus value={q} maxLength={80} placeholder="Tìm theo tên việc hoặc 📋 Kết quả…" onChange={(e) => setQ(e.target.value)} aria-label="Từ khoá" />
+        <button type="button" className="btn" onClick={() => setState({ threadFind: null })}>
+          Đóng
+        </button>
+      </form>
+      <div className="tf-filters">
+        {FIND_FILTERS.map((x) => (
+          <button key={x.id} type="button" className={`chip${filter === x.id ? ' on' : ''}`} aria-pressed={filter === x.id} onClick={() => setState({ threadFind: { ...f, filter: x.id, hits: null } })}>
+            {x.label}
+          </button>
+        ))}
+      </div>
+      <div className="tf-list scroll">
+        {hits === null ? (
+          <div className="empty">Đang tìm…</div>
+        ) : !hits.length ? (
+          <div className="empty">{q.trim() ? `Không có việc nào khớp “${q.trim()}”.` : 'Chưa có việc nào ở đây.'}</div>
+        ) : (
+          hits.map((h) => (
+            <button key={h.root} type="button" className="tf-hit" onClick={() => game.openThread(h.root)}>
+              <span className="tf-top">
+                <span className={`tf-state${h.running ? ' run' : ''}`}>{h.running ? '⏳ Đang chạy' : '✅ Đã xong'}</span>
+                <time>{timeAgo(h.last)}</time>
+              </span>
+              <b className="tf-text">{h.text}</b>
+              {!!h.titles.length && <small className="tf-cards">📌 {h.titles.join(' · ')}</small>}
+              {h.report && <small className="tf-report">{h.report}</small>}
+              <small className="muted">
+                {h.name} · {fmtDay(h.ts)} · {h.replies} tin
+              </small>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 

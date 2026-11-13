@@ -13,6 +13,7 @@ import { fallbackWeather, type Weather } from '../shared/weather';
 
 import { create } from 'zustand';
 import type { ActivityEvent, ChatMsg, CinemaState, MediaState, PlayerState, Task, TeamMember, WorklogDay } from '../shared/protocol';
+import type { ThreadFilter, ThreadHit } from '../shared/threads';
 import { bootTrouble, loadPref } from './profile';
 import { IS_TOUCH } from './ui/touch-detect';
 
@@ -85,6 +86,8 @@ export interface OfficeStore {
   chatTab: 'ask' | 'zone';
   /** the thread open in the chat panel (root message id), null = the channel itself */
   chatThread: string | null;
+  /** the last search of one's own threads ("Văn phòng của bạn"), null = not searching */
+  threadFind: { q: string; filter: ThreadFilter; hits: ThreadHit[] | null } | null;
   /** meetings in the floor-1 meeting rooms (departments' agents, and people who join in) */
   meetings: Meeting[];
   /** runner sessions asking a person to allow something */
@@ -239,6 +242,7 @@ export const useStore = create<OfficeStore>(() => ({
   prompt: null,
   chatTab: 'ask',
   chatThread: null,
+  threadFind: null,
   meetings: [],
   approvals: [],
   stopped: [],

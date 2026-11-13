@@ -73,6 +73,8 @@ const serverSteps = [
   ['brain', 'scripts/qa-brain-regress-test.mjs'],
   // …and round 2: answers re-sent or never claimed, the person's answer waking a long-polling runner
   ['brain2', 'scripts/qa-brain-round2-test.mjs'],
+  // finding old threads in "Văn phòng của bạn" (answers Tổng quản's jobs itself, so after brain2)
+  ['threads', 'scripts/threads-test.mjs'],
   // "Vòng cải tiến mới": QA + Biz at once, Dev after, and what earlier rounds did (last: it leaves a
   // round's report waiting, which a later test polling for decisions would be handed)
   ['improve', 'scripts/improve-test.mjs'],

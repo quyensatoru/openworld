@@ -37,6 +37,7 @@ import * as THREE from 'three';
 import { Ambience, MUSIC_BPM, type SfxKind } from './audio/ambience';
 import { CinemaPlayer } from './cinema/player';
 import { MEET_ROOMS, type AgentMsg, type DeptId } from '../shared/agents';
+import type { ThreadFilter } from '../shared/threads';
 import { meetingBoard } from './world/meeting-board';
 import { ClaudeScreens, isLive } from './world/claude-screen';
 import {
@@ -727,6 +728,19 @@ class Game {
         if (task.assignee === getState().me?.id || by === getState().me?.id) chime('done');
       }
     });
+    net.on('chatFound', ({ q, filter, hits }) => {
+      const f = getState().threadFind;
+      // only the answer to what is asked now (a slow answer to an earlier keystroke is dropped)
+      if (f && f.q === q && f.filter === filter) setState({ threadFind: { q, filter, hits } });
+    });
+    net.on('chatThread', ({ root, msgs }) => {
+      // an old thread, whole: its lines join the chat in time order (the ones already here stay)
+      const s = getState();
+      const have = new Set(s.chat.map((m) => m.id));
+      const add = msgs.filter((m) => !have.has(m.id));
+      const chat = add.length ? [...s.chat, ...add].sort((a, b) => a.ts - b.ts) : s.chat;
+      setState({ chat, chatTab: 'ask', chatThread: root, threadFind: null });
+    });
     net.on('chatRate', ({ id, rate }) => {
       setState({ chat: getState().chat.map((m) => (m.id === id ? { ...m, rate: rate ?? undefined } : m)) });
     });
@@ -1236,6 +1250,17 @@ class Game {
   }
 
   // ------------------------------------------------------------------ social
+  /** Search one's own threads; the answer lands in `threadFind`. */
+  findThreads(q: string, filter: ThreadFilter) {
+    setState({ threadFind: { q, filter, hits: getState().threadFind?.hits ?? null } });
+    this.net?.send({ t: 'chat:find', q, filter });
+  }
+
+  /** Open one of one's own threads with everything still kept of it (not only what the join loaded). */
+  openThread(root: string) {
+    this.net?.send({ t: 'chat:thread', root });
+  }
+
   sendChat(text: string, ch: 'ask' | 'zone', root?: string) {
     const t = text.trim();
     if (!t) return;

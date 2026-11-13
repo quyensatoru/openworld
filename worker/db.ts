@@ -191,6 +191,26 @@ export async function chatFor(db: D1Database, userId: string, shared = 150, own 
   return results.map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}), ...(rates.has(r.id) ? { rate: rates.get(r.id) } : {}) }));
 }
 
+/** Everything still kept of one person's "Văn phòng của bạn" (pruneChat keeps a channel at 500
+ *  lines), oldest first — what a search of their old threads looks through. */
+export async function ownChannel(db: D1Database, userId: string, limit = 1000): Promise<ChatMsg[]> {
+  const { results } = await db
+    .prepare('SELECT id, ch, sender, name, text, ts, root FROM chat_messages WHERE ch = ? ORDER BY ts DESC LIMIT ?')
+    .bind(`ask:${userId}`, limit)
+    .all<{ id: string; ch: string; sender: string; name: string; text: string; ts: number; root: string | null }>();
+  return results.reverse().map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}) }));
+}
+
+/** One of a person's own threads, whole: the opener and every reply still kept, with their ratings. */
+export async function threadOf(db: D1Database, userId: string, root: string): Promise<ChatMsg[]> {
+  const { results } = await db
+    .prepare('SELECT id, ch, sender, name, text, ts, root FROM chat_messages WHERE ch = ? AND (id = ? OR root = ?) ORDER BY ts ASC')
+    .bind(`ask:${userId}`, root, root)
+    .all<{ id: string; ch: string; sender: string; name: string; text: string; ts: number; root: string | null }>();
+  const rates = await ratingsOf(db, userId).catch(() => new Map<string, ReportRate>());
+  return results.map((r) => ({ id: r.id, ch: r.ch, from: r.sender, name: r.name, text: r.text, ts: r.ts, ...(r.root ? { root: r.root } : {}), ...(rates.has(r.id) ? { rate: rates.get(r.id) } : {}) }));
+}
+
 export async function getChat(db: D1Database, id: string): Promise<ChatMsg | null> {
   const r = await db
     .prepare('SELECT id, ch, sender, name, text, ts, root FROM chat_messages WHERE id = ?')

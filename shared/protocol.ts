@@ -10,6 +10,7 @@ import type { WedFx, WedMsg, WedState } from './wedding';
 import type { AvatarConfig } from './avatar';
 import type { AgentAccess, AgentBook, AgentMsg, AgentTag, Approval, DeptId, Meeting } from './agents';
 import type { BrainView } from './brain';
+import type { ThreadFilter, ThreadHit } from './threads';
 
 export type Status = 'online' | 'working' | 'meeting' | 'break' | 'focus' | 'away';
 export type AnimState = 'idle' | 'walk' | 'run' | 'sit';
@@ -225,6 +226,10 @@ export type ClientMsg =
   | { t: 'hello'; cid: string; name: string; avatar: AvatarConfig; x?: number; z?: number; ry?: number }
   | { t: 'move'; x: number; z: number; ry: number; anim: AnimState }
   | { t: 'chat'; ch: 'global' | 'zone' | 'work' | 'ask'; text: string; root?: string }
+  /** search one's own "Văn phòng của bạn" threads (shared/threads.ts) */
+  | { t: 'chat:find'; q: string; filter: ThreadFilter }
+  /** every line of one of one's own threads that is still kept */
+  | { t: 'chat:thread'; root: string }
   | { t: 'emote'; e: Emote }
   | { t: 'wave'; to: string }
   | { t: 'status'; status: Status; manual: boolean; text?: string }
@@ -286,6 +291,8 @@ export type ServerMsg =
   | { t: 'chat'; m: ChatMsg }
   /** the rating of a report changed (sent to the person who rated it) */
   | { t: 'chatRate'; id: string; rate: ReportRate | null }
+  | { t: 'chatFound'; q: string; filter: ThreadFilter; hits: ThreadHit[] }
+  | { t: 'chatThread'; root: string; msgs: ChatMsg[] }
   | { t: 'emote'; id: string; e: Emote }
   | { t: 'wave'; from: string; name: string }
   | { t: 'task'; task: Task; by: string }

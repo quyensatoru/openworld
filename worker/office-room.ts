@@ -43,6 +43,8 @@ import {
   type TaskColumn,
   type WorklogDay,
 } from '../shared/protocol';
+import { REPORT_PREFIX } from '../shared/brain';
+import { THREAD_FIND, findThreads } from '../shared/threads';
 import * as db from './db';
 import { SCHEMA_VERSION } from './schema';
 
@@ -848,6 +850,23 @@ export class OfficeRoom extends DurableObject<Env> {
         const ch = msg.ch === 'ask' ? `ask:${p.id}` : 'global';
         const root = typeof msg.root === 'string' && /^[\w:-]{6,80}$/.test(msg.root) ? msg.root : undefined;
         await this.globalChat({ id: crypto.randomUUID(), ch, from: p.id, name: p.name, text, ts: now, ...(root ? { root } : {}) }, p.zone);
+        return;
+      }
+
+      case 'chat:find': {
+        // one's own threads only: the channel is `ask:<their id>`, nobody else's can be named
+        const filter = msg.filter === 'running' || msg.filter === 'done' ? msg.filter : 'all';
+        const q = clampStr(String(msg.q ?? ''), THREAD_FIND.q);
+        const [msgs, tasks] = await Promise.all([db.ownChannel(this.env.DB, p.id), this.getTasks()]);
+        const hits = findThreads(msgs, tasks.values(), this.agents.brain.openRoots(), q, filter, REPORT_PREFIX);
+        this.send(c.ws, { t: 'chatFound', q, filter, hits });
+        return;
+      }
+
+      case 'chat:thread': {
+        const root = typeof msg.root === 'string' && /^[\w:-]{6,80}$/.test(msg.root) ? msg.root : '';
+        if (!root) return;
+        this.send(c.ws, { t: 'chatThread', root, msgs: await db.threadOf(this.env.DB, p.id, root) });
         return;
       }
 
