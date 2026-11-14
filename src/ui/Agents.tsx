@@ -3,7 +3,7 @@
 // to connect an on-call machine.
 import { useEffect, useMemo, useState } from 'react';
 import { AGENT_MODELS, DEPTS, DEPT_BY_ID, MEET_ROOMS, canAssign, isDept, type AgentModel, type DeptId, type DeptProfile, type DeptSkill, type Lesson, type Meeting } from '../../shared/agents';
-import type { BrainAction } from '../../shared/brain';
+import { FLOW_DEPTS, type BrainAction, type BrainConfig } from '../../shared/brain';
 import type { PlayerState, Task } from '../../shared/protocol';
 import { game } from '../game';
 import { serverNow, setState, useStore } from '../store';
@@ -133,6 +133,11 @@ function BrainTab() {
         </div>
         <p className="ag-hint">
           <b>{budget.sessionsHour}</b>/{cfg.maxSessionsHour} phiên làm việc (thứ tốn tiền) · <b>{budget.thoughtsHour}</b> lượt suy nghĩ (rẻ, không đụng vào dự án)
+          {budget.costDay > 0 && (
+            <>
+              <br />💵 <b>${budget.costHour.toFixed(2)}</b> giờ này · <b>${budget.costDay.toFixed(2)}</b> trong 24 giờ qua <span className="muted">(Claude Code báo về sau mỗi phiên)</span>
+            </>
+          )}
           {budget.throttled.length ? ` · ${budget.throttled.length} người đang chạm trần riêng` : ''}
         </p>
       </section>
@@ -178,6 +183,7 @@ function BrainTab() {
           <p className="ag-hint">
             Họp là thứ tốn kém nhất: mỗi ghế là một phiên chạy song song tới 25 phút. Tắt thì Tổng quản tự ra kế hoạch “ai làm gì” bằng một lượt nghĩ rồi giao việc song song. Phòng họp vẫn dùng bình thường cho người thật.
           </p>
+          <Flow cfg={cfg} set={set} />
         </section>
       )}
 
@@ -247,6 +253,53 @@ function BrainTab() {
   );
 }
 
+/** A project's "definition of done": what still has to happen after the code change, every time.
+ *  Without it a plan ends at Chờ duyệt and a person has to drag the card on to Kiểm thử or Vận hành
+ *  — the chain breaks exactly where it should keep going. */
+function Flow({ cfg, set }: { cfg: BrainConfig; set: (patch: Partial<BrainConfig>) => void }) {
+  const machines = useStore((s) => s.brain?.machines ?? []);
+  const projects = useMemo(() => [...new Set(machines.map((m) => m.project).filter(Boolean))].sort(), [machines]);
+  const rows = ['', ...projects];
+  const flow = cfg.flow ?? {};
+  const toggle = (project: string, dept: DeptId) => {
+    const on = new Set(flow[project] ?? []);
+    if (on.has(dept)) on.delete(dept);
+    else on.add(dept);
+    const next = { ...flow };
+    const list = FLOW_DEPTS.filter((d) => on.has(d));
+    if (list.length) next[project] = list;
+    else delete next[project];
+    set({ flow: next });
+  };
+  return (
+    <div className="br-flow">
+      <label className="br-label">Quy trình “xong việc”</label>
+      {rows.map((project) => {
+        const on = flow[project] ?? (project ? flow[''] : undefined) ?? [];
+        const inherited = !!project && !flow[project] && !!flow['']?.length;
+        return (
+          <div key={project} className="br-flow-row">
+            <b>{project || 'Mọi dự án'}</b>
+            <span className="br-flow-steps">
+              <i>Code xong →</i>
+              {FLOW_DEPTS.map((d) => (
+                <button key={d} className={`chip${on.includes(d) ? ' on' : ''}${inherited ? ' dim' : ''}`} onClick={() => toggle(project, d)} title={`${DEPT_BY_ID.get(d)!.name} tự chạy tiếp sau khi phần code xong`}>
+                  {DEPT_BY_ID.get(d)!.icon} {DEPT_BY_ID.get(d)!.short}
+                </button>
+              ))}
+              {!on.length && <i>không ai cả (dừng ở Chờ duyệt)</i>}
+              {inherited && <i>· theo mặc định</i>}
+            </span>
+          </div>
+        );
+      })}
+      <p className="ag-hint">
+        Các bước này do văn phòng tự xếp nối sau phần việc tạo ra thay đổi, nên Tổng quản không phải nhớ và bạn không phải kéo thẻ. Mỗi bước là một phiên làm việc, nên bật Vận hành nghĩa là <b>cho phép deploy tự động</b> khi phần trước đã xong.
+      </p>
+    </div>
+  );
+}
+
 /** The on-call machines: which project each works in, and whether it is working, waiting for Claude
  *  (a quota ran out, say — until when) or offline. */
 function Machines() {
@@ -273,6 +326,17 @@ function Machines() {
             <div>
               <b>{m.project || 'chưa rõ dự án'}</b> <span className="muted">· {m.label} · của {m.ownerName || '…'}</span>
               <small>{status}</small>
+              {m.alias && (
+                <small title="Máy này gọi dự án bằng tên khác, nhưng git remote cho thấy cùng một repo — văn phòng gộp về một tên để việc và sổ kinh nghiệm dùng chung.">
+                  🔗 máy này gọi là “{m.alias}” — cùng repo, đã gộp về “{m.project}”
+                </small>
+              )}
+              {m.named === 'folder' && (
+                <small className="br-warn" title="Không có git remote nên dự án lấy theo tên thư mục. Mở cùng repo ở đường dẫn khác trên máy khác sẽ thành một dự án khác, và sổ kinh nghiệm bị tách đôi.">
+                  ⚠️ tên dự án lấy theo thư mục (không có git remote) — chạy máy trực với <code>--project {m.project}</code> ở mọi máy
+                </small>
+              )}
+              {m.dir && <small className="muted">📂 {m.dir}</small>}
             </div>
           </div>
         );

@@ -138,6 +138,32 @@ async function until(fn, ms, every = 300) {
     /* gone */
   }
 
+  // ---- 5. the folder is not the repo: the runner finds it, and names the project after the remote
+  {
+    const wrap = path.join(tmp, 'wrap');
+    const inner = path.join(wrap, 'the-code');
+    fs.mkdirSync(inner, { recursive: true });
+    const git = (...a) => spawn('git', ['-C', inner, ...a], { stdio: 'ignore' });
+    await new Promise((r) => git('init', '-q', '.').on('exit', r));
+    await new Promise((r) => git('remote', 'add', 'origin', 'git@github.com:acme/Shared-Repo.git').on('exit', r));
+    const child = spawn(process.execPath, [RUNNER, '--url', BASE, '--token', token, '--dir', wrap, '--depts', 'docs', '--max', '1', '--claude', FAKE, '--no-brain'], {
+      env: { ...process.env, HOME: path.join(tmp, 'home2'), FAKE_DIR, ANTHROPIC_BASE_URL: BASE },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    runners.push(child);
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    await until(() => /dự án/.test(out), 15_000, 200);
+    ok(/dự án shared-repo \(github\.com\/acme\/shared-repo\)/.test(out), `the project is the repo, whatever the folder is called (${(out.split('\n')[1] ?? '').trim()})`);
+    ok(out.includes(inner) && /không phải repo/.test(out), 'and it says it went down into the repo instead of working above it');
+    const mine = await until(() => {
+      send({ t: 'agents', m: { a: 'lessons' } }); // nudges the 🧠 panel's view down to us
+      return seen((m) => m.t === 'brain')?.v?.machines?.find((x) => x.repo === 'github.com/acme/shared-repo');
+    }, 20_000, 700);
+    ok(mine?.project === 'shared-repo' && mine?.named === 'remote', 'the office files it under the repo, not the folder name');
+    child.kill('SIGKILL');
+  }
+
   for (const t of [t1, tq, t2, t3]) if (t) send({ t: 'task:delete', id: t.id });
   send({ t: 'activity:revoke' });
   await sleep(500);

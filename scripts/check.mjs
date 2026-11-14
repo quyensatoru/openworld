@@ -24,6 +24,20 @@ function run(label, cmd, args, env = {}) {
   });
 }
 
+/** The passcode the server we just started actually uses. It reads .dev.vars like any dev server,
+ *  so assuming "office-dev" made the whole gate fail for anyone who changed theirs — and the first
+ *  failing step was "wrong passcode", which reads like the office is broken rather than the test. */
+function passcode() {
+  if (process.env.PASSCODE) return process.env.PASSCODE;
+  try {
+    const m = /^\s*OFFICE_PASSCODE\s*=\s*"?([^"\n\r]*)"?\s*$/m.exec(fs.readFileSync(path.join(root, '.dev.vars'), 'utf8'));
+    if (m && m[1].trim()) return m[1].trim();
+  } catch {
+    /* no .dev.vars: the server falls back to the default too */
+  }
+  return 'office-dev';
+}
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -103,7 +117,7 @@ if (serverSteps.length) {
     console.error(fs.existsSync(path.join(stateDir, 'server.log')) ? fs.readFileSync(path.join(stateDir, 'server.log'), 'utf8').slice(-2000) : '');
     fail('dev server');
   }
-  for (const [step, file] of serverSteps) if (await run(step, 'node', [file], { BASE, PASSCODE: process.env.PASSCODE || 'office-dev' })) fail(step);
+  for (const [step, file] of serverSteps) if (await run(step, 'node', [file], { BASE, PASSCODE: passcode() })) fail(step);
 }
 
 cleanup();

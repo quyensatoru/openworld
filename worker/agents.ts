@@ -115,6 +115,8 @@ interface Agent {
   dir?: string;
   /** runner: the session broke off (Claude unreachable) and will be resumed — not gone, just waiting */
   stalled?: { until: number; why: string } | null;
+  /** the shell commands this session really ran, for the card it finishes */
+  ran?: string[];
 }
 
 export interface HookIn {
@@ -233,6 +235,10 @@ export class AgentHub {
   private quietSeen = '';
   /** project → when its playbook was last distilled */
   private distilled: Record<string, number> = {};
+  /** git remote → the one name the office files that repo's work and lessons under.
+   *  A repo opened at ~/forfun/virtual-office on one machine and ~/code/openworld on another used to
+   *  become two projects: two playbooks, and work that could never cross. The remote decides. */
+  private repoNames: Record<string, { name: string; from: 'option' | 'remote' | 'folder' }> = {};
   /** the one orchestrator above the departments */
   readonly brain: Brain;
 
@@ -280,6 +286,7 @@ export class AgentHub {
     this.fails = (await s.get<Record<string, number>>('agentFails')) ?? {};
     this.distilled = (await s.get<Record<string, number>>('agentDistilled')) ?? {};
     for (const m of (await s.get<RunnerMachine[]>('agentMachines')) ?? []) if (m?.id) this.machines.set(m.id, m);
+    this.repoNames = (await s.get<Record<string, { name: string; from: 'option' | 'remote' | 'folder' }>>('agentRepoNames')) ?? {};
     // the orchestrator is put back at its desk by the first decision it has to make
     this.agents.delete(BRAIN_ID);
     await this.brain.restore();
@@ -654,6 +661,21 @@ export class AgentHub {
     void this.host.storage.put('agentMachines', [...this.machines.values()]).catch(() => {});
   }
 
+  /** The office's one name for the repo a machine reports, and whether that machine calls it
+   *  something else. A name taken from the remote beats one guessed from a folder, and an explicit
+   *  --project beats both — so the better-known name wins no matter which machine checks in first. */
+  private canonProject(repo: string, name: string, from: 'option' | 'remote' | 'folder'): { project: string; alias?: string } {
+    if (!repo || !name) return { project: name };
+    const rank = { folder: 1, remote: 2, option: 3 } as const;
+    const cur = this.repoNames[repo];
+    if (!cur || rank[from] > rank[cur.from]) {
+      this.repoNames[repo] = { name, from };
+      void this.host.storage.put('agentRepoNames', this.repoNames).catch(() => {});
+      return { project: name };
+    }
+    return cur.name === name ? { project: name } : { project: cur.name, alias: name };
+  }
+
   /** Drop sessions that went quiet, end meetings that ran over. Returns true while anyone is left to watch. */
   async sweep(now: number): Promise<boolean> {
     for (const a of [...this.agents.values()]) {
@@ -743,7 +765,13 @@ export class AgentHub {
     if (!a || a.owner !== h.uid || a.kind !== 'runner') return null;
     if (h.event === 'SessionEnd') return null;
     a.last = now;
-    if (h.sid) a.sid = h.sid;
+    if (h.sid && a.sid !== h.sid) {
+      // Claude Code's own session id, as the hook reports it: the one thing a person needs to open
+      // the session on the machine and read it in full
+      a.sid = h.sid;
+      a.p.agent = { ...a.p.agent!, sid: h.sid };
+      this.host.broadcast({ t: 'upd', id: a.p.id, patch: { agent: a.p.agent } });
+    }
     // a runner says where it works when it claims; the hook's folder name is only a fallback
     if (h.project && !a.project && a.p.agent!.project !== h.project) {
       a.p.agent = { ...a.p.agent!, project: h.project };
@@ -1080,10 +1108,19 @@ export class AgentHub {
     const allow = () => JSON.stringify({ behavior: 'allow', updatedInput: input });
     const deny = (message: string) => JSON.stringify({ behavior: 'deny', message });
     const { summary, key } = describeAction(tool, input);
+    // the hard list first: before the session's own allowances, before any mode, before any model
+    const no = forbidden(tool, input);
+    if (no) {
+      this.approvals.push({ id: crypto.randomUUID(), agent: a.p.id, agentName: a.p.name, dept: a.dept, owner: a.owner, ownerName: a.p.agent!.ownerName, anyone: false, tool, summary, at: Date.now(), state: 'deny', by: '🛑 Văn phòng', reason: no });
+      this.pushApprovals();
+      await this.host.pushActivity(a.p.id, { ts: Date.now(), kind: 'tool', icon: '🛑', text: `Văn phòng chặn: ${oneLine(summary, 90)}` });
+      await this.notice(`🛑 Mình chặn ${a.name} làm: ${oneLine(summary, 120)} — ${no}. Nếu thật sự cần, bạn tự chạy trên máy nhé.`, a.origin, a.thread);
+      return deny(`Văn phòng chặn thao tác này (${no}). Đây là danh sách cấm cứng, không ai duyệt được — tìm cách khác, hoặc ghi vào note để người giao việc tự làm.`);
+    }
     if (a.allowed?.includes(key)) return allow();
     if (a.kind !== 'runner') return deny('Chỉ phiên của máy trực mới xin duyệt qua Office.');
     const mode = this.brain.config().approvals;
-    if (mode !== 'ask') {
+    if (mode !== 'ask' && !humanOnly(tool, input)) {
       // Tổng quản decides in the owner's place: what is plainly safe goes through at once, the rest
       // is judged against the work itself, and only what it will not take on reaches a person
       const prof = this.profile(a.dept);
@@ -1141,18 +1178,25 @@ export class AgentHub {
     const now = Date.now();
     const o = b.outage && typeof b.outage === 'object' ? (b.outage as Json) : null;
     const prev = this.machines.get(id);
+    const repo = clampStr(String(mm.repo ?? ''), 120);
+    const named = mm.named === 'option' || mm.named === 'remote' ? mm.named : 'folder';
+    const { project, alias } = this.canonProject(repo, clampStr(String(mm.project ?? ''), 60), named);
     const m: RunnerMachine = {
       id,
       label: clampStr(String(mm.label ?? ''), 60) || id.slice(0, 8),
       owner: uid,
       ownerName: prev?.ownerName ?? '',
-      project: clampStr(String(mm.project ?? ''), 60),
+      project,
+      ...(repo ? { repo } : {}),
+      named,
+      ...(mm.dir ? { dir: clampStr(String(mm.dir), 200) } : {}),
+      ...(alias ? { alias } : {}),
       depts: [...depts],
       at: now,
       outage: o && Number(o.until) > now ? { until: Number(o.until), why: clampStr(String(o.why ?? ''), 120) } : null,
     };
     if (prev && prev.owner !== uid) return { machine: null, gone: [] }; // someone else's machine id
-    const changed = !prev || prev.project !== m.project || !!prev.outage !== !!m.outage || now - prev.at > MACHINE_QUIET_MS;
+    const changed = !prev || prev.project !== m.project || prev.alias !== m.alias || !!prev.outage !== !!m.outage || now - prev.at > MACHINE_QUIET_MS;
     this.machines.set(id, m);
     if (!m.ownerName) void this.host.userName(uid).then((n) => (m.ownerName = n));
     if (changed) {
@@ -1260,7 +1304,8 @@ export class AgentHub {
         a.machine = mine.id;
         a.project = mine.project || undefined;
         a.dir = clampStr(String(b.dir ?? ''), 300) || undefined;
-        if (mine.project) a.p.agent = { ...a.p.agent!, project: mine.project };
+        // where this session lives, so a person can open it themselves (`claude --resume` in `dir`)
+        a.p.agent = { ...a.p.agent!, ...(mine.project ? { project: mine.project } : {}), machine: mine.label, ...(a.dir ? { dir: a.dir } : {}) };
         this.host.broadcast({ t: 'upd', id: a.p.id, patch: { agent: a.p.agent } });
         this.save();
       }
@@ -1286,7 +1331,7 @@ export class AgentHub {
       await this.host.saveTask(t, a.p.id);
       this.brain.noteSession(origin);
       this.setState(a, 'working', oneLine(t.title, 60));
-      return out(a, { task: { id: t.id, short: short(t.id), title: t.title, desc: t.desc, dept: t.dept, priority: t.priority } });
+      return out(a, { task: { id: t.id, short: short(t.id), title: t.title, desc: t.desc, dept: t.dept, priority: t.priority, mode: t.mode } });
     }
     if (kind === 'meeting') {
       if (!this.brain.config().meetings) return { ok: false, error: 'văn phòng đã tắt họp tự động' };
@@ -1333,6 +1378,8 @@ export class AgentHub {
       if (!kind || !text) continue;
       await this.host.pushActivity(a.p.id, { ts: Date.now(), kind, icon: clampStr(String(x.icon ?? (kind === 'say' ? '⏺' : '🔧')), 8), text });
       if (kind === 'tool') this.setState(a, 'working', a.meet ? '📅 đang họp' : oneLine(text, 60));
+      // what it really ran, kept for the card: evidence beats "mình đã chạy test rồi"
+      if (kind === 'tool' && typeof x.cmd === 'string' && x.cmd.trim()) a.ran = [...(a.ran ?? []), oneLine(x.cmd, 160)].slice(-12);
     }
     return { ok: true };
   }
@@ -1352,7 +1399,7 @@ export class AgentHub {
     }
     const t = a.p.taskId ? (await this.host.getTasks()).get(a.p.taskId) : undefined;
     if (!t || t.assignee !== a.p.id || t.col !== 'doing') return { ok: false, error: 'việc này không còn do phiên này làm' };
-    return { ...base, kind: 'task', task: { id: t.id, short: short(t.id), title: t.title, desc: t.desc, dept: t.dept, priority: t.priority } };
+    return { ...base, kind: 'task', task: { id: t.id, short: short(t.id), title: t.title, desc: t.desc, dept: t.dept, priority: t.priority, mode: t.mode } };
   }
 
   /** Stopped after breaking down MAX_FAILS times, waiting for a person — not finished work. */
@@ -1447,6 +1494,8 @@ export class AgentHub {
     if (!a || a.owner !== uid) return { ok: false };
     const code = Number(b.code);
     const why = clampStr(String(b.why ?? ''), 200);
+    // what the session really cost, straight from Claude Code
+    if (Number.isFinite(Number(b.cost))) this.brain.noteCost(a.p.joinedAt, a.origin, Number(b.cost));
     const tasks = await this.host.getTasks();
     for (const t of tasks.values()) {
       if (t.assignee !== a.p.id || t.col !== 'doing') continue;
@@ -1834,6 +1883,13 @@ export class AgentHub {
         if (!col && !note) throw new Error('cần col hoặc note');
         const was = t.col;
         if (note) t.desc = this.appendNote(t.desc, a.name, note);
+        // a department that says it tested something shows what it ran — the office saw every command,
+        // so the card carries the real list instead of the session's memory of it
+        if (col === 'review' || col === 'done') {
+          const ran = [...new Set(a.ran ?? [])];
+          if (ran.length) t.desc = this.appendNote(t.desc, a.name, `🧾 Lệnh đã chạy trong phiên:\n${ran.map((c) => `  $ ${c}`).join('\n')}`);
+          a.ran = [];
+        }
         if (col) {
           t.col = col;
           if (col === 'todo') t.assignee = null;
@@ -1985,7 +2041,11 @@ export class AgentHub {
         const text = clampStr(String(args.text ?? ''), LESSON_MAX);
         if (text.length < 8) throw new Error('bài học quá ngắn');
         // where it is true: the session's own project / machine, filled in by the office — never typed
-        const scope = args.scope === 'all' || args.scope === 'machine' ? args.scope : args.scope === 'project' ? 'project' : args.project ? 'project' : 'all';
+        // An unreadable scope used to fall back to "every project" — so a lesson about one repo's
+        // deploy command ended up in every other repo's briefing. The narrow guess is the safe one:
+        // a lesson that is too local only fails to help, one that is too global misleads.
+        const asked = args.scope;
+        const scope = asked === 'all' || asked === 'machine' || asked === 'project' ? asked : this.projectOf(a) || args.project ? 'project' : 'all';
         const project = scope === 'project' ? this.projectOf(a) || clampStr(String(args.project ?? ''), 60) : '';
         const machine = scope === 'machine' ? clampStr(String(args.machine ?? '') || this.machineLabel(a), 60) : '';
         if (scope === 'project' && !project) throw new Error('phiên này không biết mình đang ở dự án nào — dùng scope "all" nếu bài học đúng ở mọi dự án');
@@ -2035,6 +2095,18 @@ type Risk = 'safe' | 'review' | 'danger';
 /** Hard to undo, or leaves the machine: never waved through without a look. */
 const DANGER_CMD =
   /\bgit\s+(push|reset\s+--hard|clean\s+-\w*f|checkout\s+--\s|branch\s+-D|rebase|filter-(branch|repo)|commit\s+--amend|tag\s+-d|stash\s+(drop|clear))|\brm\s+(-\w*\s+)*-\w*[rRf]|\bsudo\b|\bsu\s|\bdeploy\b|\bwrangler\s+(deploy|publish|secret|delete|kv|r2|d1\s+(execute|migrations\s+apply)[^|;&]*--remote)|\b(npm|pnpm|yarn)\s+publish|\bdocker\b|\bkubectl\b|\bhelm\b|\bterraform\s+(apply|destroy)|\bssh\b|\bscp\b|\brsync\b|\bcurl\b[^|;&]*(\s-X\s*(POST|PUT|DELETE|PATCH)|\s--data|\s-d\s|\s-F\s|\s--form|\s-T\s)|\bwget\b[^|;&]*--post|\bdd\s+if=|\bmkfs|\bchmod\s+-R|\bchown\b|\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\b(kill|killall|pkill)\b|\bshutdown\b|\breboot\b|\bcrontab\b|\bgh\s+(pr\s+(create|merge|close)|release|repo\s+(create|delete)|issue\s+(create|close)|api\b)|\bvercel\b|\bnetlify\s+deploy|\bheroku\b|\bpsql\b|\bmysql\b|\bredis-cli\b|\bmongo(sh)?\b|>\s*\/(etc|usr|bin|boot|var)\//i;
+
+/** Never, by anyone. Not the orchestrator, not a 🔐 card, not auto mode.
+ *  Everything else dangerous is a judgement call about this piece of work; these are not judgement
+ *  calls — they destroy the machine, hand it to a stranger, or throw away history that cannot be
+ *  got back. A person who really wants one of them types it in their own terminal. */
+const FORBIDDEN_CMD =
+  /\brm\s+(-\w*\s+)*-\w*[rRf]\w*\s+(\/|~\/?\s*$|\/\*|\$HOME\/?\s*$|\.\s*$)|\bmkfs|\bdd\s+[^|;&]*of=\/dev\/|:\(\)\s*\{.*\}\s*;?\s*:|\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|k|da)?sh\b|\bchmod\s+-R\s+777\s+\/|\bchown\s+-R\s+[^/]*\s+\/\s*$|\bgit\s+push\b[^|;&]*(--force(?!-with-lease)|\s-f\b)|\bgit\s+(filter-branch|filter-repo)\b|\bhistory\s+-c|>\s*\/dev\/(sd|nvme|hd)|\bshred\b|\buserdel\b|\bpasswd\b/i;
+
+/** Reading these and sending them somewhere is how a repo loses its keys. A command that touches a
+ *  secret AND talks to the network is refused outright, whichever order it is written in. */
+const SECRET_OUT = /(\.env|\.dev\.vars|id_rsa|id_ed25519|\.ssh\/|\.aws\/|\.npmrc|\.netrc|credentials|secret)/i;
+const NETWORK_CMD = /\b(curl|wget|nc|ncat|netcat|ssh|scp|rsync|ftp|telnet)\b/i;
 
 /** Commands that only read, or build and test inside the project. */
 const SAFE_SEG = [
@@ -2102,6 +2174,27 @@ export function riskOf(tool: string, input: Record<string, unknown>, dir: string
     return 'review';
   }
   return 'review';
+}
+
+/** Refused for everyone, with the reason a person would give. '' = not on the hard list. */
+export function forbidden(tool: string, input: Record<string, unknown>): string {
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  if (tool === 'Bash') {
+    const c = str(input.command);
+    if (FORBIDDEN_CMD.test(c)) return 'lệnh phá huỷ hoặc không thể hoàn tác (xoá gốc, format, push --force, chạy script tải từ mạng…)';
+    if (SECRET_OUT.test(c) && NETWORK_CMD.test(c)) return 'lệnh vừa đụng vào file bí mật vừa gọi ra mạng';
+  }
+  return '';
+}
+
+/** Things no model may wave through — not even in "tự động hoàn toàn". They still happen, but a
+ *  person says yes to them: a model has no way to know whether this particular secret, this
+ *  particular machine, is the one that matters. */
+export function humanOnly(tool: string, input: Record<string, unknown>): boolean {
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  if (tool === 'Edit' || tool === 'MultiEdit' || tool === 'Write' || tool === 'NotebookEdit') return SENSITIVE_PATH.test(str(input.file_path) || str(input.notebook_path));
+  if (tool === 'Bash') return /\bwrangler\s+secret\b|\bgh\s+secret\b|\b(npm|pnpm|yarn)\s+publish\b/i.test(str(input.command));
+  return false;
 }
 
 /** What a permission request is about, in one line, and what "allow for the whole session" covers. */

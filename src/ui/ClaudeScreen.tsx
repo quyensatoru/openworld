@@ -12,6 +12,10 @@ export function ClaudeScreenModal() {
   const name = useStore((s) => (s.screenOf ? (s.me?.id === s.screenOf ? s.me.name : s.players[s.screenOf]?.name ?? s.team[s.screenOf]?.name) : ''));
   const events = useStore((s) => (s.screenOf ? s.activity[s.screenOf] : undefined));
   const isMe = useStore((s) => s.me?.id === s.screenOf);
+  // an employee's session is a real Claude Code conversation on someone's machine: say which one, so
+  // a person can open it and read every word (the office's monitor only shows the short version)
+  const tag = useStore((s) => (s.screenOf ? s.players[s.screenOf]?.agent : undefined));
+  const [copied, setCopied] = useState(false);
   const [frame, setFrame] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setFrame((f) => f + 1), 250);
@@ -61,6 +65,22 @@ export function ClaudeScreenModal() {
             </div>
           ))}
         </div>
+        {tag?.sid && (
+          <div className="ct-resume">
+            <span>Mở phiên này trên {tag.machine || 'máy trực'}:</span>
+            <code>{`${tag.dir ? `cd ${tag.dir} && ` : ''}claude --resume ${tag.sid}`}</code>
+            <button
+              className="btn tiny"
+              onClick={() => {
+                void navigator.clipboard?.writeText(`${tag.dir ? `cd ${tag.dir} && ` : ''}claude --resume ${tag.sid}`);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? '✓ đã chép' : 'Chép'}
+            </button>
+          </div>
+        )}
         <div className="ct-status">
           {live ? <span style={{ color: '#d97757' }}>{SPIN[frame % SPIN.length]} Đang làm việc…</span> : <span>● Chờ lệnh</span>}
           {!isMe && game.world && (

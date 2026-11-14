@@ -22,6 +22,9 @@ export interface BrainParcel {
   priority: Priority;
   /** indices of earlier parcels in this same plan that must finish first ([] = start now) */
   after: number[];
+  /** 'quick' = small and self-contained (a line or two, one file, an obvious fix): the session runs
+   *  with the short briefing and no debrief. Left out = a full session. */
+  mode?: 'quick' | 'full';
 }
 
 export interface BrainDecision {
@@ -136,11 +139,19 @@ export interface BrainConfig {
    *  'lead' — 🧠 Tổng quản decides; only irreversible things the work did not clearly ask for reach a person
    *  'auto' — sessions run in Claude Code's own auto mode, and Tổng quản decides the rest; nobody is asked */
   approvals: ApprovalMode;
+  /** The project's definition of done: which departments must still run after the work itself, in
+   *  order ('' = the default for every project). A plan that changes code but says nothing about
+   *  checking or shipping it used to stop at "Chờ duyệt" and wait for a person to notice and drag
+   *  the card on; these stages are appended by the office, so the chain finishes on its own. */
+  flow?: Record<string, DeptId[]>;
 }
+
+/** Departments that may be chained after the work in a project's flow. */
+export const FLOW_DEPTS: DeptId[] = ['qa', 'docs', 'ops'];
 
 export type ApprovalMode = 'ask' | 'lead' | 'auto';
 
-export const DEFAULT_BRAIN: BrainConfig = { model: 'sonnet', maxSessionsHour: 24, maxPerPersonHour: 8, meetings: false, approvals: 'lead' };
+export const DEFAULT_BRAIN: BrainConfig = { model: 'sonnet', maxSessionsHour: 24, maxPerPersonHour: 8, meetings: false, approvals: 'lead', flow: {} };
 
 export function sanitizeBrainConfig(v: unknown, fallback: BrainConfig = DEFAULT_BRAIN): BrainConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
@@ -151,13 +162,31 @@ export function sanitizeBrainConfig(v: unknown, fallback: BrainConfig = DEFAULT_
     maxPerPersonHour: num(o.maxPerPersonHour, 1, 100, fallback.maxPerPersonHour),
     meetings: typeof o.meetings === 'boolean' ? o.meetings : fallback.meetings,
     approvals: o.approvals === 'ask' || o.approvals === 'lead' || o.approvals === 'auto' ? o.approvals : fallback.approvals,
+    flow: sanitizeFlow(o.flow, fallback.flow),
   };
+}
+
+/** project → the stages after the work. Unknown departments, duplicates and junk are dropped; a
+ *  project with no stages left is dropped with them. */
+function sanitizeFlow(v: unknown, fallback: Record<string, DeptId[]> = {}): Record<string, DeptId[]> {
+  if (!v || typeof v !== 'object') return fallback;
+  const out: Record<string, DeptId[]> = {};
+  for (const [project, stages] of Object.entries(v as Record<string, unknown>).slice(0, 20)) {
+    if (!Array.isArray(stages)) continue;
+    const list = [...new Set(stages.filter((d): d is DeptId => FLOW_DEPTS.includes(d as DeptId)))].slice(0, FLOW_DEPTS.length);
+    if (list.length) out[project.slice(0, 60)] = list;
+  }
+  return out;
 }
 
 /** What the office spent in the last hour. */
 export interface BrainBudget {
   sessionsHour: number;
   thoughtsHour: number;
+  /** what those sessions actually cost, as Claude Code reported it (USD) — the session count is a
+   *  proxy, this is the bill */
+  costHour: number;
+  costDay: number;
   /** people who hit their own cap right now */
   throttled: string[];
 }

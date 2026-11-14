@@ -181,6 +181,47 @@ function client(cookie, cid, name) {
     ok(said.includes('\n'), 'and its line breaks survive into the chat');
   }
 
+  // ---- 7. the project's "definition of done" is appended by the office, not left to the model
+  {
+    const cfg = { model: 'sonnet', maxSessionsHour: 200, maxPerPersonHour: 100, meetings: false, approvals: 'ask', flow: { '': ['qa', 'ops'] } };
+    A.send({ t: 'agents', m: { a: 'brainConfig', config: cfg } });
+    await sleep(400);
+    const root = await ask(`QA1 flow ${run}`);
+    const job = await brainJob();
+    const title = `Sửa nút giỏ hàng ${run}`;
+    // the model plans ONE dev parcel, exactly as it is told to for a small fix
+    const cards = [];
+    const collect = (n) =>
+      new Promise((resolve) => {
+        const seen = [];
+        const t = setInterval(() => {
+          for (const m of A.inbox) if (m.t === 'task' && m.task.thread === root && !seen.some((x) => x.id === m.task.id)) seen.push(m.task);
+          if (seen.length >= n) (clearInterval(t), resolve(seen));
+        }, 150);
+        setTimeout(() => (clearInterval(t), resolve(seen)), 5000);
+      });
+    const got = collect(3);
+    await api('/api/agents/brain', { id: job?.id, raw: JSON.stringify({ action: 'route', reply: 'Dev sửa nhé.', plan: [{ dept: 'dev', title, desc: 'x', priority: 'normal', after: [] }] }) });
+    cards.push(...(await got));
+    const dev = cards.find((t) => t.dept === 'dev');
+    const qa = cards.find((t) => t.dept === 'qa');
+    const ops = cards.find((t) => t.dept === 'ops');
+    ok(!!dev && !!qa && !!ops, `a one-parcel plan still gets the project's next stages (${cards.map((t) => t.dept).join(', ') || 'none'})`);
+    ok(qa?.after?.includes(dev?.id) && ops?.after?.includes(qa?.id), 'and they are chained: QA waits for Dev, Ops waits for QA');
+    const open = (await api('/api/agents/jobs?depts=dev,qa,ops')).tasks.map((t) => t.id);
+    ok(open.includes(dev?.id) && !open.includes(qa?.id) && !open.includes(ops?.id), 'only the first stage is offered to a machine; the rest wait their turn');
+    // dev hands over in review → QA starts by itself, nobody drags a card
+    const claim = await api('/api/agents/claim', { kind: 'task', id: dev?.id });
+    const DH2 = { ...H, 'X-Office-Agent': claim.agent?.id };
+    await call('task_update', { id: dev.id.replace(/-/g, '').slice(0, 8), col: 'review', note: 'xong' }, DH2);
+    await sleep(400);
+    const after = (await api('/api/agents/jobs?depts=qa,ops')).tasks.map((t) => t.id);
+    ok(after.includes(qa?.id) && !after.includes(ops?.id), 'Dev moving to Chờ duyệt releases QA on its own (and only QA)');
+    await api('/api/agents/exit', { agent: claim.agent?.id, code: 0 });
+    A.send({ t: 'agents', m: { a: 'brainConfig', config: { ...cfg, flow: {} } } });
+    await sleep(300);
+  }
+
   A.close();
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

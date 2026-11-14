@@ -73,14 +73,8 @@ const die = (m) => {
 const token = typeof opt.token === 'string' ? opt.token : String(process.env.OFFICE_TOKEN || '');
 if (!opt.url || !token) die('Cách dùng: node office-agent.cjs --url https://<office> --token <mã-kết-nối> --dir <thư mục dự án> [--depts dev,qa] [--max 3]\n   (hoặc đặt mã kết nối trong biến môi trường OFFICE_TOKEN thay cho --token)');
 const base = new URL(opt.url).origin;
-const workdir = path.resolve(String(opt.dir || process.cwd()).replace(/^~(?=$|\/)/, os.homedir()));
-// other users on this machine can read every process's command line: keep the code out of it
-try {
-  process.title = `node office-agent.cjs --url ${base} --dir ${workdir}`;
-} catch {
-  /* not supported here */
-}
-if (!fs.existsSync(workdir)) die(`Không thấy thư mục ${workdir}`);
+const dirArg = path.resolve(String(opt.dir || process.cwd()).replace(/^~(?=$|\/)/, os.homedir()));
+if (!fs.existsSync(dirArg)) die(`Không thấy thư mục ${dirArg}`);
 const depts = String(opt.depts || ALL.join(',')).split(',').map((s) => s.trim()).filter((d) => ALL.includes(d));
 if (!depts.length) die(`--depts phải gồm: ${ALL.join(', ')}`);
 const MAX = Math.max(1, Number(opt.max) || 3);
@@ -115,26 +109,73 @@ function machineId() {
 }
 const MACHINE = machineId();
 const MACHINE_LABEL = `${os.hostname().split('.')[0].slice(0, 40)}·${MACHINE.slice(0, 4)}`;
-/** This runner: one machine may run several (one per project), and each keeps its own sessions. */
-const RUNNER = `r-${crypto.createHash('sha256').update(`${MACHINE}|${base}|${workdir}`).digest('hex').slice(0, 24)}`;
+/** Things worth saying once the log is up (identity is worked out before logging exists). */
+const startupNotes = [];
+const git = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 }).trim();
 
-/** The project's name, the same on every machine: the git remote's repo name, else the folder's. */
-function detectProject() {
-  if (typeof opt.project === 'string' && opt.project.trim()) return opt.project.trim().slice(0, 60);
-  const git = (...a) => execFileSync('git', ['-C', workdir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 }).trim();
+/** A git remote as one key that is identical on every machine: "github.com/owner/repo".
+ *  ssh and https spellings of the same repo have to land on the same string, or the office would
+ *  again believe one repo is two projects. */
+function repoKey(url) {
+  const u = String(url).trim().replace(/\.git$/, '').replace(/\/+$/, '');
+  return u
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') // scheme
+    .replace(/^[^@/]+@/, '') // user@
+    .replace(':', '/') // git@host:owner/repo
+    .replace(/\/{2,}/g, '/')
+    .toLowerCase()
+    .slice(0, 120);
+}
+
+/** Where this runner really works, and which repo that is.
+ *  The folder someone types is not always the repo. Pointing --dir at a folder that merely CONTAINS
+ *  the repo used to name the project after that folder, so the same repo opened at a different path
+ *  on another machine became a second project — with its own playbook, and no work could cross
+ *  between them. The repo decides now; the folder name is only the last resort. */
+function detectRepo(dir) {
+  let root = '';
   try {
-    const name = git('remote', 'get-url', 'origin').replace(/\/+$/, '').split(/[/:]/).pop().replace(/\.git$/, '');
-    if (name) return name.slice(0, 60);
+    root = git(dir, 'rev-parse', '--show-toplevel');
+  } catch {
+    /* not a repo: maybe it wraps one */
+  }
+  if (!root) {
+    const inside = fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => path.join(dir, e.name))
+      .filter((d) => fs.existsSync(path.join(d, '.git')));
+    if (inside.length === 1) {
+      root = inside[0];
+      startupNotes.push(`⚠️  ${dir} không phải repo — làm việc trong ${root}`);
+    } else if (inside.length > 1) {
+      die(`${dir} chứa ${inside.length} repo (${inside.map((d) => path.basename(d)).join(', ')}) — trỏ --dir vào đúng một repo.`);
+    }
+  }
+  root = root || dir;
+  let key = '';
+  try {
+    key = repoKey(git(root, 'remote', 'get-url', 'origin'));
   } catch {
     /* no remote */
   }
-  try {
-    return path.basename(git('rev-parse', '--show-toplevel')).slice(0, 60);
-  } catch {
-    return path.basename(workdir).slice(0, 60);
-  }
+  const named = typeof opt.project === 'string' && opt.project.trim() ? opt.project.trim().slice(0, 60) : '';
+  const name = named || (key ? key.split('/').pop() : path.basename(root)).slice(0, 60);
+  if (!named && !key)
+    startupNotes.push(`⚠️  ${root} không có git remote — dự án lấy theo tên thư mục ("${name}"). Mở repo này ở đường dẫn khác trên máy khác sẽ thành một dự án khác: dùng --project ${name} ở mọi máy.`);
+  return { root, key, name, from: named ? 'option' : key ? 'remote' : 'folder' };
 }
-const PROJECT = detectProject();
+const REPO = detectRepo(dirArg);
+const workdir = REPO.root;
+const PROJECT = REPO.name;
+// other users on this machine can read every process's command line: keep the code out of it
+try {
+  process.title = `node office-agent.cjs --url ${base} --dir ${workdir}`;
+} catch {
+  /* not supported here */
+}
+/** This runner: one machine may run several (one per project), and each keeps its own sessions. */
+const RUNNER = `r-${crypto.createHash('sha256').update(`${MACHINE}|${base}|${workdir}`).digest('hex').slice(0, 24)}`;
 
 // ---------------------------------------------------------------- talking to the office
 const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -356,7 +397,10 @@ function hooksFor(agent, auth) {
 }
 
 /** The department's profile → claude flags. Commands: only what the profile asks for AND you allow. */
-function flagsFor(profile, approvals) {
+/** `quick` work gets the short briefing: the rules a one-file change actually needs, and no debrief.
+ *  A session's cost is mostly fixed — the profile, the rules, the closing summary — so a two-line fix
+ *  used to pay for all of it. This is where a small job becomes small. */
+function flagsFor(profile, approvals, quick) {
   const args = [];
   const allowed = ['mcp__office'];
   const bash = (profile.bash || []).filter((b) => TRUST || OWNER_ALLOW.includes(b));
@@ -376,18 +420,31 @@ function flagsFor(profile, approvals) {
   // whatever is not allowed outright is asked in the office (Tổng quản, or a 🔐 card) instead of failing
   args.push('--permission-mode', String(opt.mode || mode), '--allowedTools', allowed.join(','), '--permission-prompt-tool', 'mcp__office__permission');
   if (profile.model && profile.model !== 'default') args.push('--model', profile.model);
-  const rules = [
-    profile.prompt || '',
-    '',
-    '## Quy tắc chung',
-    '- Mỗi việc có một luồng trao đổi riêng: mcp__office__chat_send để báo tiến độ/kết quả, mcp__office__ask_human khi thật sự cần người giao việc quyết. Đồng nghiệp đang làm cùng việc đó nghe được bạn (mcp__office__chat_wait để nghe họ), người giao việc đọc được cả luồng.',
-    '- Nhắn như người với người: tiếng Việt tự nhiên, 1–3 câu, không markdown, không dán log/mã lỗi dài (để chi tiết trong note của việc). Ví dụ: "Mình sửa xong lỗi giỏ hàng rồi, phần mã giảm giá mình để QA kiểm lại nhé."',
-    '- Hỏi ít, hỏi đúng: chỉ hỏi thứ mà đoán sai là phải làm lại. Còn lại tự quyết và ghi giả định vào note.',
-    '- Phần việc của phòng khác → mcp__office__handoff, ghi rõ đã làm gì, còn gì, file nào. Việc phân công chung do 🧠 Tổng quản lo, bạn không cần gọi phòng khác.',
-    '- Không làm việc phá huỷ hoặc ra bên ngoài (deploy, push, xoá dữ liệu, gửi email…) nếu việc không ghi rõ yêu cầu.',
-    '- Note cuối cùng của việc là thứ Tổng quản đọc để báo kết quả cho người giao: ghi rõ kết quả (file, nhánh, link, lệnh kiểm tra) và điều còn dở.',
-    '- Xong việc: mcp__office__debrief (làm gì, lỗi gì, cách xử lý, bài học; không ghi mật khẩu/token). Bài học chỉ đúng với dự án này hay với máy này thì nói rõ.',
-  ].join('\n');
+  const rules = (
+    quick
+      ? [
+          profile.prompt || '',
+          '',
+          '## Việc nhỏ — làm gọn',
+          '- Việc này đã được xác định là nhỏ và gọn trong một chỗ. Làm đúng phần được giao, thay đổi nhỏ nhất đủ giải quyết, đừng đi rà soát quanh dự án.',
+          '- Không hỏi lại trừ khi đoán sai là hỏng việc; chi tiết nhỏ thì tự quyết và ghi giả định vào note.',
+          '- Không cần debrief, không cần báo tiến độ giữa chừng. Xong thì ghi note kết quả (đổi gì, file nào, kiểm bằng lệnh gì) là đủ.',
+          '- Nếu làm rồi mới thấy việc thực ra lớn (phải sửa nhiều chỗ, chưa rõ nguyên nhân): ghi rõ vào note và chuyển về col="todo" để văn phòng xếp lại cho đúng.',
+          '- Không làm việc phá huỷ hoặc ra bên ngoài (deploy, push, xoá dữ liệu, gửi email…) nếu việc không ghi rõ yêu cầu.',
+        ]
+      : [
+          profile.prompt || '',
+          '',
+          '## Quy tắc chung',
+          '- Mỗi việc có một luồng trao đổi riêng: mcp__office__chat_send để báo tiến độ/kết quả, mcp__office__ask_human khi thật sự cần người giao việc quyết. Đồng nghiệp đang làm cùng việc đó nghe được bạn (mcp__office__chat_wait để nghe họ), người giao việc đọc được cả luồng.',
+          '- Nhắn như người với người: tiếng Việt tự nhiên, 1–3 câu, không markdown, không dán log/mã lỗi dài (để chi tiết trong note của việc). Ví dụ: "Mình sửa xong lỗi giỏ hàng rồi, phần mã giảm giá mình để QA kiểm lại nhé."',
+          '- Hỏi ít, hỏi đúng: chỉ hỏi thứ mà đoán sai là phải làm lại. Còn lại tự quyết và ghi giả định vào note.',
+          '- Phần việc của phòng khác → mcp__office__handoff, ghi rõ đã làm gì, còn gì, file nào. Việc phân công chung do 🧠 Tổng quản lo, bạn không cần gọi phòng khác.',
+          '- Không làm việc phá huỷ hoặc ra bên ngoài (deploy, push, xoá dữ liệu, gửi email…) nếu việc không ghi rõ yêu cầu.',
+          '- Note cuối cùng của việc là thứ Tổng quản đọc để báo kết quả cho người giao: ghi rõ kết quả (file, nhánh, link, lệnh kiểm tra) và điều còn dở.',
+          '- Xong việc: mcp__office__debrief (làm gì, lỗi gì, cách xử lý, bài học; không ghi mật khẩu/token). Bài học chỉ đúng với dự án này hay với máy này thì nói rõ.',
+        ]
+  ).join('\n');
   args.push('--append-system-prompt', rules);
   return { args, bash, mode: String(opt.mode || mode) };
 }
@@ -403,7 +460,9 @@ function promptFor(job, agent) {
       '',
       agent.dept === 'lead'
         ? `Đọc bối cảnh (code, tài liệu) nếu cần, rồi giao từng phần cho đúng phòng bằng mcp__office__handoff. Xong: mcp__office__task_update id="${t.short}" col="done" kèm note kế hoạch (ai làm gì).`
-        : `Mở kỹ năng phù hợp (mcp__office__skill) rồi làm trong thư mục hiện tại. Thiếu một thông tin mà đoán sai thì hỏng cả việc: mcp__office__ask_human một câu duy nhất; chi tiết nhỏ thì tự quyết và ghi giả định vào note. Xong: mcp__office__task_update id="${t.short}" col="review" (hoặc "done" nếu chắc chắn không cần duyệt) kèm note kết quả. Không làm được: col="todo" và note lý do.`,
+        : t.mode === 'quick'
+          ? `Việc nhỏ: làm thẳng trong thư mục hiện tại, không cần mở kỹ năng, không cần debrief. Xong: mcp__office__task_update id="${t.short}" col="review" kèm note (đổi gì, file nào, kiểm bằng lệnh gì). Làm rồi thấy thực ra là việc lớn: col="todo" kèm note lý do.`
+          : `Mở kỹ năng phù hợp (mcp__office__skill) rồi làm trong thư mục hiện tại. Thiếu một thông tin mà đoán sai thì hỏng cả việc: mcp__office__ask_human một câu duy nhất; chi tiết nhỏ thì tự quyết và ghi giả định vào note. Xong: mcp__office__task_update id="${t.short}" col="review" (hoặc "done" nếu chắc chắn không cần duyệt) kèm note kết quả. Không làm được: col="todo" và note lý do.`,
     ].join('\n');
   }
   if (job.kind === 'meeting') {
@@ -561,8 +620,8 @@ function feeder(agentId) {
 }
 
 /** Tell the office a session is over — now, or as soon as the office can be reached. */
-async function reportExit(agentId, code, why) {
-  state.exits.push({ agent: agentId, code, why: why || '' });
+async function reportExit(agentId, code, why, cost) {
+  state.exits.push({ agent: agentId, code, why: why || '', ...(cost > 0 ? { cost } : {}) });
   delete state.sessions[agentId];
   saveState();
   await flushExits();
@@ -597,7 +656,8 @@ function start(entry, resume = false, why = '') {
   fs.writeFileSync(mcp, JSON.stringify({ mcpServers: { office: { type: 'http', url: `${base}/api/mcp`, headers: { Authorization: `Bearer ${token}`, 'X-Office-Agent': agent.id } } } }), { mode: 0o600 });
   const logFile = path.join(logs, `${new Date().toISOString().replace(/[:.]/g, '-')}-${agent.name.replace(/[^\w-]+/g, '_')}${resume ? '-tiep' : ''}.log`);
   const out = fs.createWriteStream(logFile, { flags: 'a' });
-  const f = flagsFor(profile || {}, entry.approvals);
+  const quick = job.kind === 'task' && job.task?.mode === 'quick';
+  const f = flagsFor(profile || {}, entry.approvals, quick);
   if (!entry.sid) entry.sid = crypto.randomUUID();
   // a known session id from the start, so a broken-off conversation can be resumed exactly
   const session = resume ? ['--resume', entry.sid] : ['--session-id', entry.sid];
@@ -643,7 +703,10 @@ function start(entry, resume = false, why = '') {
         } else if (c.type === 'tool_use') {
           const t = toolLine(c.name, c.input);
           out.write(`  ${t.icon} ${t.text}\n`);
-          feed.push({ kind: 'tool', ...t });
+          // the command itself travels with the line: a department's "đã chạy test" is worth more to
+          // the person reading the report when the office can show what was really run
+          const cmd = c.name === 'Bash' ? clip(String(c.input?.command || '').replace(/[A-Za-z0-9_\-]{32,}/g, '•••'), 160) : '';
+          feed.push({ kind: 'tool', ...t, ...(cmd ? { cmd } : {}) });
         }
       }
     } else if (m.type === 'user') {
@@ -657,6 +720,8 @@ function start(entry, resume = false, why = '') {
     } else if (m.type === 'result') {
       gotResult = true;
       if (m.is_error || limitOnly(m.result)) run.error = clip(typeof m.result === 'string' ? m.result : m.subtype, 200) || run.error || 'lỗi';
+      // what this session actually cost: the office's ceiling counts sessions, but people pay dollars
+      if (Number.isFinite(Number(m.total_cost_usd))) run.cost = (run.cost ?? 0) + Number(m.total_cost_usd);
       out.write(`\n= ${m.subtype} · ${m.num_turns ?? '?'} lượt · ${m.total_cost_usd != null ? `$${Number(m.total_cost_usd).toFixed(3)}` : ''}\n`);
       if (!m.is_error) feed.push({ kind: 'result', icon: '✅', text: `Xong việc sau ${m.num_turns ?? '?'} bước` });
     }
@@ -690,6 +755,8 @@ function start(entry, resume = false, why = '') {
     clearTimeout(timer);
     clearInterval(watchdog);
     running.delete(agent.id);
+    // a resumed session is one conversation in several runs: its bill is the sum of them
+    if (run.cost > 0) entry.cost = (entry.cost || 0) + run.cost;
     await feed.flush();
     out.end();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -706,7 +773,7 @@ function start(entry, resume = false, why = '') {
     if (ok) {
       outageStreak = 0;
       log(`✅ ${agent.name} xong — log: ${logFile}`);
-      await reportExit(agent.id, 0, '');
+      await reportExit(agent.id, 0, '', entry.cost);
       return;
     }
     // broke off because Claude could not be reached: keep the session, resume it later
@@ -717,7 +784,7 @@ function start(entry, resume = false, why = '') {
       if (!limited) entry.resumes = (entry.resumes || 0) + 1;
       if (entry.resumes > MAX_RESUMES) {
         log(`⚠️  ${agent.name}: đã làm tiếp ${MAX_RESUMES} lần vẫn bị ngắt — trả việc về Office`);
-        await reportExit(agent.id, 75, `bị ngắt kết nối ${MAX_RESUMES} lần liền`);
+        await reportExit(agent.id, 75, `bị ngắt kết nối ${MAX_RESUMES} lần liền`, entry.cost);
         return;
       }
       const why = run.killed === 'stall' ? 'phiên bị treo, không phản hồi' : run.error || 'mất kết nối tới Claude';
@@ -731,7 +798,7 @@ function start(entry, resume = false, why = '') {
     }
     const why = run.killed === 'timeout' ? `quá ${TIMEOUT / 60_000} phút` : clip(run.error || stderr, 150) || `mã ${code}`;
     log(`⚠️  ${agent.name} dừng (${why}) — log: ${logFile}`);
-    await reportExit(agent.id, code || 1, why);
+    await reportExit(agent.id, code || 1, why, entry.cost);
   };
   child.on('exit', (code) => void finish(code ?? 1));
   child.on('error', (e) => {
@@ -864,7 +931,7 @@ async function round() {
   await flushExits();
   const jobs = await api('/api/agents/jobs', {
     depts: depts.join(','),
-    machine: { id: RUNNER, label: MACHINE_LABEL, project: PROJECT },
+    machine: { id: RUNNER, label: MACHINE_LABEL, project: PROJECT, repo: REPO.key, named: REPO.from, dir: workdir },
     running: [...running.keys()],
     waiting: [...waiting.entries()].map(([agent, w]) => ({ agent, until: w.until, why: w.why })),
     outage: outage ? { until: outage.until, why: outage.why } : null,
@@ -931,7 +998,8 @@ async function adoptAll() {
 
 async function main() {
   log(`🏢 Office agent runner → ${base}`);
-  log(`   dự án ${PROJECT} · máy ${MACHINE_LABEL} · thư mục ${workdir}`);
+  log(`   dự án ${PROJECT}${REPO.key ? ` (${REPO.key})` : ''} · máy ${MACHINE_LABEL} · thư mục ${workdir}`);
+  for (const n of startupNotes) log(`   ${n}`);
   log(`   phòng ban: ${depts.map((d) => NAMES[d]).join(', ')} · tối đa ${MAX} phiên`);
   log(`   tự cho phép: ${TRUST ? 'lệnh theo hồ sơ phòng ban (--trust-profiles)' : OWNER_ALLOW.length ? OWNER_ALLOW.join(', ') : 'không lệnh nào (chỉ đọc/sửa file theo hồ sơ)'}`);
   log(`   còn lại: theo cài đặt "Duyệt quyền" trong Office (Tổng quản duyệt, hoặc hỏi ${APPROVERS === 'anyone' ? 'bất kỳ ai' : 'bạn'})`);

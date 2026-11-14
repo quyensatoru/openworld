@@ -15,7 +15,7 @@ Văn phòng 3D cho team: mỗi người mở link, nhập mã văn phòng, tạo
   Bong bóng chat trên đầu, `@tên` để gọi, có thông báo khi tab đang ẩn, có vạch ngăn ngày.
 - Trạng thái tự động theo vị trí (Làm việc / Họp / Nghỉ / Tập trung / Vắng), Pomodoro hiển thị trên đầu nhân vật.
 - Check-in khi ngồi vào bàn, tự cộng giờ làm, số pomodoro, số task xong trong ngày (panel “Hôm nay”).
-- Kanban To do / Doing / Review / Done kéo thả realtime, gán người, độ ưu tiên; task đang làm hiện dưới tên nhân vật; xong task thì nhân vật ăn mừng + confetti.
+- Kanban To do / Doing / Review / Done kéo thả realtime, gán người, độ ưu tiên; task đang làm hiện dưới tên nhân vật; xong task thì nhân vật ăn mừng + confetti. Nhiều dự án thì mỗi thẻ có chip 📦 tên dự án và có chip lọc theo dự án; một yêu cầu được chia thành nhiều thẻ thì thẻ nào cũng có 🧵 — bấm vào là chỉ xem các thẻ của đúng yêu cầu đó.
 
 - **Góc nhìn thứ nhất** (phím V / nút 🎥), ánh sáng văn phòng đổi theo giờ thật (ngày / chiều tà / tối), âm thanh văn phòng tổng hợp bằng WebAudio (điều hoà, gõ phím của người ngồi gần, bước chân, máy pha cà phê).
 - **Rạp chiếu phim** (cửa phía nam sảnh): 60 ghế, màn hình 11 m. Dán link YouTube → cả rạp xem đồng bộ (server giữ mốc thời gian chung); ngồi ghế là tự vào góc nhìn thứ nhất, đèn rạp tối dần khi chiếu.
@@ -68,7 +68,17 @@ Một yêu cầu đi như sau:
 - Một việc mà phiên làm việc hỏng giữa chừng 3 lần sẽ dừng ở cột Chờ duyệt kèm lý do, không lặp vô tận. Việc dừng như vậy chưa tính là xong: các phần nối sau vẫn chờ, chưa có 📋 Kết quả. Muốn chạy lại thì nhắn **“làm tiếp”** ngay trong thread đó. Tổng quản đưa mọi việc đã dừng của thread về To do.
 - Tổng quản không trả lời được vì mất mạng thì yêu cầu được giữ, thử lại sau — không bị tính là "không hiểu yêu cầu".
 
-**Mỗi máy trực một dự án.** Máy trực báo tên dự án (tên repo trên git remote, hoặc `--project`). Tổng quản ghi dự án lên từng việc và chỉ máy của dự án đó nhận; nhiều dự án mà yêu cầu không rõ thì nó hỏi. **Sổ kinh nghiệm** cũng theo phạm vi: bài của dự án (mặc định), bài riêng một máy (shell, công cụ cài trên máy đó) và bài chung — phiên làm việc chỉ đọc bài đúng với dự án và máy của nó. Mỗi dự án tự đúc rút trên máy của mình; bài trùng ý bị chặn để gộp.
+**Mỗi máy trực một dự án — và dự án là *repo*, không phải thư mục.** Máy trực tìm gốc repo từ `--dir` (trỏ vào thư mục bọc ngoài thì nó tự đi xuống đúng repo bên trong và báo cho bạn biết), rồi lấy **git remote** làm khoá: `github.com/owner/repo`. Cùng một repo mở ở hai máy, hai đường dẫn khác nhau, vẫn là một dự án — dùng chung bảng việc và chung sổ kinh nghiệm. Máy nào gọi dự án bằng tên khác thì panel 🧠 ghi rõ "cùng repo, đã gộp về …". Repo không có remote thì tên lấy theo thư mục và panel 🧠 cảnh báo: hãy chạy `--project <tên>` giống nhau ở mọi máy, không thì mỗi máy thành một dự án riêng. Tổng quản ghi dự án lên từng việc và chỉ máy của dự án đó nhận; nhiều dự án mà yêu cầu không rõ thì nó hỏi. **Sổ kinh nghiệm** cũng theo phạm vi: bài của dự án (mặc định), bài riêng một máy (shell, công cụ cài trên máy đó) và bài chung — phiên làm việc chỉ đọc bài đúng với dự án và máy của nó. Mỗi dự án tự đúc rút trên máy của mình; bài trùng ý bị chặn để gộp.
+
+**Quy trình "xong việc" theo dự án** (🧠 → Cách Tổng quản làm việc). Mặc định một yêu cầu "sửa lỗi X" chỉ sinh đúng một việc cho Phát triển, nên nó dừng ở **Chờ duyệt** và bạn phải tự kéo thẻ sang Kiểm thử hay Vận hành. Bật quy trình cho dự án (vd. `Code xong → 🧪 QA → 🚀 Ops`) thì **văn phòng tự nối các bước đó vào mọi kế hoạch**: Tổng quản không phải nhớ, bạn không phải kéo, và bước sau tự chạy ngay khi bước trước chuyển sang Chờ duyệt. Bước nào Tổng quản đã tự xếp thì không bị nhân đôi. Bật 🚀 Vận hành nghĩa là **đồng ý cho deploy tự động** khi phần trước xong.
+
+**Việc nhỏ chạy ở chế độ gọn.** Chi phí một phiên phần lớn là cố định (hồ sơ phòng ban, quy tắc chung, bước đúc rút cuối), nên một sửa đổi hai dòng từng phải trả đủ từng ấy. Tổng quản gắn `mode` cho mỗi phần việc: `quick` cho thay đổi nhỏ gọn một chỗ — phiên chạy với hướng dẫn ngắn, không báo tiến độ, không debrief; `full` cho phần còn lại. Không chắc thì nó để `full`.
+
+**Xem thẳng phiên Claude trên máy.** Mỗi nhân viên là một phiên `claude` thật: mở màn hình của họ trong Office là thấy sẵn lệnh `cd <thư mục> && claude --resume <session-id>`, bấm **Chép** rồi dán vào terminal là đọc được toàn bộ cuộc hội thoại đó.
+
+**Bằng chứng thay cho lời kể.** Văn phòng thấy mọi lệnh phiên đã chạy, nên khi một phòng chuyển việc sang Chờ duyệt/Xong, danh sách lệnh thật được ghi thẳng vào thẻ (`🧾 Lệnh đã chạy trong phiên`) — không phụ thuộc vào việc phiên có nhớ kể hay không.
+
+**Danh sách cấm cứng.** Có những thứ không ai duyệt được — không Tổng quản, không thẻ 🔐, không cả chế độ tự động hoàn toàn: xoá gốc (`rm -rf /`, `~`), format ổ đĩa, `git push --force`, `git filter-branch`, chạy script tải từ mạng (`curl … | sh`), và lệnh vừa đụng file bí mật vừa gọi ra mạng. Phiên bị từ chối thẳng và bạn được báo trong luồng của việc. Ngoài ra, sửa file bí mật (`.env`, `.dev.vars`, khoá SSH…) và `wrangler secret` / `npm publish` **luôn** phải do người duyệt, kể cả khi văn phòng đang ở chế độ tự động.
 
 **Duyệt quyền** (🧠 → Cách Tổng quản làm việc):
 
@@ -83,7 +93,8 @@ Những gì Tổng quản tự duyệt hiện ở panel 🧠 ("Tổng quản v�
 Tất cả chỉnh ở panel 🧠 (phím/nút Nhân viên văn phòng):
 
 - **Model quyết định** — mặc định Sonnet. Haiku rẻ và nhanh hơn, Opus cho quyết định khó.
-- **Trần phiên/giờ** cho cả văn phòng và cho mỗi người — đây là trần chi phí thật, vì phiên làm việc mới là thứ tốn tiền.
+- **Trần phiên/giờ** cho cả văn phòng và cho mỗi người — phiên làm việc mới là thứ tốn tiền. Bên cạnh đó panel hiện **số tiền thật** (`$` giờ này và 24 giờ qua) do Claude Code báo về sau mỗi phiên.
+- **Quy trình "xong việc"** cho từng dự án (và một dòng mặc định cho mọi dự án): sau khi code xong thì tự chạy tiếp QA / Tài liệu / Vận hành.
 - **Họp tự động** — mặc định **tắt**. Mỗi ghế họp là một phiên chạy song song tới 25 phút, nên đây là thứ tốn kém nhất; tắt thì Tổng quản tự ra kế hoạch bằng một lượt nghĩ. Phòng họp vẫn dùng bình thường cho người thật.
 - **Quyền giao việc** — mặc định máy trực chỉ nhận việc từ chủ máy; chọn thêm đồng nghiệp ở tab 🔑.
 

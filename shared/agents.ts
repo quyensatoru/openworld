@@ -135,6 +135,12 @@ export interface AgentTag {
   ownerName: string;
   state: AgentState;
   project?: string;
+  /** the Claude Code session running on the on-call machine: `claude --resume <sid>` in `dir` opens
+   *  exactly this conversation, so a person can read the whole thing the way they read their own. */
+  sid?: string;
+  /** the machine's label and the folder the session works in */
+  machine?: string;
+  dir?: string;
 }
 
 export interface Lesson {
@@ -330,8 +336,17 @@ export interface RunnerMachine {
   label: string;
   owner: string;
   ownerName: string;
-  /** the project (repo name) it works in */
+  /** the project (repo name) it works in — the office's name for it, see `alias` */
   project: string;
+  /** the git remote, as one key that is the same on every machine ("github.com/owner/repo").
+   *  This, not the folder's name, is what says two machines are in the SAME project. */
+  repo?: string;
+  /** where its own name for the project came from: --project, the remote, or just the folder */
+  named?: 'option' | 'remote' | 'folder';
+  /** the folder it works in (so a person can open the same place) */
+  dir?: string;
+  /** it called the project this, and the office knows the repo under another name */
+  alias?: string;
   depts: DeptId[];
   /** last time it asked for work */
   at: number;

@@ -127,6 +127,10 @@ export interface Task {
   thread?: string;
   /** the project (repo name) it must be done in — only an on-call machine working there takes it */
   project?: string;
+  /** 'quick' = a small, self-contained change: the session gets the short briefing and skips the
+   *  debrief, because the fixed cost of a full session is what makes tiny work expensive, not the
+   *  number of cards. Anything else is a full session. */
+  mode?: 'quick';
 }
 
 /** Whether the department that owns a task is finished with it — what the work chained after it
@@ -183,6 +187,8 @@ export interface ActivityEvent {
   icon: string;
   text: string;
   project?: string;
+  /** Bash only: the command as it was run (secrets masked) — what the card quotes as evidence */
+  cmd?: string;
 }
 
 export const YT_ID = /^[A-Za-z0-9_-]{11}$/;

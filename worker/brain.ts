@@ -120,6 +120,28 @@ const OWNS: Partial<Record<DeptId, string>> = {
   biz: 'làm rõ yêu cầu mơ hồ, viết spec, soạn câu trả lời khách. Không đụng vào code.',
 };
 const oneLine = (s: string, n: number) => clampStr(String(s ?? '').replace(/\s+/g, ' '), n);
+/** What a stage the office appends says to the department that gets it. Written for someone who was
+ *  not there when the work was planned: what to do, what "done" is, and where it came from. */
+const FLOW_PARCEL: Record<string, (base: string, project: string) => { title: string; desc: string }> = {
+  qa: (base, project) => ({
+    title: `Kiểm thử: ${base}`,
+    desc: `Kiểm thử phần vừa làm xong ở việc trước trong cùng luồng này. Chạy test/build của dự án, thử lại đúng thứ việc đó sửa, rồi kết luận đạt hay không đạt. Không đạt thì handoff về Phát triển kèm cách tái hiện và lệnh đã chạy. Ghi lệnh đã chạy và kết quả thật vào note.
+
+(Bước bắt buộc trong quy trình của dự án ${project || 'này'} — văn phòng tự xếp, không phải người giao việc quên.)`,
+  }),
+  docs: (base, project) => ({
+    title: `Cập nhật tài liệu: ${base}`,
+    desc: `Cập nhật README/hướng dẫn/changelog cho đúng với phần vừa làm xong ở việc trước trong cùng luồng. Chỉ sửa file tài liệu.
+
+(Bước bắt buộc trong quy trình của dự án ${project || 'này'}.)`,
+  }),
+  ops: (base, project) => ({
+    title: `Triển khai: ${base}`,
+    desc: `Đưa phần đã làm (và đã kiểm, nếu luồng có bước Kiểm thử) lên môi trường thật theo đúng cách deploy của dự án. Trước khi deploy ghi lại phiên bản đang chạy để rollback được; deploy xong kiểm lại production rồi ghi kết quả vào note.
+
+(Bước cuối trong quy trình của dự án ${project || 'này'} — việc này đã được người giao việc đồng ý sẵn khi đặt quy trình.)`,
+  }),
+};
 const shortId = (id: string) => id.replace(/-/g, '').slice(0, 8);
 /** The last note appended to a card ("— Ai (dd/mm hh:mm): …"), without who and when. */
 const lastNote = (desc: string) => {
@@ -146,7 +168,7 @@ export class Brain {
   private logs: BrainLog[] = [];
   private cfg: BrainConfig = { ...DEFAULT_BRAIN };
   /** when department sessions started, and on whose behalf */
-  private sessions: { at: number; origin: string }[] = [];
+  private sessions: { at: number; origin: string; cost?: number }[] = [];
   /** when decisions were made */
   private thoughts: number[] = [];
   /** last time a machine asked for a decision to make */
@@ -187,7 +209,7 @@ export class Brain {
     this.items = (await s.get<BrainItem[]>('brainItems')) ?? [];
     this.logs = (await s.get<BrainLog[]>('brainLogs')) ?? [];
     this.cfg = sanitizeBrainConfig(await s.get('brainConfig'));
-    this.sessions = (await s.get<{ at: number; origin: string }[]>('brainSessions')) ?? [];
+    this.sessions = (await s.get<{ at: number; origin: string; cost?: number }[]>('brainSessions')) ?? [];
     // a decision claimed before a restart is nobody's now
     for (const it of this.items) {
       if (it.state === 'thinking') ((it.state = 'pending'), (it.lease = undefined));
@@ -279,15 +301,30 @@ export class Brain {
 
   // ------------------------------------------------------------------ budget
   budget(): BrainBudget {
-    const since = Date.now() - HOUR;
+    const now = Date.now();
+    const since = now - HOUR;
     const recent = this.sessions.filter((s) => s.at > since);
     const per = new Map<string, number>();
     for (const s of recent) per.set(s.origin, (per.get(s.origin) ?? 0) + 1);
+    const sum = (list: { cost?: number }[]) => Math.round(list.reduce((n, s) => n + (s.cost ?? 0), 0) * 1000) / 1000;
     return {
       sessionsHour: recent.length,
       thoughtsHour: this.thoughts.filter((t) => t > since).length,
+      costHour: sum(recent),
+      costDay: sum(this.sessions.filter((s) => s.at > now - 24 * HOUR)),
       throttled: [...per.entries()].filter(([, n]) => n >= this.cfg.maxPerPersonHour).map(([id]) => id),
     };
+  }
+
+  /** What a finished session cost, as Claude Code reported it. Sessions are kept a day now, so the
+   *  day's bill can be shown — a trần counted in sessions never told anyone what they were paying. */
+  noteCost(startedAt: number, origin: string, cost: number) {
+    if (!(cost > 0)) return;
+    const s = [...this.sessions].reverse().find((x) => x.origin === (origin || 'system') && Math.abs(x.at - startedAt) < 6 * HOUR && x.cost === undefined);
+    if (!s) return;
+    s.cost = Math.round(cost * 10000) / 10000;
+    void this.host.storage.put('brainSessions', this.sessions).catch(() => {});
+    this.push();
   }
 
   /** May a department session start now for work that `origin` asked for? */
@@ -301,7 +338,7 @@ export class Brain {
   /** A department session just started — it counts against the hour. */
   noteSession(origin: string) {
     const now = Date.now();
-    this.sessions = [...this.sessions.filter((s) => now - s.at < 2 * HOUR), { at: now, origin: origin || 'system' }];
+    this.sessions = [...this.sessions.filter((s) => now - s.at < 25 * HOUR), { at: now, origin: origin || 'system' }];
     void this.host.storage.put('brainSessions', this.sessions).catch(() => {});
     this.push();
   }
@@ -663,7 +700,7 @@ export class Brain {
       depts,
       '',
       'Mỗi lượt bạn nhận MỘT yêu cầu và trả về ĐÚNG MỘT object JSON, không viết gì ngoài nó:',
-      '{"action":"answer|route|ask|merge|drop","reply":"…","question":"…","mergeInto":"#abc12345","project":"tên-dự-án","plan":[{"dept":"dev","title":"…","desc":"…","priority":"normal","after":[]}]}',
+      '{"action":"answer|route|ask|merge|drop","reply":"…","question":"…","mergeInto":"#abc12345","project":"tên-dự-án","plan":[{"dept":"dev","title":"…","desc":"…","priority":"normal","after":[],"mode":"quick|full"}]}',
       '',
       'Chọn action:',
       '- "answer" — trả lời được ngay bằng thông tin trong phần "Tình hình văn phòng" (ai đang làm gì, trên bảng có gì, việc xong chưa, giải thích cách văn phòng chạy). KHÔNG tốn phiên nào. Đây là mặc định cho mọi câu hỏi.',
@@ -680,6 +717,7 @@ export class Brain {
       '- Yêu cầu của khách còn mơ hồ: biz viết spec trước, dev (hoặc design nếu chủ yếu là giao diện) nối sau.',
       '- Sự cố production: ops điều tra trước, dev sửa nguyên nhân gốc nối sau.',
       '',
+      ...this.flowLines(),
       'Dùng "after" (thứ tự giữa các phần trong cùng plan này):',
       '- Song song là mặc định: "after": [] là bắt đầu ngay. Chỉ nối tiếp khi phần sau KHÔNG thể bắt đầu nếu chưa có kết quả phần trước (qa cần bản sửa, ops cần bản đã kiểm).',
       '- Chỉ ghi chỉ số của các phần ĐỨNG TRƯỚC trong chính plan này (0 là phần đầu tiên). Không trỏ vào chính nó, không trỏ tới việc đã có trên bảng.',
@@ -701,6 +739,11 @@ export class Brain {
       'Dựa vào kinh nghiệm:',
       '- "Sổ kinh nghiệm" và "Kết quả gần đây" là những gì văn phòng đã học được. Áp dụng chúng khi chia việc: phòng nào hay làm hỏng loại việc gì, phần nào từng phải làm lại, cách nào đã hiệu quả. Ghi bài học liên quan vào "desc" để phòng nhận việc biết.',
       '',
+      '"mode" của mỗi phần việc — mỗi phiên làm việc có chi phí cố định, nên đây là chỗ tiết kiệm thật:',
+      '- "quick": thay đổi nhỏ gọn trong một chỗ (sửa chữ hiển thị, đổi một hằng số, sửa một lỗi đã biết rõ nguyên nhân, thêm một kiểm tra nhỏ). Phiên chạy với hướng dẫn ngắn và bỏ bước đúc rút.',
+      '- "full": còn lại — phải đọc nhiều chỗ, đụng nhiều file, chưa rõ nguyên nhân, hoặc dễ gây hồi quy.',
+      '- Không chắc thì để "full". Đừng gán "quick" cho việc mà bạn phải đoán xem nó nhỏ hay to.',
+      '',
       'Quy tắc:',
       '- Hỏi ít. Nếu còn thiếu chi tiết nhỏ: đừng hỏi — chọn "route" và ghi rõ giả định của bạn vào "desc". Chỉ hỏi thứ đáng hỏi.',
       '- Trả lời gọn. "reply" là tiếng Việt, 1–3 câu, như đồng nghiệp nói với nhau, không markdown, không gạch đầu dòng. Nói rõ ai sẽ làm gì hoặc câu trả lời là gì.',
@@ -710,6 +753,22 @@ export class Brain {
       '- Không bịa trạng thái. Chỉ nói những gì có trong "Tình hình văn phòng".',
       '- priority: urgent | high | normal | low.',
     ].join('\n');
+  }
+
+  /** The flow, told to the model so its answer to the person matches what the board will do.
+   *  It must not plan these stages itself — they are appended after its plan either way. */
+  private flowLines(): string[] {
+    const flow = this.cfg.flow ?? {};
+    const entries = Object.entries(flow).filter(([, v]) => v?.length);
+    if (!entries.length) return [];
+    const name = (d: DeptId) => DEPT_BY_ID.get(d)!.name;
+    return [
+      'Quy trình "xong việc" (văn phòng tự nối sau phần việc tạo ra thay đổi — bạn KHÔNG tạo các phần này):',
+      ...entries.map(([project, stages]) => `- ${project || 'mọi dự án'}: xong code/giao diện → ${stages.map(name).join(' → ')}`),
+      '- Vì thế việc "sửa lỗi X" vẫn chỉ cần MỘT phần cho dev; các bước trên chạy tiếp sau đó mà không ai phải nhắc.',
+      '- Trong "reply", nói cho người gửi biết cả chuỗi sẽ chạy tới đâu (vd. "Dev sửa xong thì Kiểm thử và Vận hành tự chạy tiếp").',
+      '',
+    ];
   }
 
   private async user(it: BrainItem): Promise<string> {
@@ -895,16 +954,49 @@ export class Brain {
     await this.finish(it, { ...d, action: 'answer' }, []);
   }
 
+  /** The departments that make something a project's flow then has to check or ship. */
+  private static readonly MAKERS: DeptId[] = ['dev', 'design'];
+
+  /** The project's definition of done, appended to a plan that stops at the change itself.
+   *  The model is told to plan only what a department must really do, so "sửa lỗi X" comes back as
+   *  one dev parcel and the work ends in Chờ duyệt — correct, and still not what the person wanted,
+   *  because they then have to notice and drag the card to Kiểm thử or Vận hành by hand. These
+   *  stages belong to the project, not to one request, so the office appends them here: they cannot
+   *  be forgotten, and a stage the model already planned is never added twice. */
+  private withFlow(parcels: BrainParcel[], project: string): BrainParcel[] {
+    const flow = (this.cfg.flow?.[project] ?? this.cfg.flow?.[''] ?? []).filter(isDept);
+    if (!flow.length) return parcels;
+    // nothing was made: a question answered by Biz or a README fixed by Docs has nothing to ship
+    let prev = -1;
+    for (let i = 0; i < parcels.length; i++) if (Brain.MAKERS.includes(parcels[i].dept)) prev = i;
+    if (prev < 0) return parcels;
+    const out = [...parcels];
+    const base = oneLine(parcels[prev].title, 90);
+    const prio = parcels[prev].priority; // the stages inherit the urgency of the work they follow
+    for (const dept of flow) {
+      if (out.length >= BRAIN_LIMITS.parcels) break;
+      const had = out.findIndex((p) => p.dept === dept);
+      if (had >= 0) {
+        prev = had; // the model planned this stage itself — the next one follows that one
+        continue;
+      }
+      out.push({ dept, ...FLOW_PARCEL[dept](base, project), priority: prio, after: [prev] });
+      prev = out.length - 1;
+    }
+    return out;
+  }
+
   /** The plan becomes cards on the board: independent parcels start at once, the rest wait. */
   private async dispatch(it: BrainItem, d: BrainDecision): Promise<Task[]> {
-    const parcels = (d.plan ?? []).filter((p) => p && isDept(p.dept) && String(p.title ?? '').trim()).slice(0, BRAIN_LIMITS.parcels);
-    if (!parcels.length) return [];
+    const planned = (d.plan ?? []).filter((p) => p && isDept(p.dept) && String(p.title ?? '').trim()).slice(0, BRAIN_LIMITS.parcels);
+    if (!planned.length) return [];
     const tasks = await this.host.getTasks();
     let ord = 0;
     for (const t of tasks.values()) if (t.col === 'todo') ord = Math.max(ord, t.ord);
     const now = Date.now();
     const made: Task[] = [];
     const project = this.pickProject(d.project, it.root, tasks);
+    const parcels = this.withFlow(planned, project);
     // the card the request came from is reused for the first parcel, so nothing is duplicated
     const from = it.taskId ? tasks.get(it.taskId) ?? null : null;
     for (let i = 0; i < parcels.length; i++) {
@@ -913,9 +1005,10 @@ export class Brain {
         .map((n) => made[Number(n)])
         .filter((t): t is Task => !!t && Number.isFinite(Number(t.ord)))
         .map((t) => t.id);
+      const quick = p.mode === 'quick' ? ('quick' as const) : undefined;
       const reuse = i === 0 && from;
       const t: Task = reuse
-        ? Object.assign(from, { dept: p.dept as DeptId, title: clampStr(p.title, BRAIN_LIMITS.title) || from.title, desc: clipStr(p.desc ?? from.desc, BRAIN_LIMITS.desc), priority: this.prio(p.priority, from.priority), updatedAt: now, after: after.length ? after : undefined, thread: it.root || undefined })
+        ? Object.assign(from, { dept: p.dept as DeptId, title: clampStr(p.title, BRAIN_LIMITS.title) || from.title, desc: clipStr(p.desc ?? from.desc, BRAIN_LIMITS.desc), priority: this.prio(p.priority, from.priority), updatedAt: now, after: after.length ? after : undefined, thread: it.root || undefined, mode: quick })
         : {
             id: crypto.randomUUID(),
             title: clampStr(p.title, BRAIN_LIMITS.title),
@@ -932,6 +1025,7 @@ export class Brain {
             hops: 0,
             after: after.length ? after : undefined,
             thread: it.root || undefined,
+            ...(quick ? { mode: quick } : {}),
           };
       if (project) t.project = project;
       this.host.setTaskOrigin(t.id, it.who);

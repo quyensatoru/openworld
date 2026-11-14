@@ -13,6 +13,10 @@ export function Kanban() {
   const players = useStore((s) => s.players);
   const team = useStore((s) => s.team);
   const [filter, setFilter] = useState<'all' | 'mine'>('all');
+  // one board holds every project on call and every request ever made: without these two the cards of
+  // three repos and a dozen threads sit side by side and nothing can be checked
+  const [project, setProject] = useState('');
+  const [thread, setThread] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -33,18 +37,28 @@ export function Kanban() {
     return m;
   }, [players]);
 
+  const projects = useMemo(() => [...new Set(Object.values(tasks).map((t) => t.project ?? '').filter(Boolean))].sort(), [tasks]);
+  /** how many cards each request (thread) made — a handoff chain is one piece of work, not four */
+  const threadSize = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of Object.values(tasks)) if (t.thread) m.set(t.thread, (m.get(t.thread) ?? 0) + 1);
+    return m;
+  }, [tasks]);
+
   const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const byCol = useMemo(() => {
     const out: Record<TaskColumn, Task[]> = { todo: [], doing: [], review: [], done: [] };
     for (const t of Object.values(tasks)) {
       if (filter === 'mine' && t.assignee !== me?.id) continue;
-      if (q && !norm(`${t.title} ${t.desc} ${nameOf(t.assignee)}`).includes(norm(q))) continue;
+      if (project && (t.project ?? '') !== project) continue;
+      if (thread && t.thread !== thread) continue;
+      if (q && !norm(`${t.title} ${t.desc} ${nameOf(t.assignee)} ${t.project ?? ''}`).includes(norm(q))) continue;
       out[t.col]?.push(t);
     }
     for (const c of Object.values(out)) c.sort((a, b) => a.ord - b.ord);
     out.done.sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
     return out;
-  }, [tasks, filter, q, me?.id]);
+  }, [tasks, filter, project, thread, q, me?.id]);
 
   const dropIndex = (col: TaskColumn, y: number) => {
     const el = listRefs.current[col];
@@ -86,11 +100,25 @@ export function Kanban() {
           <button className={`chip${filter === 'mine' ? ' on' : ''}`} onClick={() => setFilter('mine')}>
             Việc của tôi
           </button>
+          {projects.length > 1 &&
+            projects.map((p) => (
+              <button key={p} className={`chip${project === p ? ' on' : ''}`} title={`Chỉ hiện việc của dự án ${p}`} onClick={() => setProject(project === p ? '' : p)}>
+                📦 {p}
+              </button>
+            ))}
           <input className="input" placeholder="🔎 Tìm việc…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="btn" onClick={close}>
             Đóng
           </button>
         </header>
+        {thread && (
+          <div className="kb-thread-bar">
+            🧵 Chỉ hiện các việc của một yêu cầu ({threadSize.get(thread) ?? 1} thẻ)
+            <button className="btn tiny" onClick={() => setThread(null)}>
+              Bỏ lọc
+            </button>
+          </div>
+        )}
         <div className="kb-cols">
           {COLUMNS.map((col) => {
             const list = byCol[col.id];
@@ -128,7 +156,19 @@ export function Kanban() {
                       return (
                         <Fragment key={t.id}>
                           {showDrop && <div className="kb-drop" />}
-                          <Card task={t} working={working.get(t.id)} waiting={waits.get(t.id)} stopped={t.col === 'review' && stopped.includes(t.id)} dragging={dragged} onDrag={setDragId} onOpen={() => setEditing(t.id)} avatar={players[t.assignee ?? '']?.avatar ?? team[t.assignee ?? '']?.avatar ?? (t.assignee === me?.id ? me?.avatar : undefined)} />
+                          <Card
+                            task={t}
+                            working={working.get(t.id)}
+                            waiting={waits.get(t.id)}
+                            stopped={t.col === 'review' && stopped.includes(t.id)}
+                            dragging={dragged}
+                            onDrag={setDragId}
+                            onOpen={() => setEditing(t.id)}
+                            showProject={!project && projects.length > 1}
+                            siblings={t.thread ? (threadSize.get(t.thread) ?? 1) : 0}
+                            onThread={() => setThread(t.thread ?? null)}
+                            avatar={players[t.assignee ?? '']?.avatar ?? team[t.assignee ?? '']?.avatar ?? (t.assignee === me?.id ? me?.avatar : undefined)}
+                          />
                         </Fragment>
                       );
                     });
@@ -147,7 +187,33 @@ export function Kanban() {
   );
 }
 
-function Card({ task, working, waiting, stopped, dragging, onDrag, onOpen, avatar }: { task: Task; working?: string[]; waiting?: string; stopped?: boolean; dragging: boolean; onDrag: (id: string | null) => void; onOpen: () => void; avatar?: Parameters<typeof AvatarDot>[0]['avatar'] }) {
+function Card({
+  task,
+  working,
+  waiting,
+  stopped,
+  dragging,
+  onDrag,
+  onOpen,
+  showProject,
+  siblings,
+  onThread,
+  avatar,
+}: {
+  task: Task;
+  working?: string[];
+  waiting?: string;
+  stopped?: boolean;
+  dragging: boolean;
+  onDrag: (id: string | null) => void;
+  onOpen: () => void;
+  /** several projects on the board: say which one this belongs to */
+  showProject?: boolean;
+  /** cards this one shares a request with (its handoffs, the parts planned with it) */
+  siblings?: number;
+  onThread?: () => void;
+  avatar?: Parameters<typeof AvatarDot>[0]['avatar'];
+}) {
   const assignee = task.assignee ? nameOf(task.assignee) : null;
   return (
     <div
@@ -167,6 +233,11 @@ function Card({ task, working, waiting, stopped, dragging, onDrag, onOpen, avata
         {task.dept && (
           <span className="kb-dept" style={{ ['--c' as string]: DEPT_BY_ID.get(task.dept)?.color }} title={`Giao cho phòng ${DEPT_BY_ID.get(task.dept)?.name}`}>
             {DEPT_BY_ID.get(task.dept)?.icon} {DEPT_BY_ID.get(task.dept)?.short}
+          </span>
+        )}
+        {showProject && task.project && (
+          <span className="kb-project" title={`Dự án ${task.project} — chỉ máy trực làm ở dự án này mới nhận việc`}>
+            📦 {task.project}
           </span>
         )}
         {task.title}
@@ -197,6 +268,18 @@ function Card({ task, working, waiting, stopped, dragging, onDrag, onOpen, avata
             }}
           >
             ▶ Làm tiếp
+          </button>
+        )}
+        {!!siblings && siblings > 1 && onThread && (
+          <button
+            className="kb-thread"
+            title={`Một yêu cầu, ${siblings} thẻ (các phần được chia và bàn giao). Bấm để chỉ xem các thẻ của yêu cầu này.`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onThread();
+            }}
+          >
+            🧵 {siblings}
           </button>
         )}
         {task.col === 'done' && task.doneAt && <span style={{ marginLeft: 'auto' }}>{timeAgo(task.doneAt)}</span>}
