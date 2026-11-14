@@ -169,6 +169,18 @@ function client(cookie, cid, name) {
     await api('/api/agents/exit', { agent: qa?.id, code: 0 });
   }
 
+  // ---- 6. a long answer reaches the person whole (it used to be cut at 400 chars, mid-word)
+  {
+    const root = await ask(`QA1 dài ${run}`);
+    const job = await brainJob();
+    const long = `Ưu điểm ${run}: ${'việc chạy song song và có bảng việc, '.repeat(16)}\n\nNhược điểm: ${'tốn phiên, '.repeat(12)}HẾT-${run}`;
+    const heard = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.from !== aId && m.m.root === root, 5000);
+    await api('/api/agents/brain', { id: job?.id, raw: JSON.stringify({ action: 'answer', reply: long }) });
+    const said = (await heard)?.m.text ?? '';
+    ok(said.endsWith(`HẾT-${run}`), `a long answer of Tổng quản is not cut (${said.length}/${long.length} chars)`);
+    ok(said.includes('\n'), 'and its line breaks survive into the chat');
+  }
+
   A.close();
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

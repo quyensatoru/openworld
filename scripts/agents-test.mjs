@@ -205,6 +205,12 @@ function client(cookie, cid, name) {
   const devLine = await mineP;
   ok(!sent.err && devLine?.m.root === root, "the agent reports inside the thread of the work it took");
   ok(!(await leak), 'and nobody else sees it');
+  // a long message reaches the person whole — it used to stop at 500 chars, in the middle of a word
+  const longText = `Tóm tắt dài ${run}: ${'mình đã xem lại luồng giỏ hàng và mã giảm giá, '.repeat(20)}HẾT-${run}`;
+  const longP = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.from === dev?.id && m.m.text.startsWith('Tóm tắt dài'));
+  const longSent = await call('chat_send', { text: longText }, DH);
+  const longLine = await longP;
+  ok(!longSent.err && longLine?.m.text === longText, `a long message is not cut on the way to the person (${longLine?.m.text?.length ?? 0}/${longText.length} chars)`);
   const fwdP = A.next((m) => m.t === 'chat' && m.m.ch === askCh && m.m.root === root && m.m.from === 'system' && m.m.text.startsWith('📨 Đã chuyển cho') && m.m.text.includes(dev?.name));
   const fwdCard = A.next((m) => m.t === 'task' && m.task.id === task.id && m.task.desc.includes(`theo phần trăm nhé ${run}`));
   A.send({ t: 'chat', ch: 'ask', text: `Nhớ kiểm tra cả mã giảm giá theo phần trăm nhé ${run}`, root });

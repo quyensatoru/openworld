@@ -38,7 +38,10 @@ export interface BrainDecision {
   project?: string;
 }
 
-export const BRAIN_LIMITS = { reply: 400, question: 300, title: 140, desc: 1800, parcels: 6 };
+/** `reply`/`report` are what a person reads in the chat, so they have room for a real answer (an
+ *  explanation of how the office works does not fit in a couple of sentences); the chat renders the
+ *  whole thing, line breaks included. */
+export const BRAIN_LIMITS = { reply: 2000, report: 2000, question: 300, title: 140, desc: 2400, parcels: 6 };
 
 /** Where a request came from. */
 export type BrainSource = 'chat' | 'task';

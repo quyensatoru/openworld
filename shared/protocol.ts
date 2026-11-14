@@ -329,15 +329,26 @@ export type ServerMsg =
 
 export const LIMITS = {
   name: 32,
-  chat: 500,
+  chat: 2000,
   statusText: 60,
   taskTitle: 140,
-  taskDesc: 2000,
+  taskDesc: 3000,
 };
 
 export function clampStr(s: unknown, max: number): string {
   if (typeof s !== 'string') return '';
   return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').trim().slice(0, max);
+}
+
+/** A cap on text a person reads. Unlike clampStr it never stops in the middle of a word without
+ *  saying so: what was left out is marked with “…”, so half an answer is never mistaken for all of it.
+ *  Line breaks are kept — the chat shows them. */
+export function clipStr(s: unknown, max: number): string {
+  const t = clampStr(s, Number.MAX_SAFE_INTEGER);
+  if (t.length <= max) return t;
+  const head = t.slice(0, max - 1);
+  const edge = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'));
+  return `${(edge > max * 0.7 ? head.slice(0, edge) : head).trimEnd()}…`;
 }
 
 /** YYYY-MM-DD for the given epoch ms in a fixed-offset timezone. */

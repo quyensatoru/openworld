@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AGENT_ID, DEPTS, DEPT_BY_ID } from '../../shared/agents';
 import { BRAIN_ID, RATE_REASON_MAX, REPORT_PREFIX } from '../../shared/brain';
 import { ZONE_BY_ID } from '../../shared/map';
-import { STATUS_META, type ChatMsg } from '../../shared/protocol';
+import { LIMITS, STATUS_META, type ChatMsg } from '../../shared/protocol';
 import type { ThreadFilter } from '../../shared/threads';
 import { game } from '../game';
 import { savePref } from '../profile';
@@ -311,7 +311,7 @@ function Chat() {
         <input
           ref={inputRef}
           className="input"
-          maxLength={500}
+          maxLength={LIMITS.chat}
           value={draft}
           placeholder={openThread ? 'Trả lời trong việc này…' : tab === 'ask' ? 'Cần gì cứ nói với Tổng quản…' : `Nhắn với người ở ${zoneName}…`}
           onChange={(e) => {

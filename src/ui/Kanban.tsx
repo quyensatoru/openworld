@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { DEPTS, DEPT_BY_ID, canAssign, isDept, mentionedDepts, type DeptId } from '../../shared/agents';
-import { COLUMNS, PRIORITY_META, type Priority, type Task, type TaskColumn } from '../../shared/protocol';
+import { COLUMNS, LIMITS, PRIORITY_META, type Priority, type Task, type TaskColumn } from '../../shared/protocol';
 import { game } from '../game';
 import { getState, nameOf, setState, useStore } from '../store';
 import { AvatarDot, fmtTime, timeAgo } from './common';
@@ -256,11 +256,11 @@ function TaskEditor({ task, onClose }: { task: Task; onClose: () => void }) {
         className="input"
         style={{ fontSize: 17, fontWeight: 700 }}
         value={title}
-        maxLength={140}
+        maxLength={LIMITS.taskTitle}
         onChange={(e) => setTitle(e.target.value)}
         onBlur={() => title.trim() && title !== task.title && game.updateTask(task.id, { title: title.trim() })}
       />
-      <textarea className="input" placeholder="Mô tả, link PR, ghi chú…" value={desc} maxLength={2000} onChange={(e) => setDesc(e.target.value)} onBlur={() => desc !== task.desc && game.updateTask(task.id, { desc })} />
+      <textarea className="input" placeholder="Mô tả, link PR, ghi chú…" value={desc} maxLength={LIMITS.taskDesc} onChange={(e) => setDesc(e.target.value)} onBlur={() => desc !== task.desc && game.updateTask(task.id, { desc })} />
       <div className="row2">
         <label style={{ fontSize: 13, fontWeight: 600 }}>
           Người làm

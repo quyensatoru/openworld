@@ -44,6 +44,7 @@ import {
   PICKER_EMOTES,
   WHEEL_PRIZES,
   WHEEL_SPIN_MS,
+  clipStr,
   parseYouTube,
   type ActivityEvent,
   type AnimState,
@@ -678,8 +679,9 @@ class Game {
         const myName = s.me?.name ?? '';
         if (myName && mentions(m.text, myName)) {
           chime('ping');
-          toast(`💬 ${m.name} nhắc đến bạn: ${m.text}`, 'info', 7000);
-          notify(`${m.name} nhắc đến bạn`, m.text);
+          // the toast and the notification only tease the line — the whole of it is in the chat panel
+          toast(`💬 ${m.name} nhắc đến bạn: ${clipStr(m.text, 160)}`, 'info', 7000);
+          notify(`${m.name} nhắc đến bạn`, clipStr(m.text, 200));
           flashTitle('💬 Có người nhắc bạn');
         }
       }

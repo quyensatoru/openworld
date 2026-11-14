@@ -42,7 +42,7 @@ import {
   type ImproveRound,
 } from '../shared/brain';
 import { DEPTS, DEPT_BY_ID, isDept, lessonFits, rankLessons, type Debrief, type DeptId, type Lesson, type RunnerMachine } from '../shared/agents';
-import { PRIORITY_META, clampStr, settled, type ActivityEvent, type ChatMsg, type Priority, type ServerMsg, type Task } from '../shared/protocol';
+import { LIMITS, PRIORITY_META, clampStr, clipStr, settled, type ActivityEvent, type ChatMsg, type Priority, type ServerMsg, type Task } from '../shared/protocol';
 import * as db from './db';
 
 export interface BrainHost {
@@ -435,7 +435,7 @@ export class Brain {
 
   /** A person said something to the AI. `root` opens (or continues) the thread it is discussed in. */
   async request(who: string, whoName: string, text: string, root: string, source: BrainSource = 'chat', taskId?: string): Promise<void> {
-    const body = oneLine(text, 1500);
+    const body = oneLine(text, LIMITS.chat);
     if (!body) return;
     const now = Date.now();
     // a reply inside a thread we asked a question in is the answer, not a new request
@@ -704,6 +704,7 @@ export class Brain {
       'Quy tắc:',
       '- Hỏi ít. Nếu còn thiếu chi tiết nhỏ: đừng hỏi — chọn "route" và ghi rõ giả định của bạn vào "desc". Chỉ hỏi thứ đáng hỏi.',
       '- Trả lời gọn. "reply" là tiếng Việt, 1–3 câu, như đồng nghiệp nói với nhau, không markdown, không gạch đầu dòng. Nói rõ ai sẽ làm gì hoặc câu trả lời là gì.',
+      '- Riêng câu hỏi cần giải thích (văn phòng chạy thế nào, ưu/nhược điểm, so sánh): trả lời đủ ý trong vài đoạn ngắn, xuống dòng giữa các đoạn, vẫn không markdown và không quá 1800 ký tự — viết dài hơn sẽ bị cắt bớt.',
       '- Mỗi phần việc là một phiên tốn tiền và tốn thời gian. Việc nhỏ → đúng 1 phần. Đừng chia nhỏ hơn mức cần, đừng thêm phòng chỉ để cho đủ.',
       '- "desc" viết cho người chưa biết bối cảnh: làm gì, xong thì như thế nào, file/khu vực nào nếu bạn biết, và phần này nối tiếp phần nào. Không bịa tên file.',
       '- Không bịa trạng thái. Chỉ nói những gì có trong "Tình hình văn phòng".',
@@ -798,7 +799,7 @@ export class Brain {
 
   // ------------------------------------------------------------------ applying a decision
   private async apply(it: BrainItem, d: BrainDecision) {
-    let reply = oneLine(d.reply, BRAIN_LIMITS.reply);
+    let reply = clipStr(d.reply, BRAIN_LIMITS.reply);
     const thread = Brain.thread(it.who);
     if (d.action === 'drop') {
       await this.finish(it, d, []);
@@ -842,9 +843,9 @@ export class Brain {
         const note = `— ${it.whoName} nhắn thêm: ${it.text}`;
         // the card keeps its head (what the work is), its latest notes, and the addition at the end —
         // cutting from the end would drop what was said most recently, a line at a time
-        const room = Math.max(0, 2000 - note.length - 2);
+        const room = Math.max(0, LIMITS.taskDesc - note.length - 2);
         const kept = t.desc.length <= room ? t.desc : room > 800 ? `${t.desc.slice(0, 500)}\n…\n${t.desc.slice(t.desc.length - (room - 503))}` : t.desc.slice(0, room);
-        t.desc = t.desc ? `${kept}\n\n${note}` : note.slice(0, 2000);
+        t.desc = t.desc ? `${kept}\n\n${note}` : note.slice(0, LIMITS.taskDesc);
         // a card waiting for review that the person adds to goes back to be done again, with the addition
         const rework = t.col === 'review';
         if (rework) {
@@ -871,7 +872,7 @@ export class Brain {
       // it named a card that is finished or not on the board: the plan stands in its place, and if
       // there is no plan the person hears that nothing happened instead of "đã gộp rồi"
       d = d.plan?.length ? { ...d, action: 'route', reply: '' } : { ...d, action: 'answer', reply: 'Việc bạn nhắc tới không còn mở trên bảng nên mình chưa gộp được. Bạn nhắn lại yêu cầu trong một câu để mình giao cho đúng phòng nhé.' };
-      reply = oneLine(d.reply, BRAIN_LIMITS.reply);
+      reply = clipStr(d.reply, BRAIN_LIMITS.reply);
     }
     if (d.action === 'route') {
       const made = await this.dispatch(it, d);
@@ -914,11 +915,11 @@ export class Brain {
         .map((t) => t.id);
       const reuse = i === 0 && from;
       const t: Task = reuse
-        ? Object.assign(from, { dept: p.dept as DeptId, title: clampStr(p.title, BRAIN_LIMITS.title) || from.title, desc: clampStr(p.desc ?? from.desc, BRAIN_LIMITS.desc), priority: this.prio(p.priority, from.priority), updatedAt: now, after: after.length ? after : undefined, thread: it.root || undefined })
+        ? Object.assign(from, { dept: p.dept as DeptId, title: clampStr(p.title, BRAIN_LIMITS.title) || from.title, desc: clipStr(p.desc ?? from.desc, BRAIN_LIMITS.desc), priority: this.prio(p.priority, from.priority), updatedAt: now, after: after.length ? after : undefined, thread: it.root || undefined })
         : {
             id: crypto.randomUUID(),
             title: clampStr(p.title, BRAIN_LIMITS.title),
-            desc: clampStr(p.desc ?? '', BRAIN_LIMITS.desc),
+            desc: clipStr(p.desc ?? '', BRAIN_LIMITS.desc),
             col: 'todo',
             ord: ++ord,
             assignee: null,
@@ -989,7 +990,8 @@ export class Brain {
 
   private async say(text: string, ch: string, root?: string) {
     if (!text) return;
-    await this.host.chat({ id: crypto.randomUUID(), ch, from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: oneLine(text, BRAIN_LIMITS.reply), ts: Date.now(), ...(root ? { root } : {}) });
+    // what a person reads: keep the paragraphs (the chat shows line breaks) and mark anything left out
+    await this.host.chat({ id: crypto.randomUUID(), ch, from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: clipStr(text, BRAIN_LIMITS.reply), ts: Date.now(), ...(root ? { root } : {}) });
   }
 
   // ------------------------------------------------------------------ the final report
@@ -1095,7 +1097,7 @@ export class Brain {
     it.reportMsg = crypto.randomUUID();
     this.save();
     this.push();
-    await this.host.chat({ id: it.reportMsg, ch: Brain.thread(it.who), from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: `${REPORT_PREFIX}: ${clampStr(reply.replace(/\s+/g, ' '), 1200)}`, ts: Date.now(), ...(it.root ? { root: it.root } : {}) });
+    await this.host.chat({ id: it.reportMsg, ch: Brain.thread(it.who), from: BRAIN_ID, name: `🧠 ${BRAIN_NAME}`, text: `${REPORT_PREFIX}: ${clipStr(reply, BRAIN_LIMITS.report)}`, ts: Date.now(), ...(it.root ? { root: it.root } : {}) });
     await this.host.pushActivity(BRAIN_ID, { ts: Date.now(), kind: 'say', icon: '📋', text: `Báo cáo cho ${it.whoName}: ${oneLine(reply, 140)}` });
   }
 
