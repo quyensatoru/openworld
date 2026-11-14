@@ -263,6 +263,31 @@ function client(cookie, cid, name) {
     await api('/api/agents/exit', { agent: claim.agent?.id, code: 0 });
   }
 
+  // ---- 9. Tổng quản decides with the repo in front of it (it has no repo of its own)
+  {
+    const mapText = `120 file. Thư mục: worker (20), src (60)\nnpm scripts: test, build, deploy-${run}`;
+    await api('/api/agents/jobs', {
+      depts: 'lead,dev',
+      machine: { id: `m-map-${run}`, label: `map-${run}`, project: `shop-${run}`, repo: `github.com/acme/shop-${run}`, named: 'remote', dir: '/tmp/x', map: mapText },
+      running: [],
+      waiting: [],
+    });
+    await ask(`QA1 map ${run}`);
+    const job = await until(async () => {
+      const j = await brainJob();
+      if (!j) return null;
+      if (j.kind === 'report' || !String(j.prompt ?? '').includes(`QA1 map ${run}`)) {
+        await api('/api/agents/brain', { id: j.id, raw: j.kind === 'report' ? JSON.stringify({ status: 'done', reply: 'x', lesson: '' }) : JSON.stringify({ action: 'drop', reply: '' }) });
+        return null;
+      }
+      return j;
+    }, 15_000, 500);
+    const prompt = String(job?.prompt ?? '');
+    ok(prompt.includes('## Dự án đang có máy trực'), 'the decision prompt carries the projects on call');
+    ok(prompt.includes(`deploy-${run}`), "and that project's map, so it can size the work and name real commands");
+    if (job) await api('/api/agents/brain', { id: job.id, raw: JSON.stringify({ action: 'drop', reply: '' }) });
+  }
+
   A.close();
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);
