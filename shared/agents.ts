@@ -347,6 +347,9 @@ export interface RunnerMachine {
   dir?: string;
   /** it called the project this, and the office knows the repo under another name */
   alias?: string;
+  /** a short description of the repo (shape, scripts, libraries, recent commits) for 🧠 Tổng quản,
+   *  which decides with an empty working directory and would otherwise know nothing about the code */
+  map?: string;
   depts: DeptId[];
   /** last time it asked for work */
   at: number;

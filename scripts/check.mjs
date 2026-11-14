@@ -74,6 +74,8 @@ function fail(step) {
 }
 
 if (want('typecheck') && (await run('typecheck', 'npm', ['run', '--silent', 'typecheck']))) fail('typecheck');
+// the rules themselves (permissions, scopes, config) — no server, a second to run, a hundred cases
+if (want('unit') && (await run('unit', 'node', ['scripts/unit-test.mjs']))) fail('unit');
 
 const serverSteps = [
   ['smoke', 'scripts/smoke-test.mjs'],

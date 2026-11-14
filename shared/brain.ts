@@ -134,6 +134,10 @@ export interface BrainConfig {
   maxPerPersonHour: number;
   /** let the orchestrator call a meeting of department sessions (expensive — off by default) */
   meetings: boolean;
+  /** stop starting sessions once the last 24 hours cost this much (USD; 0 = no money ceiling).
+   *  Counting sessions is a guess at the bill; this is the bill. It lags by one session, because a
+   *  session's cost is only known when it ends. */
+  maxCostDay: number;
   /** who answers when a session wants to do something its profile does not allow outright:
    *  'ask'  — always the machine's owner (a 🔐 card)
    *  'lead' — 🧠 Tổng quản decides; only irreversible things the work did not clearly ask for reach a person
@@ -151,7 +155,7 @@ export const FLOW_DEPTS: DeptId[] = ['qa', 'docs', 'ops'];
 
 export type ApprovalMode = 'ask' | 'lead' | 'auto';
 
-export const DEFAULT_BRAIN: BrainConfig = { model: 'sonnet', maxSessionsHour: 24, maxPerPersonHour: 8, meetings: false, approvals: 'lead', flow: {} };
+export const DEFAULT_BRAIN: BrainConfig = { model: 'sonnet', maxSessionsHour: 24, maxPerPersonHour: 8, meetings: false, approvals: 'lead', maxCostDay: 0, flow: {} };
 
 export function sanitizeBrainConfig(v: unknown, fallback: BrainConfig = DEFAULT_BRAIN): BrainConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
@@ -161,6 +165,7 @@ export function sanitizeBrainConfig(v: unknown, fallback: BrainConfig = DEFAULT_
     maxSessionsHour: num(o.maxSessionsHour, 1, 200, fallback.maxSessionsHour),
     maxPerPersonHour: num(o.maxPerPersonHour, 1, 100, fallback.maxPerPersonHour),
     meetings: typeof o.meetings === 'boolean' ? o.meetings : fallback.meetings,
+    maxCostDay: typeof o.maxCostDay === 'number' && Number.isFinite(o.maxCostDay) ? Math.min(1000, Math.max(0, Math.round(o.maxCostDay * 100) / 100)) : (fallback.maxCostDay ?? 0),
     approvals: o.approvals === 'ask' || o.approvals === 'lead' || o.approvals === 'auto' ? o.approvals : fallback.approvals,
     flow: sanitizeFlow(o.flow, fallback.flow),
   };

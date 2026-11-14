@@ -165,6 +165,62 @@ function detectRepo(dir) {
     startupNotes.push(`⚠️  ${root} không có git remote — dự án lấy theo tên thư mục ("${name}"). Mở repo này ở đường dẫn khác trên máy khác sẽ thành một dự án khác: dùng --project ${name} ở mọi máy.`);
   return { root, key, name, from: named ? 'option' : key ? 'remote' : 'folder' };
 }
+/** A short description of the repo for 🧠 Tổng quản, which has no repo of its own.
+ *  It decides with an empty working directory and no tools — that is what keeps it cheap — so
+ *  without this it could not tell a three-line fix from a refactor, nor name the command that runs
+ *  the tests. A thousand characters of shape is enough to decide with, and costs one `git ls-files`
+ *  per runner start. */
+function projectMap(root) {
+  const lines = [];
+  const safe = (fn, dflt = '') => {
+    try {
+      return fn();
+    } catch {
+      return dflt;
+    }
+  };
+  const files = safe(() => git(root, 'ls-files').split('\n').filter(Boolean), []);
+  if (files.length) {
+    const dirs = new Map();
+    for (const f of files) {
+      const top = f.includes('/') ? f.split('/')[0] : '(gốc)';
+      dirs.set(top, (dirs.get(top) ?? 0) + 1);
+    }
+    const top = [...dirs.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    lines.push(`${files.length} file. Thư mục: ${top.map(([d, n]) => `${d} (${n})`).join(', ')}`);
+  }
+  const pkg = safe(() => JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')), null);
+  if (pkg) {
+    const scripts = Object.keys(pkg.scripts || {}).slice(0, 14);
+    if (scripts.length) lines.push(`npm scripts: ${scripts.join(', ')}`);
+    const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).slice(0, 14);
+    if (deps.length) lines.push(`Thư viện chính: ${deps.join(', ')}`);
+  }
+  for (const [f, what] of [
+    ['go.mod', 'Go'],
+    ['Cargo.toml', 'Rust'],
+    ['requirements.txt', 'Python'],
+    ['pyproject.toml', 'Python'],
+    ['composer.json', 'PHP'],
+    ['pom.xml', 'Java (maven)'],
+    ['Gemfile', 'Ruby'],
+    ['Dockerfile', 'Docker'],
+    ['wrangler.jsonc', 'Cloudflare Workers'],
+    ['wrangler.toml', 'Cloudflare Workers'],
+  ])
+    if (fs.existsSync(path.join(root, f))) lines.push(`Có ${f} (${what})`);
+  const readme = safe(() => fs.readFileSync(path.join(root, 'README.md'), 'utf8'), '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#') && !l.startsWith('!['))
+    .slice(0, 2)
+    .join(' ');
+  if (readme) lines.push(`README: ${readme.slice(0, 220)}`);
+  const log = safe(() => git(root, 'log', '-4', '--format=%s'), '');
+  if (log) lines.push(`Commit gần đây: ${log.split('\n').map((l) => l.slice(0, 70)).join(' · ')}`);
+  return lines.join('\n').slice(0, 1200);
+}
+
 const REPO = detectRepo(dirArg);
 const workdir = REPO.root;
 const PROJECT = REPO.name;
@@ -176,6 +232,7 @@ try {
 }
 /** This runner: one machine may run several (one per project), and each keeps its own sessions. */
 const RUNNER = `r-${crypto.createHash('sha256').update(`${MACHINE}|${base}|${workdir}`).digest('hex').slice(0, 24)}`;
+const MAP = projectMap(workdir);
 
 // ---------------------------------------------------------------- talking to the office
 const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -461,7 +518,17 @@ function promptFor(job, agent) {
       agent.dept === 'lead'
         ? `Đọc bối cảnh (code, tài liệu) nếu cần, rồi giao từng phần cho đúng phòng bằng mcp__office__handoff. Xong: mcp__office__task_update id="${t.short}" col="done" kèm note kế hoạch (ai làm gì).`
         : t.mode === 'quick'
-          ? `Việc nhỏ: làm thẳng trong thư mục hiện tại, không cần mở kỹ năng, không cần debrief. Xong: mcp__office__task_update id="${t.short}" col="review" kèm note (đổi gì, file nào, kiểm bằng lệnh gì). Làm rồi thấy thực ra là việc lớn: col="todo" kèm note lý do.`
+          ? [
+              `Việc nhỏ: làm thẳng trong thư mục hiện tại, không cần mở kỹ năng, không cần debrief. Xong: mcp__office__task_update id="${t.short}" col="review" kèm note (đổi gì, file nào, kiểm bằng lệnh gì). Làm rồi thấy thực ra là việc lớn: col="todo" kèm note lý do.`,
+              ...(job.extra?.length
+                ? [
+                    '',
+                    `Phiên này nhận thêm ${job.extra.length} việc nhỏ nữa của phòng bạn (làm lần lượt, mỗi việc cập nhật riêng):`,
+                    ...job.extra.map((x) => `- #${x.short}: ${x.title}${x.desc ? `\n  ${String(x.desc).replace(/\n+/g, ' ').slice(0, 300)}` : ''}`),
+                    'Mỗi việc xong thì task_update riêng cho đúng mã việc đó. Việc nào hoá ra không nhỏ thì để col="todo" kèm lý do và làm tiếp việc còn lại.',
+                  ]
+                : []),
+            ].join('\n')
           : `Mở kỹ năng phù hợp (mcp__office__skill) rồi làm trong thư mục hiện tại. Thiếu một thông tin mà đoán sai thì hỏng cả việc: mcp__office__ask_human một câu duy nhất; chi tiết nhỏ thì tự quyết và ghi giả định vào note. Xong: mcp__office__task_update id="${t.short}" col="review" (hoặc "done" nếu chắc chắn không cần duyệt) kèm note kết quả. Không làm được: col="todo" và note lý do.`,
     ].join('\n');
   }
@@ -706,7 +773,10 @@ function start(entry, resume = false, why = '') {
           // the command itself travels with the line: a department's "đã chạy test" is worth more to
           // the person reading the report when the office can show what was really run
           const cmd = c.name === 'Bash' ? clip(String(c.input?.command || '').replace(/[A-Za-z0-9_\-]{32,}/g, '•••'), 160) : '';
-          feed.push({ kind: 'tool', ...t, ...(cmd ? { cmd } : {}) });
+          // …and which file it changed, so the card (and Tổng quản's report) names the real work
+          const edited = /^(Edit|MultiEdit|Write|NotebookEdit)$/.test(c.name) ? String(c.input?.file_path || c.input?.notebook_path || '') : '';
+          const file = edited ? clip(edited.startsWith(workdir) ? path.relative(workdir, edited) : edited, 120) : '';
+          feed.push({ kind: 'tool', ...t, ...(cmd ? { cmd } : {}), ...(file ? { file } : {}) });
         }
       }
     } else if (m.type === 'user') {
@@ -931,7 +1001,7 @@ async function round() {
   await flushExits();
   const jobs = await api('/api/agents/jobs', {
     depts: depts.join(','),
-    machine: { id: RUNNER, label: MACHINE_LABEL, project: PROJECT, repo: REPO.key, named: REPO.from, dir: workdir },
+    machine: { id: RUNNER, label: MACHINE_LABEL, project: PROJECT, repo: REPO.key, named: REPO.from, dir: workdir, map: MAP },
     running: [...running.keys()],
     waiting: [...waiting.entries()].map(([agent, w]) => ({ agent, until: w.until, why: w.why })),
     outage: outage ? { until: outage.until, why: outage.why } : null,
@@ -965,7 +1035,7 @@ async function round() {
     if (!j.meeting && busyIn(j.dept) >= PER_DEPT) continue;
     const r = await api('/api/agents/claim', { kind: j.kind, id: j.id, dept: j.dept, approvers: APPROVERS, machine: RUNNER, dir: workdir });
     if (!r.ok) continue;
-    start({ agent: r.agent, job: { kind: j.kind, task: r.task, meeting: r.meeting }, profile: r.profile, approvals: r.approvals, sid: crypto.randomUUID(), resumes: 0 });
+    start({ agent: r.agent, job: { kind: j.kind, task: r.task, extra: r.extra, meeting: r.meeting }, profile: r.profile, approvals: r.approvals, sid: crypto.randomUUID(), resumes: 0 });
   }
 }
 
@@ -988,7 +1058,7 @@ async function adoptAll() {
     entry.agent = r.agent;
     entry.profile = r.profile;
     entry.approvals = r.approvals;
-    entry.job = { kind: r.kind, task: r.task, meeting: r.meeting };
+    entry.job = { kind: r.kind, task: r.task, extra: r.extra ?? entry.job?.extra, meeting: r.meeting };
     state.sessions[id] = entry;
     waiting.set(id, { until: Date.now(), why: 'máy trực vừa khởi động lại' });
     log(`♻️  nhận lại phiên của ${r.agent.name} — sẽ làm tiếp`);

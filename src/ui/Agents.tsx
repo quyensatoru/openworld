@@ -158,6 +158,10 @@ function BrainTab() {
             <input className="input" type="number" min={1} max={200} value={cfg.maxSessionsHour} onChange={(e) => set({ maxSessionsHour: Number(e.target.value) })} />
           </label>
           <label>
+            Trần chi phí mỗi ngày (USD, 0 = không giới hạn)
+            <input className="input" type="number" min={0} max={1000} step={0.5} value={cfg.maxCostDay ?? 0} onChange={(e) => set({ maxCostDay: Number(e.target.value) })} />
+          </label>
+          <label>
             Trần phiên/giờ cho mỗi người
             <input className="input" type="number" min={1} max={100} value={cfg.maxPerPersonHour} onChange={(e) => set({ maxPerPersonHour: Number(e.target.value) })} />
           </label>

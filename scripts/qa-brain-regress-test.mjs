@@ -12,6 +12,14 @@ const ok = (cond, label) => {
   if (!cond) failures++;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms, every = 300) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v || Date.now() > end) return v;
+    await sleep(every);
+  }
+}
 
 function client(cookie, cid, name) {
   const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/api/ws`, { headers: { Cookie: cookie, Origin: BASE } });
@@ -220,6 +228,39 @@ function client(cookie, cid, name) {
     await api('/api/agents/exit', { agent: claim.agent?.id, code: 0 });
     A.send({ t: 'agents', m: { a: 'brainConfig', config: { ...cfg, flow: {} } } });
     await sleep(300);
+  }
+
+  // ---- 8. small cards share one session (a session's cost is mostly fixed)
+  {
+    const root = await ask(`QA1 gộp ${run}`);
+    const job = await brainJob();
+    const t1 = `Đổi chữ nút lưu ${run}`;
+    const t2 = `Sửa màu viền ô tìm kiếm ${run}`;
+    const t3 = `Viết lại phần cài đặt ${run}`;
+    await api('/api/agents/brain', {
+      id: job?.id,
+      raw: JSON.stringify({
+        action: 'route',
+        reply: 'Mấy việc nhỏ này một lượt là xong.',
+        plan: [
+          { dept: 'dev', title: t1, desc: 'x', priority: 'normal', after: [], mode: 'quick' },
+          { dept: 'dev', title: t2, desc: 'x', priority: 'normal', after: [], mode: 'quick' },
+          { dept: 'docs', title: t3, desc: 'x', priority: 'normal', after: [], mode: 'quick' },
+        ],
+      }),
+    });
+    const mine = await until(async () => {
+      const list = (await api('/api/agents/jobs?depts=dev,docs')).tasks;
+      return list.find((t) => t.title === t1) ? list : null;
+    }, 6000);
+    const first = mine?.find((t) => t.title === t1);
+    const claim = await api('/api/agents/claim', { kind: 'task', id: first?.id });
+    const extra = claim.extra ?? [];
+    ok(extra.length === 1 && extra[0].title === t2, `one session takes the other small card of its department (${extra.map((x) => x.title).join(', ') || 'none'})`);
+    ok(!extra.some((x) => x.title === t3), "and not another department's card");
+    const board = (await api('/api/agents/jobs?depts=dev')).tasks.map((t) => t.title);
+    ok(!board.includes(t2), 'the card it took is off the board, so no second session starts on it');
+    await api('/api/agents/exit', { agent: claim.agent?.id, code: 0 });
   }
 
   A.close();

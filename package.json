@@ -16,6 +16,7 @@
     "assets:inspect": "node scripts/inspect-assets.mjs",
     "assets:prepare": "node scripts/prepare-assets.mjs",
     "test": "node scripts/smoke-test.mjs",
+    "test:unit": "node scripts/unit-test.mjs",
     "test:agents": "node scripts/agents-test.mjs",
     "test:runner": "node scripts/runner-test.mjs",
     "e2e": "node scripts/e2e.mjs",

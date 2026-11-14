@@ -329,10 +329,16 @@ export class Brain {
 
   /** May a department session start now for work that `origin` asked for? */
   mayStart(origin: string): boolean {
+    return !this.limitHit(origin);
+  }
+
+  /** Which ceiling is in the way right now, in words for the person. '' = none. */
+  limitHit(origin: string): string {
     const b = this.budget();
-    if (b.sessionsHour >= this.cfg.maxSessionsHour) return false;
-    if (!origin || origin === 'system') return true;
-    return !b.throttled.includes(origin);
+    if (this.cfg.maxCostDay > 0 && b.costDay >= this.cfg.maxCostDay) return `trần chi phí $${this.cfg.maxCostDay}/ngày (đã dùng $${b.costDay.toFixed(2)})`;
+    if (b.sessionsHour >= this.cfg.maxSessionsHour) return `trần ${this.cfg.maxSessionsHour} phiên/giờ của văn phòng`;
+    if (!origin || origin === 'system') return '';
+    return b.throttled.includes(origin) ? `trần ${this.cfg.maxPerPersonHour} phiên/giờ của mỗi người` : '';
   }
 
   /** A department session just started — it counts against the hour. */
@@ -743,6 +749,7 @@ export class Brain {
       '- "quick": thay đổi nhỏ gọn trong một chỗ (sửa chữ hiển thị, đổi một hằng số, sửa một lỗi đã biết rõ nguyên nhân, thêm một kiểm tra nhỏ). Phiên chạy với hướng dẫn ngắn và bỏ bước đúc rút.',
       '- "full": còn lại — phải đọc nhiều chỗ, đụng nhiều file, chưa rõ nguyên nhân, hoặc dễ gây hồi quy.',
       '- Không chắc thì để "full". Đừng gán "quick" cho việc mà bạn phải đoán xem nó nhỏ hay to.',
+      '- Phần "Dự án đang có máy trực" cho bạn biết repo có gì (thư mục, npm scripts, thư viện, commit gần đây). Dùng nó để đoán đúng quy mô, gọi đúng tên lệnh/thư mục trong "desc", và đừng bịa thêm thứ không có ở đó.',
       '',
       'Quy tắc:',
       '- Hỏi ít. Nếu còn thiếu chi tiết nhỏ: đừng hỏi — chọn "route" và ghi rõ giả định của bạn vào "desc". Chỉ hỏi thứ đáng hỏi.',
@@ -812,6 +819,21 @@ export class Brain {
         const fails = this.host.taskFails(t.id);
         return `- ${DEPT_BY_ID.get(t.dept!)!.short}${t.project ? ` · ${t.project}` : ''}: ${oneLine(t.title, 80)} → ${t.col === 'done' ? 'xong' : 'chờ duyệt'}${fails ? `, hỏng giữa chừng ${fails} lần` : ''}${(t.hops ?? 0) > 1 ? `, qua ${t.hops} lần bàn giao` : ''}`;
       });
+    // what the projects on call actually are: 🧠 decides with no repo and no tools, so this is the
+    // only thing standing between "chia việc" and guessing. One project gets the whole map; several
+    // get a few lines each, because the decision is cheap only while the prompt stays small.
+    const maps = this.host
+      .machines()
+      .filter((m) => m.map && m.project)
+      .filter((m, i, all) => all.findIndex((x) => x.project === m.project) === i);
+    const mapLines = maps.length
+      ? [
+          '## Dự án đang có máy trực',
+          ...maps.map((m) => `### ${m.project}
+${clampStr(m.map!, maps.length === 1 ? 1200 : 420)}`),
+          '',
+        ]
+      : [];
     const d = new Date(Date.now() + this.host.tz * 60_000);
     const clock = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
     // a line inside a thread that already has work is most likely about that work
@@ -830,6 +852,7 @@ export class Brain {
     const asked = it.root ? this.items.filter((x) => x !== it && x.root === it.root && x.at < it.at).slice(-4).map((x) => `- ${x.whoName}: “${oneLine(x.text, 200)}”`) : [];
     const followUps = it.followUps.filter((f) => f.a).map((f) => `Bạn đã hỏi: “${oneLine(f.q, 200)}” — Họ trả lời: “${oneLine(f.a, 400)}”`);
     return [
+      ...mapLines,
       `## Tình hình văn phòng (lúc ${clock})`,
       busy.length ? `Đang làm:\n${busy.join('\n')}` : 'Không có nhân viên văn phòng nào đang làm việc.',
       '',
@@ -942,8 +965,8 @@ export class Brain {
         owe(revived.map((x) => x.id));
         const who = made.map((t) => `${DEPT_BY_ID.get(t.dept!)!.icon} ${DEPT_BY_ID.get(t.dept!)!.name}`);
         const line = reply || `Mình giao cho ${[...new Set(who)].join(', ')} rồi, bạn theo dõi trên bảng nhé.`;
-        const throttled = !this.mayStart(it.who);
-        await this.say(`${throttled ? `${line} (Văn phòng đang chạm trần ${this.cfg.maxSessionsHour} phiên/giờ nên việc sẽ vào hàng chờ.)` : line}${again}`, thread, it.root);
+        const throttled = this.limitHit(it.who);
+        await this.say(`${throttled ? `${line} (Văn phòng đang chạm ${throttled} nên việc sẽ vào hàng chờ.)` : line}${again}`, thread, it.root);
         await this.finish(it, d, made.map((t) => t.dept!));
         return;
       }

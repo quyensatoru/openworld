@@ -32,6 +32,7 @@ worker/           Worker + Durable Object + D1 + xác thực mã văn phòng
 worker/brain.ts   🧠 Tổng quản: hàng đợi yêu cầu, prompt quyết định, áp quyết định lên bảng việc
 worker/agents.ts  nhân viên các phòng ban: chỗ ngồi, MCP, hồ sơ phòng, giao thức máy trực
 shared/           protocol, layout văn phòng (map.ts), cấu hình avatar, brain.ts — dùng chung client/server
+shared/risk.ts    phiên được làm gì: an toàn / cần xét / phải hỏi người / cấm cứng (test ở scripts/unit-test.mjs)
 src/world/        thế giới 3D: engine, office, furniture, controller, pathfinding, avatar/
 src/rtc/          voice/video theo khoảng cách
 src/ui/           React HUD: đăng nhập, tạo nhân vật, toolbar, chat, Kanban…
@@ -72,7 +73,13 @@ Một yêu cầu đi như sau:
 
 **Quy trình "xong việc" theo dự án** (🧠 → Cách Tổng quản làm việc). Mặc định một yêu cầu "sửa lỗi X" chỉ sinh đúng một việc cho Phát triển, nên nó dừng ở **Chờ duyệt** và bạn phải tự kéo thẻ sang Kiểm thử hay Vận hành. Bật quy trình cho dự án (vd. `Code xong → 🧪 QA → 🚀 Ops`) thì **văn phòng tự nối các bước đó vào mọi kế hoạch**: Tổng quản không phải nhớ, bạn không phải kéo, và bước sau tự chạy ngay khi bước trước chuyển sang Chờ duyệt. Bước nào Tổng quản đã tự xếp thì không bị nhân đôi. Bật 🚀 Vận hành nghĩa là **đồng ý cho deploy tự động** khi phần trước xong.
 
+**Tổng quản biết repo có gì.** Nó vẫn quyết với thư mục trống và không công cụ nào — đó là chỗ rẻ — nhưng máy trực gửi kèm một **bản đồ dự án** (cây thư mục, npm scripts, thư viện chính, vài commit gần đây, mô tả README), nên nó đoán đúng quy mô việc và gọi đúng tên lệnh/thư mục trong mô tả giao cho phòng ban, thay vì bịa.
+
+**Nó cũng biết các phòng vừa sửa gì.** Mỗi thẻ việc khi chuyển sang Chờ duyệt/Xong tự mang theo `📁 File đã sửa` và `🧾 Lệnh đã chạy trong phiên` — văn phòng thấy từng thao tác của phiên nên không phụ thuộc vào việc phiên có nhớ kể hay không, và báo cáo 📋 cuối cùng đọc từ đó.
+
 **Việc nhỏ chạy ở chế độ gọn.** Chi phí một phiên phần lớn là cố định (hồ sơ phòng ban, quy tắc chung, bước đúc rút cuối), nên một sửa đổi hai dòng từng phải trả đủ từng ấy. Tổng quản gắn `mode` cho mỗi phần việc: `quick` cho thay đổi nhỏ gọn một chỗ — phiên chạy với hướng dẫn ngắn, không báo tiến độ, không debrief; `full` cho phần còn lại. Không chắc thì nó để `full`.
+
+**Nhiều việc nhỏ dùng chung một phiên.** Khi một phiên nhận một thẻ `quick`, văn phòng đưa luôn tối đa 2 thẻ `quick` khác của cùng phòng, cùng dự án, đang sẵn sàng — ba sửa đổi hai dòng trước đây trả tiền cho ba phiên, giờ trả cho một.
 
 **Xem thẳng phiên Claude trên máy.** Mỗi nhân viên là một phiên `claude` thật: mở màn hình của họ trong Office là thấy sẵn lệnh `cd <thư mục> && claude --resume <session-id>`, bấm **Chép** rồi dán vào terminal là đọc được toàn bộ cuộc hội thoại đó.
 
@@ -95,6 +102,7 @@ Tất cả chỉnh ở panel 🧠 (phím/nút Nhân viên văn phòng):
 - **Model quyết định** — mặc định Sonnet. Haiku rẻ và nhanh hơn, Opus cho quyết định khó.
 - **Trần phiên/giờ** cho cả văn phòng và cho mỗi người — phiên làm việc mới là thứ tốn tiền. Bên cạnh đó panel hiện **số tiền thật** (`$` giờ này và 24 giờ qua) do Claude Code báo về sau mỗi phiên.
 - **Quy trình "xong việc"** cho từng dự án (và một dòng mặc định cho mọi dự án): sau khi code xong thì tự chạy tiếp QA / Tài liệu / Vận hành.
+- **Trần chi phí mỗi ngày (USD)** — 0 là không giới hạn. Chạm trần thì không phiên nào mới được mở và người gửi được báo rõ chạm trần nào. Trần này đi sau một phiên, vì chi phí chỉ biết được khi phiên kết thúc.
 - **Họp tự động** — mặc định **tắt**. Mỗi ghế họp là một phiên chạy song song tới 25 phút, nên đây là thứ tốn kém nhất; tắt thì Tổng quản tự ra kế hoạch bằng một lượt nghĩ. Phòng họp vẫn dùng bình thường cho người thật.
 - **Quyền giao việc** — mặc định máy trực chỉ nhận việc từ chủ máy; chọn thêm đồng nghiệp ở tab 🔑.
 
@@ -164,9 +172,10 @@ npx wrangler rollback <version-id> -m "lý do"        # quay lại bản trướ
 ## Kiểm thử
 
 ```bash
-npm run check          # cổng kiểm trước deploy: typecheck + smoke + test:agents + test:runner + kiểm tra sau deploy (wrangler giả) + vòng cải tiến…, tự bật dev server riêng (cổng trống, dữ liệu tạm)
+npm run check          # cổng kiểm trước deploy: typecheck + test:unit + smoke + test:agents + test:runner + kiểm tra sau deploy (wrangler giả) + vòng cải tiến…, tự bật dev server riêng (cổng trống, dữ liệu tạm). Mã văn phòng lấy từ .dev.vars.
 CHECK_ONLY=typecheck,smoke npm run check   # chỉ chạy vài bước khi đang sửa
 npm run typecheck
+npm run test:unit      # các quy tắc thuần (danh sách cấm cứng, mức rủi ro, phạm vi bài học, cấu hình) — không cần server, chạy trong một giây
 npm test               # 25 bước kiểm tra giao thức với 3 client giả (cần npm run dev đang chạy)
 npm run test:agents    # 🧠 Tổng quản, luồng chat riêng, MCP, máy trực, ngân sách, họp, quyền giao việc, dự án, tự duyệt, báo cáo cuối
 npm run test:runner    # máy trực thật với một claude giả: mất mạng giữa phiên, máy trực chết rồi chạy lại, Ctrl+C
